@@ -1,6 +1,7 @@
 use crate::{
     engine,
     i18n::{self, text as t},
+    learning::{Mode, Progress},
     model::*,
     native, setup,
     store::Store,
@@ -16,6 +17,7 @@ pub struct Settings {
     config: Config,
     apps: Vec<App>,
     state: State,
+    learning: Progress,
     ranking: Vec<Ranked>,
     tab: usize,
     filter: String,
@@ -129,6 +131,7 @@ impl Settings {
             config,
             apps: vec![],
             state: State::default(),
+            learning: Progress::default(),
             ranking: vec![],
             tab: 0,
             filter: String::new(),
@@ -150,6 +153,7 @@ impl Settings {
         self.apps = self.store.apps()?;
         self.apps.sort_by_key(|a| a.name.to_lowercase());
         self.state = self.store.get("state")?;
+        self.learning = self.store.get("learning")?;
         if !self.dirty {
             self.config = self.store.get("config")?;
         }
@@ -269,12 +273,109 @@ impl Settings {
             }
         }
     }
+    fn learning_settings(&mut self, ui: &mut egui::Ui) {
+        ui.heading(t(
+            "Пассивное наблюдение перед размещением",
+            "Observe before placing shortcuts",
+        ));
+        self.dirty |= ui
+            .checkbox(
+                &mut self.config.learning_enabled,
+                t(
+                    "Сначала накопить наблюдения",
+                    "Start with passive observation",
+                ),
+            )
+            .changed();
+        ui.add_enabled_ui(self.config.learning_enabled, |ui| {
+            let before = self.config.learning_mode;
+            let label = |mode| match mode {
+                Mode::Sessions => t("По числу сеансов", "Number of sessions"),
+                Mode::Days => t("По активным дням", "Active days"),
+                Mode::Either => t(
+                    "Сеансы ИЛИ дни — любое условие",
+                    "Sessions OR days — either condition",
+                ),
+                Mode::Both => t(
+                    "Сеансы И дни — оба условия",
+                    "Sessions AND days — both conditions",
+                ),
+            };
+            egui::ComboBox::from_id_salt("learning-mode")
+                .selected_text(label(before))
+                .show_ui(ui, |ui| {
+                    for mode in [Mode::Sessions, Mode::Days, Mode::Either, Mode::Both] {
+                        ui.selectable_value(&mut self.config.learning_mode, mode, label(mode));
+                    }
+                });
+            self.dirty |= before != self.config.learning_mode;
+            if self.config.learning_mode != Mode::Days {
+                self.dirty |= ui
+                    .add(
+                        egui::Slider::new(&mut self.config.learning_sessions, 1..=100)
+                            .text(t("сеансов за компьютером", "computer sessions")),
+                    )
+                    .changed();
+            }
+            if self.config.learning_mode != Mode::Sessions {
+                self.dirty |= ui
+                    .add(
+                        egui::Slider::new(&mut self.config.learning_days, 1..=90)
+                            .text(t("активных дней", "active days")),
+                    )
+                    .changed();
+            }
+        });
+        ui.small(t("Сеанс: минимум 5 минут учтённой активности; новый — после 30 минут без неё. Активный день: минимум 5 минут. Перезапуск программы не обнуляет прогресс.", "A session needs 5 minutes of tracked activity; 30 minutes without it starts a new session. An active day needs 5 minutes. Progress survives app restarts."));
+        ui.small(t("После достижения порога ярлыки появятся автоматически при включённой автоматике, в безопасный момент бездействия. Пока идёт наблюдение, ярлыки не создаются.", "After the threshold, shortcuts appear automatically when automation is enabled and the desktop is idle. Observation itself never creates shortcuts."));
+    }
+    fn learning_progress(&self, ui: &mut egui::Ui) {
+        if !self.config.learning_enabled {
+            return;
+        }
+        if self.learning.ready(&self.config) {
+            ui.label(t(
+                "Первоначальное наблюдение завершено",
+                "Initial observation complete",
+            ));
+            return;
+        }
+        ui.heading(if self.config.collect {
+            t("Пассивное наблюдение", "Passive observation")
+        } else {
+            t("Наблюдение приостановлено", "Observation paused")
+        });
+        if self.config.learning_mode != Mode::Days {
+            ui.label(format!(
+                "{}: {} / {}",
+                t("Сеансы за компьютером", "Computer sessions"),
+                self.learning.sessions,
+                self.config.learning_sessions
+            ));
+            ui.add(egui::ProgressBar::new(
+                (self.learning.sessions as f32 / self.config.learning_sessions as f32).min(1.0),
+            ));
+        }
+        if self.config.learning_mode != Mode::Sessions {
+            ui.label(format!(
+                "{}: {} / {}",
+                t("Активные дни", "Active days"),
+                self.learning.active_days(),
+                self.config.learning_days
+            ));
+            ui.add(egui::ProgressBar::new(
+                (self.learning.active_days() as f32 / self.config.learning_days as f32).min(1.0),
+            ));
+        }
+        ui.label(t("Ярлыки пока не создаются. После выполнения условия будет выбран наиболее востребованный состав.", "No shortcuts are created yet. The most-used eligible apps will be selected after the observation requirement is met."));
+        ui.add_space(10.0);
+    }
     fn welcome(&mut self, ui: &mut egui::Ui) {
         ui.heading(t("Настройка первого запуска", "Welcome to Desktop Pilot"));
         ui.label(t("Программа создаёт дополнительные быстрые ярлыки. Оригиналы и ваша структура папок сохраняются.","Create a small set of adaptive quick shortcuts while keeping your original shortcuts and folder structure."));
         ui.add_space(10.0);
         ui.separator();
-        ui.label(t("Начальный выбор появится после минимум трёх разных дней использования. Любое приложение можно закрепить вручную сразу.","Automatic suggestions need at least three distinct days of use. You can pin an app manually right away."));
+        self.learning_settings(ui);
         ui.checkbox(
             &mut self.config.automatic,
             t(
@@ -329,6 +430,7 @@ impl Settings {
         }
     }
     fn overview(&mut self, ui: &mut egui::Ui) {
+        self.learning_progress(ui);
         ui.heading(t("Сейчас на рабочем столе", "On your desktop"));
         ui.label(format!(
             "{} / {} {}",
@@ -337,7 +439,7 @@ impl Settings {
             t("быстрых мест", "quick-access slots")
         ));
         if self.state.owned.is_empty() {
-            ui.label(t("Пока нет быстрых копий. Закрепите приложение вручную или дождитесь повторяемого использования.","No quick copies yet. Pin an app manually or wait for repeated usage."));
+            ui.label(t("Пока нет быстрых копий. Во время наблюдения можно настроить правила будущего выбора.","No quick copies yet. You can set rules for the future selection while observation runs."));
         }
         ui.add_space(10.0);
         for owned in &self.state.owned {
@@ -370,7 +472,13 @@ impl Settings {
         }
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            if ui.button(t("Применить сейчас", "Apply now")).clicked() {
+            if ui
+                .add_enabled(
+                    self.learning.ready(&self.config),
+                    egui::Button::new(t("Применить сейчас", "Apply now")),
+                )
+                .clicked()
+            {
                 self.queue("apply");
             }
             if ui
@@ -511,6 +619,8 @@ impl Settings {
         }
     }
     fn preferences(&mut self, ui: &mut egui::Ui) {
+        ui.separator();
+        self.learning_settings(ui);
         ui.separator();
         ui.heading(t("Автоматика", "Automation"));
         self.dirty |= ui
@@ -699,7 +809,13 @@ impl eframe::App for Settings {
                         } else {
                             Color32::from_rgb(242, 191, 92)
                         },
-                        if self.config.automatic {
+                        if !self.learning.ready(&self.config) {
+                            if self.config.collect {
+                                t("Пассивное наблюдение", "Passive observation")
+                            } else {
+                                t("Наблюдение на паузе", "Observation paused")
+                            }
+                        } else if self.config.automatic {
                             t("Автоматика включена", "Automation enabled")
                         } else {
                             t("Автоматика на паузе", "Automation paused")

@@ -1,4 +1,4 @@
-use crate::{model::*, native, store::Store};
+use crate::{learning::Progress, model::*, native, store::Store};
 use anyhow::{Context, Result, bail, ensure};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
@@ -370,6 +370,12 @@ pub(crate) fn reserve_positions(
 
 pub fn apply(store: &Store, initial: bool) -> Result<String> {
     let _lock = native::exclusive("changes", &store.home)?;
+    ensure!(
+        store
+            .get::<Progress>("learning")?
+            .ready(&store.get::<Config>("config")?),
+        "Passive observation is still in progress. No shortcuts were changed."
+    );
     let unfinished: i64 = store.db.query_row(
         "SELECT COUNT(*) FROM transactions WHERE status='prepared'",
         [],
@@ -795,6 +801,15 @@ pub fn command(store: &Store, action: &str) -> Result<String> {
                 a.seed_at = 0;
                 store.put_app(&a)?;
             }
+            let completed = store.get::<Progress>("learning")?.completed_at;
+            store.set(
+                "learning",
+                &Progress {
+                    started_at: now(),
+                    completed_at: completed,
+                    ..Default::default()
+                },
+            )?;
             Ok("История использования очищена; ярлыки и правила сохранены".into())
         }
         _ => bail!("Неизвестная команда"),
@@ -845,11 +860,35 @@ fn observe_app_id(apps: &[App], id: &str) -> Option<String> {
     }
 }
 
+pub fn automatic_review(store: &Store, quiet: bool) -> Result<bool> {
+    let config: Config = store.get("config")?;
+    let state: State = store.get("state")?;
+    let mut progress: Progress = store.get("learning")?;
+    progress.finish_if_ready(&config, now());
+    store.set("learning", &progress)?;
+    if config.automatic
+        && progress.ready(&config)
+        && (!state.initialized || now() >= state.last_review + config.interval_days * 86400)
+        && quiet
+        && (state.initialized || !preview(store, true)?.selected.is_empty())
+    {
+        apply(store, !state.initialized)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
 pub fn monitor(home: PathBuf) -> Result<()> {
     let _com = native::Com::new()?;
     let store = Store::open(&home)?;
+    let mut progress: Progress = store.get("learning")?;
+    if progress.started_at == 0 && store.get::<State>("state")?.initialized {
+        progress.completed_at = now();
+        progress.started_at = now();
+        store.set("learning", &progress)?;
+    }
     let mut apps = store.apps()?;
     let mut last_id = String::new();
+    let mut focus = crate::activity::FocusEvidence::default();
     let mut seconds = 0;
     let mut session_times: HashMap<String, i64> = HashMap::new();
     let mut last_tick = Instant::now();
@@ -868,6 +907,7 @@ pub fn monitor(home: PathBuf) -> Result<()> {
         }
         let config: Config = store.get("config")?;
         config.validate()?;
+        crate::activity::set_enabled(config.collect);
         if last_autostart != Some(config.autostart) {
             if real_desktop(&store)? {
                 native::autostart(&std::env::current_exe()?, config.autostart)?;
@@ -878,9 +918,25 @@ pub fn monitor(home: PathBuf) -> Result<()> {
         last_tick = Instant::now();
         if config.collect && elapsed < 5.0 {
             if let Ok(foreground) = native::foreground() {
-                if foreground.idle < config.idle_seconds {
-                    if let Some(id) = observe_app_id(&apps, &foreground.app_id)
-                        .or_else(|| observe_match(&apps, &foreground.process))
+                let input = crate::activity::snapshot();
+                let tick = crate::activity::tick();
+                let engaged = focus.active(foreground.window, input, tick, config.idle_seconds);
+                if foreground.idle < config.idle_seconds && input.recent(tick, config.idle_seconds)
+                {
+                    if config.learning_enabled {
+                        let mut progress: Progress = store.get("learning")?;
+                        if progress.completed_at == 0 {
+                            progress.observe(
+                                now(),
+                                &chrono::Local::now().date_naive().to_string(),
+                                elapsed.round() as u32,
+                            );
+                            store.set("learning", &progress)?;
+                        }
+                    }
+                    if engaged
+                        && let Some(id) = observe_app_id(&apps, &foreground.app_id)
+                            .or_else(|| observe_match(&apps, &foreground.process))
                     {
                         if id != last_id {
                             last_id = id.clone();
@@ -912,6 +968,7 @@ pub fn monitor(home: PathBuf) -> Result<()> {
         } else {
             last_id.clear();
             seconds = 0;
+            focus = crate::activity::FocusEvidence::default();
         }
         if maintenance.elapsed() >= Duration::from_secs(60) {
             maintenance = Instant::now();
@@ -924,14 +981,7 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                     store.housekeeping()?;
                 }
                 reconcile_manual(&store)?;
-                let state: State = store.get("state")?;
-                if config.automatic
-                    && now() >= state.last_review + config.interval_days * 86400
-                    && native::quiet_for_changes()
-                    && (state.initialized || !preview(&store, true)?.selected.is_empty())
-                {
-                    apply(&store, !state.initialized)?;
-                }
+                automatic_review(&store, native::quiet_for_changes())?;
                 Ok(())
             })();
             let status = match result {

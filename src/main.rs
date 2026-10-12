@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod activity;
 mod engine;
 mod i18n;
+mod learning;
 mod model;
 mod native;
 mod setup;
@@ -84,7 +86,7 @@ fn run() -> Result<()> {
         }
         "--inspect" => emit(
             &args,
-            &serde_json::json!({"config":s.get::<Config>("config")?,"state":s.get::<State>("state")?,"preview":engine::preview(&s,!s.get::<State>("state")?.initialized)?,"heartbeat":s.get::<i64>("heartbeat")?,"status":s.get::<String>("status")?,"background":background_running(&h)}),
+            &serde_json::json!({"config":s.get::<Config>("config")?,"learning":s.get::<learning::Progress>("learning")?,"state":s.get::<State>("state")?,"preview":engine::preview(&s,!s.get::<State>("state")?.initialized)?,"heartbeat":s.get::<i64>("heartbeat")?,"status":s.get::<String>("status")?,"background":background_running(&h)}),
         ),
         "--layout" => emit(&args, &native::layout()?),
         "--pins" => emit(&args, &native::pin_identities()?),
@@ -169,6 +171,11 @@ fn run() -> Result<()> {
                 "Complete initial setup before starting background tracking"
             );
             let _instance = native::exclusive("background", &h)?;
+            let _input_hooks = activity::Hooks::install()?;
+            s.set(
+                "input_filter",
+                &"non-injected keyboard/buttons/wheel; fresh foreground interaction",
+            )?;
             s.set("shutdown", &false)?;
             let worker_home = h.clone();
             let worker = std::thread::spawn(move || {
@@ -272,12 +279,43 @@ fn self_test(home: &Path, args: &[String]) -> Result<()> {
         &Config {
             autostart: false,
             collect: true,
+            learning_enabled: false,
             ..Default::default()
         },
     )?;
     s.set("state", &State::default())?;
     let original_hash = hash(&std::fs::read(&original)?);
-    engine::apply(&s, true)?;
+    let mut fixture_config: Config = s.get("config")?;
+    fixture_config.learning_enabled = true;
+    fixture_config.automatic = true;
+    s.set("config", &fixture_config)?;
+    ensure!(
+        engine::apply(&s, true).is_err(),
+        "Passive learning allowed early placement"
+    );
+    ensure!(
+        std::fs::read_dir(&desktop)?.next().is_none(),
+        "Passive learning changed the desktop"
+    );
+    ensure!(
+        !engine::automatic_review(&s, true)?,
+        "Automatic review bypassed passive learning"
+    );
+    let mut progress = learning::Progress::default();
+    for session in 0..7 {
+        for second in (0..300).step_by(2) {
+            progress.observe(10000 + session * 4000 + second, "2026-01-01", 2);
+        }
+    }
+    s.set("learning", &progress)?;
+    ensure!(
+        !engine::automatic_review(&s, false)?,
+        "Placement ignored user activity"
+    );
+    ensure!(
+        engine::automatic_review(&s, true)?,
+        "Automatic first placement did not start after learning"
+    );
     let state: State = s.get("state")?;
     ensure!(state.owned.len() == 1, "Ярлык не создан");
     let managed = &state.owned[0];
@@ -408,7 +446,7 @@ fn self_test(home: &Path, args: &[String]) -> Result<()> {
     );
     emit(
         args,
-        &serde_json::json!({"passed":true,"checks":["native shortcut creation","target and launch identity","transactional apply","rollback original bytes","Shell launch of inert fixture","manual edit ownership release","interrupted transaction blocks new changes and rolls back","manual rename pins position","manual deletion prevents return","rollback refuses changed files","clean first-run install and background lifecycle","collection disabled and tracking-only desktop unchanged"],"originals_unchanged":true}),
+        &serde_json::json!({"passed":true,"checks":["native shortcut creation","target and launch identity","transactional apply","rollback original bytes","Shell launch of inert fixture","manual edit ownership release","interrupted transaction blocks new changes and rolls back","manual rename pins position","manual deletion prevents return","rollback refuses changed files","clean first-run install and background lifecycle","collection disabled and tracking-only desktop unchanged","passive learning blocks placement","seven qualified sessions unlock initial placement"],"originals_unchanged":true}),
     )
 }
 fn main() {

@@ -16,6 +16,18 @@ pub fn runtime(value: &str) -> String {
 fn translate(value: &str, russian: bool) -> String {
     let mut output = value.to_owned();
     for (ru, en) in [
+        (
+            "Наблюдение ещё идёт. Ярлыки не изменены.",
+            "Passive observation is still in progress. No shortcuts were changed.",
+        ),
+        (
+            "Число сеансов обучения: от 1 до 100",
+            "Learning sessions must be between 1 and 100",
+        ),
+        (
+            "Число дней обучения: от 1 до 90",
+            "Learning days must be between 1 and 90",
+        ),
         ("Число мест: от 1 до 8", "Slots must be between 1 and 8"),
         (
             "Период: от 1 до 90 дней",

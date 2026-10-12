@@ -24,8 +24,7 @@ Moving or renaming a managed quick shortcut pins it at your chosen position. Del
 For each local calendar day:
 
 ```text
-daily score = 5 × min(quick launches, 20)
-            + 2 × min(foreground sessions, 12)
+daily score = 2 × min(confirmed foreground sessions, 12)
             + 0.4 × ln(1 + min(active seconds, 3600) / 60)
 weight      = 2 ^ (-age in days / half-life in days)
 total       = sum(daily score × weight)
@@ -33,9 +32,9 @@ total       = sum(daily score × weight)
 
 Foreground observations are sampled every two seconds. A qualifying session needs approximately ten seconds of activity; sessions within twenty minutes are deduplicated. Idle periods and long gaps between observations are not counted as active work. Default idle cutoff: 120 seconds.
 
-Foreground use does **not** prove a shortcut click. Explicit launches through managed quick shortcuts are counted separately. Two shortcuts using the same executable but different arguments or working directories are distinct identities; ambiguous foreground matches are skipped. Steam games can match a unique installation directory; Windows app shortcuts can match a unique application ID.
+A process launch, autostart or foreground activation alone gives no score. A new foreground window must receive fresh, non-injected keyboard/button/wheel interaction before the ten-second qualification timer starts. Mouse movement alone is insufficient. Explicit shortcut launch requests are counted diagnostically but do not affect ranking or active-day eligibility. Startup apps remain eligible if you actually work in them. Windows-reported injected input is rejected, including ordinary SendInput automation. Virtual input drivers can appear as hardware; the app cannot prove the identity or intention of a person. Controller-only use, passive playback and interactions inaccessible at the current integrity level can be undercounted; use a manual rule for those cases. Two shortcuts using the same executable but different arguments or working directories are distinct identities; ambiguous foreground matches are skipped. Steam games can match a unique installation directory; Windows app shortcuts can match a unique application ID.
 
-Fresh profiles wait for three distinct active days. The first eligible fill can use all available slots. Subsequent automatic reviews run every seven days, after at least fifteen seconds of user inactivity, outside fullscreen activity and mouse dragging. Default ordinary replacement limit: one; a challenger must exceed the current score by both 1.5× and 3 points. Existing valid shortcuts do not disappear just because history was cleared or aged out.
+Fresh profiles begin with passive learning for 7 qualified **computer sessions**, independent of app switches. Configure 1–100 sessions or 1–90 active days, with Sessions / Days / Either / Both modes. A session requires 5 minutes of tracked activity; 30 minutes without tracked activity starts a new session. An active calendar day requires 5 minutes in total, even across shorter visits. Merely leaving the PC off does not advance the day requirement. Progress is saved locally and survives restarts. While learning is pending, both manual Apply and automatic placement are blocked; disabling the learning requirement is an explicit override. After the threshold is reached, the first fill waits only for an eligible app and a safe idle moment, not an additional weekly interval. The per-app active-day filter defaults to one day and remains adjustable. Increasing thresholds after learning has completed does not start a new learning phase. The first eligible fill can use all available slots. Subsequent automatic reviews run every seven days, after at least fifteen seconds of user inactivity, outside fullscreen activity and mouse dragging. Default ordinary replacement limit: one; a challenger must exceed the current score by both 1.5× and 3 points. Existing valid shortcuts do not disappear just because history was cleared or aged out.
 
 Manual choices override ranking. Taskbar pins are excluded by default. Context-menu, file-association and hotkey preferences must be expressed with **Never add**. The app cannot determine those preferences reliably on its own.
 
@@ -71,5 +70,7 @@ Close Settings, use **Exit** in the tray menu, and back up the local data direct
 | `native.rs` | Windows Shell, desktop geometry, activity and taskbar integration |
 | `engine.rs` | Catalog, ownership, transactions, rollback and observation loop |
 | `store.rs` | Local SQLite persistence |
+| `learning.rs` | Persistent passive observation, computer sessions and active-day thresholds |
+| `activity.rs` | Input-provenance filtering and fresh foreground-interaction evidence |
 | `setup.rs` | Per-user first-run installation |
 | `ui.rs`, `i18n.rs`, `tray.rs` | Bilingual settings and tray controls |

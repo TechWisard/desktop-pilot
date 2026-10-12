@@ -47,6 +47,10 @@ pub enum Policy {
 pub struct Config {
     pub language: String,
     pub respect_taskbar_pins: bool,
+    pub learning_enabled: bool,
+    pub learning_mode: crate::learning::Mode,
+    pub learning_sessions: u32,
+    pub learning_days: u32,
     pub automatic: bool,
     pub collect: bool,
     pub autostart: bool,
@@ -66,13 +70,17 @@ impl Default for Config {
         Self {
             language: "en".into(),
             respect_taskbar_pins: true,
+            learning_enabled: true,
+            learning_mode: crate::learning::Mode::Sessions,
+            learning_sessions: 7,
+            learning_days: 7,
             automatic: false,
             collect: false,
             autostart: false,
             slots: 4,
             interval_days: 7,
             half_life_days: 14.0,
-            min_days: 3,
+            min_days: 1,
             advantage: 1.5,
             max_changes: 1,
             idle_seconds: 120,
@@ -84,6 +92,14 @@ impl Default for Config {
 }
 impl Config {
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            (1..=100).contains(&self.learning_sessions),
+            "Learning sessions must be between 1 and 100"
+        );
+        ensure!(
+            (1..=90).contains(&self.learning_days),
+            "Learning days must be between 1 and 90"
+        );
         ensure!(
             ["en", "ru"].contains(&self.language.as_str()),
             "Language must be en or ru"
@@ -225,11 +241,10 @@ pub fn rank(apps: &[App], days: &[Day], cfg: &Config, time: i64) -> Vec<Ranked> 
             .filter(|d| d.app == app.id && time - d.date < 90 * 86400 && d.date <= time)
         {
             let age = (time - d.date).max(0) as f64 / 86400.0;
-            let value = 5.0 * f64::from(d.launches.min(20))
-                + 2.0 * f64::from(d.sessions.min(12))
+            let value = 2.0 * f64::from(d.sessions.min(12))
                 + (f64::from(d.seconds.min(3600)) / 60.0).ln_1p() * 0.4;
             score += value * 2f64.powf(-age / cfg.half_life_days);
-            if d.sessions > 0 || d.launches > 0 {
+            if d.sessions > 0 || d.seconds >= 10 {
                 active_days.insert(d.date);
             }
             launches += d.launches;
@@ -468,7 +483,32 @@ mod tests {
             launches: 500,
             seconds: 80000,
         }];
-        assert!(!rank(&[a], &ds, &Config::default(), now())[0].eligible);
+        assert!(
+            !rank(
+                &[a],
+                &ds,
+                &Config {
+                    min_days: 3,
+                    ..Default::default()
+                },
+                now()
+            )[0]
+            .eligible
+        );
+    }
+    #[test]
+    fn launch_requests_alone_never_create_demand() {
+        let mut app = app("system-started", 0.0);
+        app.seed_at = 0;
+        let days = vec![Day {
+            app: app.id.clone(),
+            date: now() / 86400 * 86400,
+            launches: 999,
+            ..Default::default()
+        }];
+        let result = rank(&[app], &days, &Config::default(), now());
+        assert!(!result[0].eligible);
+        assert_eq!(result[0].score, 0.0);
     }
     #[test]
     fn invalid_settings_rejected() {

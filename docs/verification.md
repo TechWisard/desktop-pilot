@@ -5,9 +5,9 @@
 ## Automated checks
 
 - Rust formatting and Clippy with warnings treated as errors.
-- 19 unit tests covering selection stability, manual precedence, taskbar/context-menu exclusions, independent active days, configuration migration, profile ambiguity, Windows app identity, Steam roots, PIDL bounds and localization.
+- 29 unit tests covering selection stability, manual precedence, taskbar/context-menu exclusions, independent active days, configuration migration, profile ambiguity, Windows app identity, Steam roots, PIDL bounds, localization, passive-observation thresholds, meaningful sessions, restart continuity and combined day/session conditions, injected-input rejection, foreground-interaction requirements and zero ranking from launch requests alone.
 - Geometry matrix: 5 resolutions × 5 grid/scaling configurations × 4 desktop origins = 100 combinations. Occupied and undersized areas are rejected; existing positions are preserved in the model.
-- Native integration fixture: shortcut creation and identity, actual Shell launch through an inert fixture, transactional apply/undo, manual edit/rename/delete behavior, interrupted-operation recovery, refusal to overwrite changed files, clean-profile installation and background shutdown.
+- Native integration fixture: shortcut creation and identity, actual Shell launch through an inert fixture, transactional apply/undo, manual edit/rename/delete behavior, interrupted-operation recovery, refusal to overwrite changed files, clean-profile installation and background shutdown, blocked early placement and automatic first placement after the observation threshold.
 - Windows CI builds and tests on `windows-2022` and `windows-2025`. CI does not claim interactive Explorer or Windows 10 desktop acceptance; see the actual [run results](https://github.com/TechWisard/desktop-pilot/actions).
 
 ## Interactive Windows 11 checks

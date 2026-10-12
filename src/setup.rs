@@ -52,6 +52,19 @@ pub fn finish(store: &Store, config: &Config) -> Result<()> {
         }
     }
     store.set("config", config)?;
+    if store
+        .get::<crate::learning::Progress>("learning")?
+        .started_at
+        == 0
+    {
+        store.set(
+            "learning",
+            &crate::learning::Progress {
+                started_at: now(),
+                ..Default::default()
+            },
+        )?;
+    }
     engine::refresh_apps(store)?;
     if store.get::<String>("test_desktop")?.is_empty() {
         let shortcut = native::programs()?.join("Desktop Pilot.lnk");

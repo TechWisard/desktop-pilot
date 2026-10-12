@@ -18,7 +18,7 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It lear
 
 1. Download and extract **DesktopPilot-0.1.0-windows-x64.zip** from [Releases](https://github.com/TechWisard/desktop-pilot/releases/latest).
 2. Run `desktop-pilot.exe`. Choose **English** or **Русский**, review the shortcut area and startup preferences, then select **Start using Desktop Pilot**.
-3. Use your computer normally. Suggestions need three distinct days of use. To add an app immediately, select **Always on desktop** in the Apps tab and choose **Apply now**.
+3. Use your computer normally. The default is **passive observation for 7 computer sessions**. No quick shortcuts are created during learning. After the threshold, the most-used eligible apps appear automatically during an idle period. Choose sessions, active days, either condition or both in Settings.
 
 Installation is per user in `%LOCALAPPDATA%\DesktopPilot`; no administrator access is required. Settings are available from the tray icon and the Start menu. This preview executable is unsigned; download only from this repository's Releases and verify the supplied SHA-256 checksum.
 
@@ -29,23 +29,25 @@ Installation is per user in `%LOCALAPPDATA%\DesktopPilot`; no administrator acce
 | Quick-access area | 4 shortcuts in a free area of the primary display |
 | Review interval | Every 7 days, after an idle period and outside fullscreen activity |
 | Ordinary replacements | At most 1 per review |
-| Evidence required | At least 3 distinct active days |
+| Initial observation | 7 qualified computer sessions; configurable sessions / active days / either / both |
 | Replacement threshold | 1.5× the existing score **and** at least 3 points more |
 | Recency | Scores halve every 14 days; usage totals retained for 90 days |
 | Taskbar shortcuts | Already pinned apps excluded unless explicitly requested |
 | Manual choices | Always / Automatic / Never; moved quick shortcuts stay pinned |
 
+A computer session needs at least 5 minutes of tracked activity; a new session starts after 30 minutes without it. An active day also needs 5 minutes. Restarting the app preserves progress. Thresholds apply to the initial learning phase; after completion, ordinary weekly reviews take over.
+
 The first fill and explicit rule changes may affect more than one shortcut. Deleting a managed shortcut prevents it from coming back automatically. Files you edit are released from management. Each change has a local journal and an **Undo** action; rollback refuses to overwrite changed files.
 
 ## You decide what deserves a shortcut
 
-Usage is more than a launch count. Repeated active days, foreground sessions, recency, explicit quick-shortcut launches, taskbar pins and manual choices contribute to the decision. If an app is normally opened through a file association, a context menu or a hotkey, choose **Never add**. Desktop Pilot cannot reliably infer that preference from process activity alone.
+Usage is more than a launch count. Repeated active days, confirmed foreground sessions, recency, taskbar pins and manual choices contribute to the decision. Opening a process or calling a shortcut adds no ranking points by itself. A foreground window must receive fresh keyboard, button or wheel interaction before its use counts; Windows-marked injected input is excluded. Startup apps can qualify only when you actually interact with them. If an app is normally opened through a file association, a context menu or a hotkey, choose **Never add**. Desktop Pilot cannot reliably infer that preference from process activity alone.
 
 The catalog scans desktop shortcut folders up to three levels deep. Add other `.lnk` or `.url` files through Settings; it does not add every installed program. Ambiguous executable profiles are kept separate. Steam game directories and Windows app identities are used where they can be matched uniquely.
 
 ## Local by design
 
-No account, analytics, cloud synchronization or network service. The tracker stores local app paths, daily usage totals, preferences and undo records. It does not read keystrokes, window titles, document content or browser history. **Do not upload your local database or undo folder.** [Privacy details](docs/privacy.md)
+No account, analytics, cloud synchronization or network service. The tracker stores local app paths, daily usage totals, preferences and undo records. It never records key codes, typed text, window titles, document content or browser history. Input provenance flags and a recent interaction timestamp are used to distinguish activity from unattended launches. **Do not upload your local database or undo folder.** [Privacy details](docs/privacy.md)
 
 ## Compatibility and verification
 

@@ -532,6 +532,7 @@ pub fn steam_locations() -> std::collections::HashMap<String, String> {
 }
 
 pub struct Foreground {
+    pub window: isize,
     pub process: String,
     pub app_id: String,
     pub idle: u32,
@@ -575,6 +576,7 @@ pub fn foreground() -> Result<Foreground> {
         let _ = CloseHandle(h);
         r?;
         Ok(Foreground {
+            window: w.0 as isize,
             process: text(&b),
             app_id,
             idle,
