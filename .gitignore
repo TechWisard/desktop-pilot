@@ -1,0 +1,13 @@
+/target/
+/dist/
+/.private/
+*.sqlite*
+*.db
+*.lnk
+*.url
+*.pdb
+*.exe
+*.zip
+last-error.txt
+/history/
+.env*

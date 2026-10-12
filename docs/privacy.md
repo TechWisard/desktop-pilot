@@ -1,0 +1,22 @@
+# Privacy
+
+[Русский](privacy.ru.md) · [Home](../README.md)
+
+Desktop Pilot has no telemetry, account system, synchronization or application network requests. Opening an original shortcut can of course launch an application that uses the network.
+
+Data remains in `%LOCALAPPDATA%\DesktopPilot`:
+
+| Data | Purpose / retention |
+| --- | --- |
+| App names, source/target paths, arguments, working directories, taskbar-pin status | Identify and launch shortcuts; retained in the catalog |
+| Daily launches, sessions and active seconds | Rank apps; usage rows older than 90 days removed during maintenance |
+| Rules, configuration, managed shortcut paths and positions | Preserve your choices and desktop layout |
+| Operation events | Latest 2,000 events retained during maintenance; latest 100 shown |
+| Command results, transaction journal and shortcut backup bytes | Diagnose failures and undo changes; retained until you remove local data |
+| Last error text | Diagnose the latest failure; replaced on another failure |
+
+The tracker reads the foreground process identity and Windows idle duration. It does not record keys, window titles, document contents, browsing history, audio or screen images. The explicit developer-only `--ui-smoke` command saves images of the app's own settings window to a requested directory; normal operation never invokes it.
+
+Pausing **Collect usage** stops new observations. **Clear usage history** removes daily counters and bootstrap usage scores, while keeping shortcuts, rules and undo records. Turning off automatic changes does not itself stop collection. Exiting the tray process stops both until the app starts again; disable Windows startup separately if desired.
+
+The database is local, not encrypted. It and the journals can contain personal paths and app arguments. Protect them with your Windows account permissions and do not attach them to public issues. Public documentation screenshots use fictional data. Release packages contain no usage database, local shortcut inventory, personal screenshots or undo backups.
