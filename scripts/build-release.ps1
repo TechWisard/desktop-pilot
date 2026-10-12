@@ -12,9 +12,9 @@ try {
         if ($LASTEXITCODE) { throw 'Clippy failed' }
     }
     # Remove local build-machine paths from distributed executable strings.
-    $remaps = @{}
-    $remaps[$projectRoot] = '/project'
+    $remaps = [ordered]@{}
     $remaps[$env:USERPROFILE] = '/user'
+    $remaps[$projectRoot] = '/project'
     $cargoDirectory = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE '.cargo' }
     $remaps[$cargoDirectory] = '/cargo'
     $buildFlags = @()

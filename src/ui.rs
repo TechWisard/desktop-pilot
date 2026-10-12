@@ -49,6 +49,61 @@ fn policy_name(policy: &Policy) -> &'static str {
         Policy::Never => t("Не добавлять", "Never add"),
     }
 }
+fn flag(ui: &egui::Ui, response: &egui::Response, language: &str) {
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(response.rect.left() + 7.0, response.rect.center().y - 6.0),
+        egui::vec2(20.0, 12.0),
+    );
+    let painter = ui.painter().with_clip_rect(rect);
+    if language == "ru" {
+        for (row, color) in [
+            Color32::WHITE,
+            Color32::from_rgb(35, 77, 179),
+            Color32::from_rgb(214, 42, 54),
+        ]
+        .iter()
+        .enumerate()
+        {
+            painter.rect_filled(
+                egui::Rect::from_min_size(
+                    rect.min + egui::vec2(0.0, row as f32 * 4.0),
+                    egui::vec2(20.0, 4.0),
+                ),
+                0.0,
+                *color,
+            );
+        }
+    } else {
+        painter.rect_filled(rect, 0.0, Color32::from_rgb(28, 48, 108));
+        for color in [Color32::WHITE, Color32::from_rgb(205, 39, 55)] {
+            let width = if color == Color32::WHITE { 3.2 } else { 1.2 };
+            painter.line_segment(
+                [rect.left_top(), rect.right_bottom()],
+                egui::Stroke::new(width, color),
+            );
+            painter.line_segment(
+                [rect.right_top(), rect.left_bottom()],
+                egui::Stroke::new(width, color),
+            );
+        }
+        for (width, color) in [(4.2, Color32::WHITE), (2.2, Color32::from_rgb(205, 39, 55))] {
+            painter.line_segment(
+                [
+                    egui::pos2(rect.left(), rect.center().y),
+                    egui::pos2(rect.right(), rect.center().y),
+                ],
+                egui::Stroke::new(width, color),
+            );
+            painter.line_segment(
+                [
+                    egui::pos2(rect.center().x, rect.top()),
+                    egui::pos2(rect.center().x, rect.bottom()),
+                ],
+                egui::Stroke::new(width, color),
+            );
+        }
+    }
+}
 impl Settings {
     fn new(home: PathBuf) -> Result<Self> {
         let store = Store::open(&home)?;
@@ -127,15 +182,56 @@ impl Settings {
         }
     }
     fn language(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.label("Language / Язык");
-            self.dirty |= ui
-                .selectable_value(&mut self.config.language, "en".into(), "English")
-                .changed();
-            self.dirty |= ui
-                .selectable_value(&mut self.config.language, "ru".into(), "Русский")
-                .changed();
-        });
+        let code = if self.config.language == "ru" {
+            "RU"
+        } else {
+            "EN"
+        };
+        let button = ui.menu_button(
+            RichText::new(format!("        {code}    ")).size(16.0),
+            |ui| {
+                for (language, label) in [("en", "English"), ("ru", "Русский")] {
+                    let choice = ui.selectable_label(
+                        self.config.language == language,
+                        format!("        {label}"),
+                    );
+                    flag(ui, &choice, language);
+                    if choice.clicked() {
+                        // Persist just the language; do not commit other unsaved settings.
+                        let saved = self.store.get::<Config>("config").and_then(|mut config| {
+                            config.language = language.into();
+                            self.store.set("config", &config)
+                        });
+                        match saved {
+                            Ok(()) => self.config.language = language.into(),
+                            Err(e) => self.message = e.to_string(),
+                        }
+                        ui.close_menu();
+                    }
+                }
+            },
+        );
+        flag(ui, &button.response, &self.config.language);
+        let center = egui::pos2(
+            button.response.rect.right() - 10.0,
+            button.response.rect.center().y,
+        );
+        let stroke = egui::Stroke::new(1.5, ui.visuals().text_color());
+        ui.painter().line_segment(
+            [
+                center + egui::vec2(-3.0, -1.5),
+                center + egui::vec2(0.0, 1.5),
+            ],
+            stroke,
+        );
+        ui.painter().line_segment(
+            [
+                center + egui::vec2(0.0, 1.5),
+                center + egui::vec2(3.0, -1.5),
+            ],
+            stroke,
+        );
+        button.response.on_hover_text("Language / Язык");
         i18n::set(&self.config.language);
     }
     fn zone(&mut self, ui: &mut egui::Ui) {
@@ -177,7 +273,6 @@ impl Settings {
         ui.heading(t("Настройка первого запуска", "Welcome to Desktop Pilot"));
         ui.label(t("Программа создаёт дополнительные быстрые ярлыки. Оригиналы и ваша структура папок сохраняются.","Create a small set of adaptive quick shortcuts while keeping your original shortcuts and folder structure."));
         ui.add_space(10.0);
-        self.language(ui);
         ui.separator();
         ui.label(t("Начальный выбор появится после минимум трёх разных дней использования. Любое приложение можно закрепить вручную сразу.","Automatic suggestions need at least three distinct days of use. You can pin an app manually right away."));
         ui.checkbox(
@@ -416,7 +511,6 @@ impl Settings {
         }
     }
     fn preferences(&mut self, ui: &mut egui::Ui) {
-        self.language(ui);
         ui.separator();
         ui.heading(t("Автоматика", "Automation"));
         self.dirty |= ui
@@ -612,6 +706,9 @@ impl eframe::App for Settings {
                         },
                     );
                 }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    self.language(ui)
+                });
             });
             ui.label(t(
                 "Быстрый доступ с сохранением привычного порядка",

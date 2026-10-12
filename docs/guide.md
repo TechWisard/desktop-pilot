@@ -15,7 +15,7 @@ The app uses Windows Known Folders rather than hardcoded account paths, includin
 - **Settings:** switch English/Russian, pause collection or changes, adjust review timing and the shortcut area, accept a changed display geometry, or clear usage history.
 - **History:** review changes and errors. Records stay local.
 
-Save settings after changing them. Manual rules are submitted immediately to the background process; use Apply now to change the shortcut selection. A rule change or slot reduction may remove more than the ordinary replacement limit. More manual pins than available slots blocks changes until you resolve the conflict.
+The flag button in the top-right corner is available on every page, including setup. Choose English or Русский; the language changes and saves immediately, without saving other pending edits. Save other settings after changing them. Manual rules are submitted immediately to the background process; use Apply now to change the shortcut selection. A rule change or slot reduction may remove more than the ordinary replacement limit. More manual pins than available slots blocks changes until you resolve the conflict.
 
 Moving or renaming a managed quick shortcut pins it at your chosen position. Deleting or moving it out of the desktop excludes it from automatic return. Editing its file content releases ownership. The tracker checks these changes approximately once per minute. Existing category folders are not reorganized.
 
