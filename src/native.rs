@@ -611,12 +611,16 @@ pub fn quiet_for_changes() -> bool {
         !full && foreground().is_ok_and(|f| f.idle >= 15)
     }
 }
-pub fn autostart(exe: &Path, enable: bool) -> Result<()> {
+pub fn autostart(exe: &Path, home: &Path, enable: bool) -> Result<()> {
     unsafe {
         let key = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
         let name = w!("DesktopPilot");
         if enable {
-            let command = wide(&format!("\"{}\" --background", exe.display()));
+            let command = wide(&format!(
+                "\"{}\" --background --home \"{}\"",
+                exe.display(),
+                home.display()
+            ));
             RegSetKeyValueW(
                 HKEY_CURRENT_USER,
                 key,

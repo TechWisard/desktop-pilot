@@ -8,6 +8,8 @@ The welcome page lets you choose the interface language, automatic changes, Wind
 
 The app uses Windows Known Folders rather than hardcoded account paths, including redirected desktops. It scans the current user's desktop, including shortcut folders up to three levels deep. Reparse points, common source/dependency folders and shortcut archives are skipped. Public Desktop-only shortcuts and Start menu shortcuts can be added explicitly from the Apps tab. It does not automatically inventory or publish installed software.
 
+Installed Settings and startup use an explicit profile path; normal launches also recognize the database beside the installed executable. This prevents a redirected installation from silently opening a separate empty profile.
+
 ## Everyday use
 
 - **Overview:** see managed shortcuts, apply the current selection, or undo the previous change.
@@ -32,7 +34,7 @@ total       = sum(daily score × weight)
 
 Foreground observations are sampled every two seconds. A qualifying session needs approximately ten seconds of activity; sessions within twenty minutes are deduplicated. Idle periods and long gaps between observations are not counted as active work. Default idle cutoff: 120 seconds.
 
-A process launch, autostart or foreground activation alone gives no score. A new foreground window must receive fresh, non-injected keyboard/button/wheel interaction before the ten-second qualification timer starts. Mouse movement alone is insufficient. Explicit shortcut launch requests are counted diagnostically but do not affect ranking or active-day eligibility. Startup apps remain eligible if you actually work in them. Windows-reported injected input is rejected, including ordinary SendInput automation. Virtual input drivers can appear as hardware; the app cannot prove the identity or intention of a person. Controller-only use, passive playback and interactions inaccessible at the current integrity level can be undercounted; use a manual rule for those cases. Two shortcuts using the same executable but different arguments or working directories are distinct identities; ambiguous foreground matches are skipped. Steam games can match a unique installation directory; Windows app shortcuts can match a unique application ID.
+A process launch, autostart or foreground activation alone gives no score. A new foreground window must receive fresh, non-injected keyboard/button/wheel interaction before the ten-second qualification timer starts. Mouse movement alone is insufficient. New quick shortcuts are byte-identical copies of the originals and launch directly without consulting Desktop Pilot or its database. Legacy launch requests are retained only for compatibility and do not affect ranking or active-day eligibility. Startup apps remain eligible if you actually work in them. Windows-reported injected input is rejected, including ordinary SendInput automation. Virtual input drivers can appear as hardware; the app cannot prove the identity or intention of a person. Controller-only use, passive playback and interactions inaccessible at the current integrity level can be undercounted; use a manual rule for those cases. Two shortcuts using the same executable but different arguments or working directories are distinct identities; ambiguous foreground matches are skipped. Steam games can match a unique installation directory; Windows app shortcuts can match a unique application ID.
 
 Fresh profiles begin with passive learning for 7 qualified **computer sessions**, independent of app switches. Configure 1–100 sessions or 1–90 active days, with Sessions / Days / Either / Both modes. A session requires 5 minutes of tracked activity; 30 minutes without tracked activity starts a new session. An active calendar day requires 5 minutes in total, even across shorter visits. Merely leaving the PC off does not advance the day requirement. Progress is saved locally and survives restarts. While learning is pending, both manual Apply and automatic placement are blocked; disabling the learning requirement is an explicit override. After the threshold is reached, the first fill waits only for an eligible app and a safe idle moment, not an additional weekly interval. The per-app active-day filter defaults to one day and remains adjustable. Increasing thresholds after learning has completed does not start a new learning phase. The first eligible fill can use all available slots. Subsequent automatic reviews run every seven days, after at least fifteen seconds of user inactivity, outside fullscreen activity and mouse dragging. Default ordinary replacement limit: one; a challenger must exceed the current score by both 1.5× and 3 points. Existing valid shortcuts do not disappear just because history was cleared or aged out.
 
@@ -44,7 +46,7 @@ The shortcut area uses Explorer's grid on the primary monitor. Initial setup fin
 
 Display geometry changes, unexpected taskbar formats, an occupied area or an interrupted transaction pause placement. Fix the reported condition, or explicitly disable the taskbar filter when appropriate. **Accept current display geometry** acknowledges the current display layout; it does not move existing icons.
 
-Each transaction records before/after state and backup bytes before changing files. Undo checks hashes before removing or restoring a file. If a user edited a file, it stops instead of overwriting the edit. Undo pauses automatic changes. Original applications are launched through their original Shell shortcut, preserving its arguments, working directory and elevation behavior.
+Each transaction records before/after state and backup bytes before changing files. Undo checks hashes before removing or restoring a file. If a user edited a file, it stops instead of overwriting the edit. Undo pauses automatic changes. New quick shortcuts preserve the original file bytes, extension, arguments, working directory, icon and elevation behavior. They remain usable if Desktop Pilot is stopped or its catalog is unavailable.
 
 ## Disable or remove
 
@@ -54,9 +56,9 @@ Extract the release archive and run:
 powershell -NoProfile -File .\disable.ps1
 ```
 
-This stops the background process, disables tracking and startup, and undoes managed changes. `-KeepShortcuts` disables the tracker while retaining quick shortcuts; those shortcuts still require the installed executable and database to launch.
+This stops the background process, disables tracking and startup, and undoes managed changes. `-KeepShortcuts` disables the tracker while retaining quick shortcuts; shortcuts created with 0.1.1 or later launch independently. Older 0.1.0 wrappers still require Desktop Pilot and its profile.
 
-Local data is retained for recovery. After undo completes successfully and no managed shortcuts remain, you can remove `%LOCALAPPDATA%\DesktopPilot` and the `Desktop Pilot` Start menu shortcut. Never delete that directory while keeping managed quick shortcuts. If undo reports a conflict, resolve it before removing the application.
+Local data is retained for recovery. After undo completes successfully and no managed shortcuts remain, you can remove `%LOCALAPPDATA%\DesktopPilot` and the `Desktop Pilot` Start menu shortcut. Before removing local data, replace any remaining 0.1.0 wrappers with copies of the originals. If undo reports a conflict, resolve it before removing the application.
 
 ## Update
 
@@ -72,5 +74,6 @@ Close Settings, use **Exit** in the tray menu, and back up the local data direct
 | `store.rs` | Local SQLite persistence |
 | `learning.rs` | Persistent passive observation, computer sessions and active-day thresholds |
 | `activity.rs` | Input-provenance filtering and fresh foreground-interaction evidence |
+| `profile.rs` | Consistent installed-profile selection across launch environments |
 | `setup.rs` | Per-user first-run installation |
 | `ui.rs`, `i18n.rs`, `tray.rs` | Bilingual settings and tray controls |

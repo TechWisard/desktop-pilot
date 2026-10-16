@@ -43,7 +43,8 @@ impl Store {
     pub fn app(&self, id: &str) -> Result<App> {
         let s: String = self
             .db
-            .query_row("SELECT data FROM apps WHERE id=?1", [id], |r| r.get(0))?;
+            .query_row("SELECT data FROM apps WHERE id=?1", [id], |r| r.get(0))
+            .context("Shortcut is missing from this Desktop Pilot profile. Open the original shortcut or refresh the list in Settings.")?;
         Ok(serde_json::from_str(&s)?)
     }
     pub fn put_app(&self, a: &App) -> Result<()> {

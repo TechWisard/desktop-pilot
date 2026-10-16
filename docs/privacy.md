@@ -9,7 +9,7 @@ Data remains in `%LOCALAPPDATA%\DesktopPilot`:
 | Data | Purpose / retention |
 | --- | --- |
 | App names, source/target paths, arguments, working directories, taskbar-pin status | Identify and launch shortcuts; retained in the catalog |
-| Daily launches, sessions and active seconds | Rank apps; usage rows older than 90 days removed during maintenance |
+| Confirmed sessions and active seconds; legacy launch counters | Sessions and seconds rank apps; launch counters do not. Usage rows older than 90 days removed during maintenance |
 | Rules, configuration, managed shortcut paths and positions | Preserve your choices and desktop layout |
 | Initial learning progress, qualified session count, last activity timestamp and daily active seconds | Enforce the passive-observation threshold; up to 90 day totals, no sequence of app/window events |
 | Operation events | Latest 2,000 events retained during maintenance; latest 100 shown |

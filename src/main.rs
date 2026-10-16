@@ -5,6 +5,7 @@ mod i18n;
 mod learning;
 mod model;
 mod native;
+mod profile;
 mod setup;
 mod store;
 mod tray;
@@ -15,15 +16,7 @@ use std::path::{Path, PathBuf};
 use store::Store;
 
 fn home(args: &[String]) -> Result<PathBuf> {
-    if let Some(i) = args.iter().position(|s| s == "--home") {
-        return Ok(std::path::absolute(
-            args.get(i + 1).context("Нет пути --home")?,
-        )?);
-    }
-    Ok(
-        PathBuf::from(std::env::var_os("LOCALAPPDATA").context("LOCALAPPDATA отсутствует")?)
-            .join("DesktopPilot"),
-    )
+    profile::home(args)
 }
 fn emit(args: &[String], value: &impl serde::Serialize) -> Result<()> {
     let text = serde_json::to_string_pretty(value)?;
@@ -43,6 +36,7 @@ fn run() -> Result<()> {
     let _com = native::Com::new()?;
     let h = home(&args)?;
     let s = Store::open(&h)?;
+    let h = s.home.clone();
     i18n::set(&s.get::<Config>("config")?.language);
     if args.first().is_some_and(|s| s == "--probe") {
         let p = PathBuf::from(args.get(1).context("Нет пути проверочного файла")?);
@@ -224,7 +218,7 @@ fn run() -> Result<()> {
             config.collect = false;
             config.autostart = false;
             s.set("config", &config)?;
-            native::autostart(&std::env::current_exe()?, false)?;
+            native::autostart(&std::env::current_exe()?, &h, false)?;
             emit(&args, &serde_json::json!({"disabled":true,"config":config}))
         }
         "--self-test" => self_test(&h, &args),
@@ -321,11 +315,16 @@ fn self_test(home: &Path, args: &[String]) -> Result<()> {
     let managed = &state.owned[0];
     let info = native::read_link(Path::new(&managed.path))?;
     ensure!(
-        info.arguments
-            .starts_with(&format!("--launch {} --home ", app.id)),
-        "Неверный идентификатор запуска"
+        info.identity() == app.identity(),
+        "Quick shortcut identity changed"
     );
-    // Exercise the actual managed shortcut chain, only against our inert fixture binary.
+    ensure!(
+        std::fs::read(&managed.path)? == std::fs::read(&original)?,
+        "Quick shortcut is not an exact copy"
+    );
+    // A missing catalog entry must not prevent the shortcut's original target from opening.
+    s.db.execute("DELETE FROM apps WHERE id=?1", [&app.id])?;
+    // Exercise Shell only against our inert fixture binary.
     native::open_file(Path::new(&managed.path))?;
     for _ in 0..50 {
         if marker.exists() {
@@ -334,9 +333,10 @@ fn self_test(home: &Path, args: &[String]) -> Result<()> {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
     ensure!(marker.exists(), "Shell не выполнил цепочку быстрого ярлыка");
+    s.put_app(&app)?;
     ensure!(
-        s.days()?.iter().any(|d| d.launches == 1),
-        "Точный запуск не учтён"
+        s.days()?.is_empty(),
+        "Shortcut launch changed the demand score"
     );
     engine::rollback(&s)?;
     ensure!(
@@ -444,9 +444,47 @@ fn self_test(home: &Path, args: &[String]) -> Result<()> {
         std::fs::read_dir(&empty_desktop)?.next().is_none(),
         "Tracking-only setup created shortcuts"
     );
+    let protocol = Store::open(&home.join("test-protocol"))?;
+    let protocol_desktop = protocol.home.join("Desktop");
+    std::fs::create_dir_all(&protocol_desktop)?;
+    protocol.set("test_desktop", &protocol_desktop.to_string_lossy())?;
+    protocol.set(
+        "config",
+        &Config {
+            learning_enabled: false,
+            respect_taskbar_pins: false,
+            ..Default::default()
+        },
+    )?;
+    let source_url = protocol.home.join("original.url");
+    std::fs::write(
+        &source_url,
+        b"[InternetShortcut]\r\nURL=steam://rungameid/42\r\n",
+    )?;
+    let mut url_app = native::read_link(&source_url)?;
+    url_app.policy = Policy::Always;
+    protocol.put_app(&url_app)?;
+    engine::apply(&protocol, true)?;
+    let protocol_state: State = protocol.get("state")?;
+    let url_copy = Path::new(&protocol_state.owned[0].path);
+    ensure!(
+        url_copy
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("url")),
+        "Protocol shortcut extension changed"
+    );
+    ensure!(
+        std::fs::read(url_copy)? == std::fs::read(&source_url)?,
+        "Protocol shortcut bytes changed"
+    );
+    ensure!(
+        native::read_link(url_copy)?.identity() == url_app.identity(),
+        "Protocol identity changed"
+    );
+    engine::rollback(&protocol)?;
     emit(
         args,
-        &serde_json::json!({"passed":true,"checks":["native shortcut creation","target and launch identity","transactional apply","rollback original bytes","Shell launch of inert fixture","manual edit ownership release","interrupted transaction blocks new changes and rolls back","manual rename pins position","manual deletion prevents return","rollback refuses changed files","clean first-run install and background lifecycle","collection disabled and tracking-only desktop unchanged","passive learning blocks placement","seven qualified sessions unlock initial placement"],"originals_unchanged":true}),
+        &serde_json::json!({"passed":true,"checks":["native shortcut creation","target and launch identity","transactional apply","rollback original bytes","Shell launch of inert fixture","launch without a catalog entry","byte-identical protocol shortcuts","manual edit ownership release","interrupted transaction blocks new changes and rolls back","manual rename pins position","manual deletion prevents return","rollback refuses changed files","clean first-run install and background lifecycle","collection disabled and tracking-only desktop unchanged","passive learning blocks placement","seven qualified sessions unlock initial placement"],"originals_unchanged":true}),
     )
 }
 fn main() {

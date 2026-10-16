@@ -1,12 +1,12 @@
 param([switch]$KeepShortcuts)
 $ErrorActionPreference = 'Stop'
-$pilotDirectory = Join-Path $env:LOCALAPPDATA 'DesktopPilot'
+$pilotDirectory = if ((Test-Path -LiteralPath (Join-Path $PSScriptRoot 'desktop-pilot.exe')) -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'usage.sqlite'))) { $PSScriptRoot } else { Join-Path $env:LOCALAPPDATA 'DesktopPilot' }
 $pilotExecutable = Join-Path $pilotDirectory 'desktop-pilot.exe'
 if (-not (Test-Path -LiteralPath $pilotExecutable)) { throw 'Desktop Pilot is not installed' }
 $reportDirectory = Join-Path $pilotDirectory ('disable-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory -Path $reportDirectory | Out-Null
 function Invoke-Pilot([string[]]$Values) {
-    $arguments = ($Values | ForEach-Object { '"' + $_ + '"' }) -join ' '
+    $arguments = (@($Values) + @('--home', $pilotDirectory) | ForEach-Object { '"' + $_ + '"' }) -join ' '
     $process = Start-Process -FilePath $pilotExecutable -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw (Get-Content -Raw -LiteralPath (Join-Path $pilotDirectory 'last-error.txt') -Encoding UTF8) }
 }

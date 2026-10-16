@@ -16,7 +16,7 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It lear
 
 ## Get started
 
-1. Download and extract **DesktopPilot-0.1.0-windows-x64.zip** from [Releases](https://github.com/TechWisard/desktop-pilot/releases/latest).
+1. Download and extract **DesktopPilot-0.1.1-windows-x64.zip** from [Releases](https://github.com/TechWisard/desktop-pilot/releases/latest).
 2. Run `desktop-pilot.exe`. Choose **English** or **Русский**, review the shortcut area and startup preferences, then select **Start using Desktop Pilot**.
 3. Use your computer normally. The default is **passive observation for 7 computer sessions**. No quick shortcuts are created during learning. After the threshold, the most-used eligible apps appear automatically during an idle period. Choose sessions, active days, either condition or both in Settings.
 
@@ -45,13 +45,15 @@ Usage is more than a launch count. Repeated active days, confirmed foreground se
 
 The catalog scans desktop shortcut folders up to three levels deep. Add other `.lnk` or `.url` files through Settings; it does not add every installed program. Ambiguous executable profiles are kept separate. Steam game directories and Windows app identities are used where they can be matched uniquely.
 
+Quick shortcuts created with 0.1.1 or later are exact copies of your originals. They launch directly and keep working when Desktop Pilot is stopped or its database is unavailable.
+
 ## Local by design
 
 No account, analytics, cloud synchronization or network service. The tracker stores local app paths, daily usage totals, preferences and undo records. It never records key codes, typed text, window titles, document content or browser history. Input provenance flags and a recent interaction timestamp are used to distinguish activity from unattended launches. **Do not upload your local database or undo folder.** [Privacy details](docs/privacy.md)
 
 ## Compatibility and verification
 
-Version **0.1.0 is a preview**, intended for Windows 10/11 x64 with the standard Explorer desktop. Live desktop integration has been checked on Windows 11. Automated geometry tests cover 100 combinations of resolution, scaling and desktop origin, including empty, occupied and insufficient-space cases. Those tests do not replace physical multi-monitor testing.
+Version **0.1.1 is a preview**, intended for Windows 10/11 x64 with the standard Explorer desktop. Live desktop integration has been checked on Windows 11. Automated geometry tests cover 100 combinations of resolution, scaling and desktop origin, including empty, occupied and insufficient-space cases. Those tests do not replace physical multi-monitor testing.
 
 Explorer auto-arrange must be off for positioning. A display-layout change pauses placement until you accept the new geometry. Unrecognized taskbar data stops changes rather than guessing; the pin filter can be disabled explicitly. Alternative shells and virtual-desktop managers are not validated. See [verification scope](docs/verification.md).
 

@@ -51,8 +51,8 @@ fn safe_file(path: &Path, root: &Path) -> Result<()> {
     );
     ensure!(
         path.extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("lnk")),
-        "Управлять можно только файлами .lnk"
+            .is_some_and(|e| e.eq_ignore_ascii_case("lnk") || e.eq_ignore_ascii_case("url")),
+        "Only .lnk and .url shortcuts can be managed"
     );
     if let Ok(m) = path.symlink_metadata() {
         ensure!(
@@ -249,7 +249,8 @@ pub fn reconcile_manual(store: &Store) -> Result<()> {
             let mut renamed = None;
             for entry in std::fs::read_dir(&desktop)? {
                 let p = entry?.path();
-                if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("lnk"))
+                if p.extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("lnk") || e.eq_ignore_ascii_case("url"))
                     && fingerprint(&p).is_ok_and(|h| h == o.sha)
                 {
                     renamed = Some(p);
@@ -472,10 +473,18 @@ pub fn apply(store: &Store, initial: bool) -> Result<String> {
         if name.chars().count() > 24 {
             name = name.chars().take(21).collect::<String>() + "…";
         }
-        let mut file = desktop.join(format!("{}.lnk", name.trim().trim_end_matches('.')));
+        let extension = Path::new(&app.source)
+            .extension()
+            .and_then(|e| e.to_str())
+            .context("Shortcut extension is missing")?;
+        ensure!(
+            extension.eq_ignore_ascii_case("lnk") || extension.eq_ignore_ascii_case("url"),
+            "Unsupported shortcut extension"
+        );
+        let mut file = desktop.join(format!("{}.{extension}", name.trim().trim_end_matches('.')));
         if file.exists() {
             file = desktop.join(format!(
-                "{} · {}.lnk",
+                "{} · {}.{extension}",
                 name.chars().take(18).collect::<String>(),
                 if cfg.language == "ru" {
                     "быстрый"
@@ -490,30 +499,17 @@ pub fn apply(store: &Store, initial: bool) -> Result<String> {
             "Место занято одноимённым ярлыком: {}",
             file.display()
         );
-        let stage = directory.join(format!("new-{id}.lnk"));
-        let args = format!("--launch {id} --home \"{}\"", store.home.display());
-        let exe = std::env::current_exe()?;
-        let icon = if app.icon.is_empty() {
-            app.target.as_str()
-        } else {
-            app.icon.as_str()
-        };
-        native::make_link(
-            &stage,
-            &exe,
-            &args,
-            icon,
-            app.icon_index,
-            &format!(
-                "Desktop Pilot: {}. {}",
-                app.name,
-                if cfg.language == "ru" {
-                    "Исходный ярлык сохранён."
-                } else {
-                    "Original shortcut preserved."
-                }
-            ),
-        )?;
+        let stage = directory.join(format!("new-{id}.{extension}"));
+        let source = Path::new(&app.source);
+        ensure!(
+            native::read_link(source)?.identity() == app.identity(),
+            "Source shortcut changed before copying"
+        );
+        copy_new(source, &stage)?;
+        ensure!(
+            native::read_link(&stage)?.identity() == app.identity(),
+            "Copied shortcut identity changed"
+        );
         let owned = Owned {
             app: id.clone(),
             path: file.to_string_lossy().into_owned(),
@@ -892,8 +888,8 @@ pub fn monitor(home: PathBuf) -> Result<()> {
     let mut seconds = 0;
     let mut session_times: HashMap<String, i64> = HashMap::new();
     let mut last_tick = Instant::now();
-    let mut maintenance = Instant::now() - Duration::from_secs(120);
-    let mut scanned = Instant::now() - Duration::from_secs(21600);
+    let mut maintenance: Option<Instant> = None;
+    let mut scanned: Option<Instant> = None;
     let mut last_autostart = None;
     loop {
         if store.get::<bool>("shutdown")? {
@@ -910,7 +906,7 @@ pub fn monitor(home: PathBuf) -> Result<()> {
         crate::activity::set_enabled(config.collect);
         if last_autostart != Some(config.autostart) {
             if real_desktop(&store)? {
-                native::autostart(&std::env::current_exe()?, config.autostart)?;
+                native::autostart(&std::env::current_exe()?, &store.home, config.autostart)?;
             }
             last_autostart = Some(config.autostart);
         }
@@ -970,14 +966,14 @@ pub fn monitor(home: PathBuf) -> Result<()> {
             seconds = 0;
             focus = crate::activity::FocusEvidence::default();
         }
-        if maintenance.elapsed() >= Duration::from_secs(60) {
-            maintenance = Instant::now();
+        if maintenance.is_none_or(|at| at.elapsed() >= Duration::from_secs(60)) {
+            maintenance = Some(Instant::now());
             store.set("heartbeat", &now())?;
             let result = (|| -> Result<()> {
-                if scanned.elapsed() >= Duration::from_secs(21600) {
+                if scanned.is_none_or(|at| at.elapsed() >= Duration::from_secs(21600)) {
                     refresh_apps(&store)?;
                     apps = store.apps()?;
-                    scanned = Instant::now();
+                    scanned = Some(Instant::now());
                     store.housekeeping()?;
                 }
                 reconcile_manual(&store)?;

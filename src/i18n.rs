@@ -17,6 +17,14 @@ fn translate(value: &str, russian: bool) -> String {
     let mut output = value.to_owned();
     for (ru, en) in [
         (
+            "В этом профиле Desktop Pilot нет записи ярлыка. Откройте исходный ярлык или обновите список в настройках.",
+            "Shortcut is missing from this Desktop Pilot profile. Open the original shortcut or refresh the list in Settings.",
+        ),
+        (
+            "Управлять можно только ярлыками .lnk и .url",
+            "Only .lnk and .url shortcuts can be managed",
+        ),
+        (
             "Наблюдение ещё идёт. Ярлыки не изменены.",
             "Passive observation is still in progress. No shortcuts were changed.",
         ),
