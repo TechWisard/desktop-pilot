@@ -4,7 +4,7 @@
 
 ## Release gates
 
-The Windows workflow checks formatting, runs the test suite, rejects Clippy warnings, builds the executable and runs `scripts/test-native.ps1` on both `windows-2022` and `windows-2025`. Publishing depends on both jobs succeeding. The optimized release executable runs the native fixture again before packaging. The package script checks its Windows product version against Cargo metadata and produces SHA-256 checksums for both archives.
+The Windows workflow checks formatting, runs the test suite, rejects Clippy warnings, builds the executable and runs `scripts/test-native.ps1` on both `windows-2022` and `windows-2025`. Publishing depends on both jobs succeeding. The optimized release executable runs the native fixture again before packaging. The package script checks its Windows product version against Cargo metadata and produces SHA-256 checksums for both archives. The release links the C runtime statically to avoid a separate Visual C++ Redistributable requirement.
 
 [Actual workflow results](https://github.com/TechWisard/desktop-pilot/actions/workflows/checks.yml) are the authoritative record for a given commit. The release archives are built from the published tag's commit.
 

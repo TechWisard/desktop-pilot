@@ -17,7 +17,8 @@ try {
     $remaps[$projectRoot] = '/project'
     $cargoDirectory = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE '.cargo' }
     $remaps[$cargoDirectory] = '/cargo'
-    $buildFlags = @()
+    # Bundle the C runtime so the standalone EXE does not need a separate redistributable.
+    $buildFlags = @('-C', 'target-feature=+crt-static')
     foreach ($entry in $remaps.GetEnumerator()) {
         $buildFlags += '--remap-path-prefix=' + $entry.Key + '=' + $entry.Value
         $buildFlags += '--remap-path-prefix=' + $entry.Key.Replace('\','/') + '=' + $entry.Value
@@ -25,8 +26,10 @@ try {
     $savedFlags = $env:CARGO_ENCODED_RUSTFLAGS
     try {
         $env:CARGO_ENCODED_RUSTFLAGS = $buildFlags -join [char]31
-        cargo build --locked --release
+        cargo build --locked --release --target x86_64-pc-windows-msvc
         if ($LASTEXITCODE) { throw 'Release build failed' }
+        New-Item -ItemType Directory -Path target/release -Force | Out-Null
+        Copy-Item -LiteralPath target/x86_64-pc-windows-msvc/release/desktop-pilot.exe -Destination target/release/desktop-pilot.exe -Force
     } finally { $env:CARGO_ENCODED_RUSTFLAGS = $savedFlags }
     Write-Host 'Built target/release/desktop-pilot.exe'
 } finally { Pop-Location }

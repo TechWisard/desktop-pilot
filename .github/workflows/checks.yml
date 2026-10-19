@@ -4,7 +4,27 @@ on:
   pull_request:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
+  supersede:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Stop outdated builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/$GH_REPO/actions/workflows/checks.yml/runs?branch=main&status=in_progress&per_page=30" \
+            --jq ".workflow_runs[] | select(.id != $GITHUB_RUN_ID and .head_sha != \"$GITHUB_SHA\") | .id" |
+          while read -r run_id; do
+            gh api --method POST "repos/$GH_REPO/actions/runs/$run_id/cancel" || true
+          done
   check:
     timeout-minutes: 20
     strategy:
