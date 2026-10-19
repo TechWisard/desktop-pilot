@@ -14,8 +14,49 @@ pub fn runtime(value: &str) -> String {
     translate(value, RUSSIAN.load(Ordering::Relaxed))
 }
 fn translate(value: &str, russian: bool) -> String {
-    let mut output = value.to_owned();
-    for (ru, en) in [
+    // Keep instructions in older history entries aligned with the current UI.
+    let value = match value {
+        "Есть незавершённая операция. Сначала нажмите «Откатить»." => {
+            "Есть незавершённая операция. Сначала нажмите «Отменить последнее изменение»."
+        }
+        "Изменилась геометрия экрана. Нажмите «Принять текущую геометрию»." => {
+            "Изменилась геометрия экрана. Нажмите «Принять текущее размещение»."
+        }
+        other => other,
+    };
+    let translations = [
+        (
+            "Есть незавершённая операция. Сначала нажмите «Отменить последнее изменение».",
+            "An operation was interrupted. Choose Undo last change first.",
+        ),
+        (
+            "Изменилась геометрия экрана. Нажмите «Принять текущее размещение».",
+            "Display geometry changed. Choose Accept current layout.",
+        ),
+        (
+            "Изменилась геометрия экрана. Нажмите «Принять текущее размещение» в настройках; существующие значки не перемещались.",
+            "Display geometry changed. Choose Accept current layout in Settings; existing icons were not moved.",
+        ),
+        (
+            "Запуск фоновой работы ещё не завершён. Проверьте состояние на главной.",
+            "Background startup has not completed yet. Check the status in Settings.",
+        ),
+        (
+            "Результат команды больше недоступен. Проверьте текущее состояние на главной.",
+            "The command result is no longer available. Check the current state on Home.",
+        ),
+        (
+            "В этой папке находится база данных, не принадлежащая Desktop Pilot. Она не изменена.",
+            "This folder contains a database that is not a Desktop Pilot profile; it was not changed",
+        ),
+        (
+            "Не удалось запустить фоновую работу Desktop Pilot",
+            "Cannot start Desktop Pilot background work",
+        ),
+        (
+            "Файловая система рабочего стола не позволяет проверить принадлежность ярлыка; размещение отменено",
+            "The desktop filesystem cannot verify shortcut ownership; placement was cancelled",
+        ),
         (
             "В этом профиле Desktop Pilot нет записи ярлыка. Откройте исходный ярлык или обновите список в настройках.",
             "Shortcut is missing from this Desktop Pilot profile. Open the original shortcut or refresh the list in Settings.",
@@ -288,12 +329,379 @@ fn translate(value: &str, russian: bool) -> String {
             "Сначала завершите фоновое приложение",
             "Stop the background process first",
         ),
-    ] {
-        output = if russian {
-            output.replace(en, ru)
+        ("Передаём команду…", "Sending the command…"),
+        ("Запускаем фоновую работу…", "Starting background work…"),
+        ("Сохраняем настройки…", "Saving settings…"),
+        ("Подготавливаем Desktop Pilot…", "Preparing Desktop Pilot…"),
+        ("Добавляем ярлык…", "Adding the shortcut…"),
+        ("Настройки сохранены.", "Settings saved."),
+        (
+            "Несохранённые правки отменены.",
+            "Unsaved changes discarded.",
+        ),
+        ("Фоновая работа запущена.", "Background work started."),
+        (
+            "Ярлык добавлен. Прежние правила и история сохранены.",
+            "Shortcut added. Existing rules and history were kept.",
+        ),
+        (
+            "Desktop Pilot готов. Окно можно закрыть: программа продолжит работу в области уведомлений.",
+            "Desktop Pilot is ready. You can close this window; it will keep working in the tray.",
+        ),
+        (
+            "Дождитесь завершения текущей операции перед закрытием.",
+            "Please wait for the current operation to finish before closing.",
+        ),
+        (
+            "Операция неожиданно остановилась. Сохранённые настройки доступны; попробуйте снова.",
+            "The operation stopped unexpectedly. Your saved settings are available; try again.",
+        ),
+        (
+            "Не удалось прочитать размещение рабочего стола. Попробуйте обновить схему.",
+            "Could not read the desktop layout. Try refreshing it.",
+        ),
+        (
+            "Эти настройки изменились в фоне. Отмените правки и повторите нужное изменение.",
+            "These settings changed in the background. Discard your edits, then make the change again.",
+        ),
+        ("Некорректный формат настроек", "Invalid settings format"),
+        (
+            "Учёт использования приостановлен",
+            "Usage tracking is paused",
+        ),
+        (
+            "Настройка автоматики изменена через значок программы",
+            "Automation toggled from the tray",
+        ),
+        (
+            "Настройка учёта активности изменена через значок программы",
+            "Activity tracking toggled from the tray",
+        ),
+        (
+            "Не удалось обновить автозапуск:",
+            "Autostart could not be updated:",
+        ),
+        (
+            "Не удалось обновить закрепления панели задач:",
+            "Taskbar pins could not be refreshed:",
+        ),
+        (
+            "Не удалось проверить меню «Пуск»:",
+            "Start menu could not be scanned:",
+        ),
+        (
+            "Достигнут предел поиска в 3000 ярлыков; прежние записи сохранены",
+            "Shortcut scan limit reached (3000); existing catalog entries were retained",
+        ),
+        (
+            "Закрепления панели задач не проверены. Обновите список или отключите их учёт в настройках.",
+            "Taskbar pins could not be verified. Refresh the list or turn off taskbar pin filtering in Settings.",
+        ),
+        (
+            "Файл ярлыка заменён другим файлом и сохранён без изменений",
+            "Shortcut was replaced by another file; it was preserved",
+        ),
+        (
+            "Исходный ярлык выведен из управления:",
+            "Original shortcut released from management:",
+        ),
+        (
+            "Не удалось выбрать свободное имя ярлыка",
+            "Unable to find a free shortcut filename",
+        ),
+        (
+            "Координаты рабочего стола вышли за допустимый диапазон",
+            "Desktop coordinates overflow",
+        ),
+        ("У ярлыка нет расширения", "Shortcut extension is missing"),
+        (
+            "Подготовленный ярлык недоступен",
+            "Prepared shortcut is missing",
+        ),
+        (
+            "Недопустимый путь временного файла операции",
+            "Invalid transaction staging path",
+        ),
+        (
+            "Недопустимый временный файл операции",
+            "Invalid transaction staging file",
+        ),
+        (
+            "Недопустимый идентификатор операции",
+            "Invalid transaction identifier",
+        ),
+        (
+            "Недопустимое действие в операции",
+            "Invalid transaction operation",
+        ),
+        (
+            "В операции обнаружены конфликтующие пути ярлыков",
+            "Transaction contains conflicting shortcut paths",
+        ),
+        (
+            "Отмена не может изменять исходный ярлык",
+            "An original shortcut cannot be modified by Undo",
+        ),
+        (
+            "Недопустимый путь резервной копии операции",
+            "Invalid transaction backup path",
+        ),
+        (
+            "Временный файл отмены изменился и сохранён без перезаписи",
+            "Undo staging file was changed; it was preserved",
+        ),
+        (
+            "Временный файл отмены недоступен",
+            "Undo staging file is missing",
+        ),
+        (
+            "Команда прервана при завершении приложения. Проверьте текущее состояние и при необходимости повторите действие.",
+            "The command was interrupted when the app stopped. Check the current state and repeat the action if needed.",
+        ),
+        (
+            "Недопустимый идентификатор ярлыка",
+            "Invalid shortcut identifier",
+        ),
+        (
+            "Некорректный исторический рейтинг ярлыка",
+            "Invalid historical shortcut score",
+        ),
+        (
+            "Файл интернет-ярлыка слишком большой",
+            "Internet shortcut is too large",
+        ),
+        (
+            "Оборваны данные UTF-16 интернет-ярлыка",
+            "Incomplete UTF-16 internet shortcut",
+        ),
+        (
+            "Некорректные данные UTF-16 интернет-ярлыка",
+            "Invalid UTF-16 internet shortcut",
+        ),
+        (
+            "Не удалось прочитать текст интернет-ярлыка",
+            "Cannot decode internet shortcut",
+        ),
+        (
+            "Недопустимая кодировка интернет-ярлыка",
+            "Invalid internet shortcut encoding",
+        ),
+        (
+            "В интернет-ярлыке обнаружен нулевой символ",
+            "Internet shortcut contains an embedded NUL",
+        ),
+        ("Файл ярлыка не найден:", "Shortcut file does not exist:"),
+        (
+            "Поддерживаются только ярлыки .lnk и .url",
+            "Only .lnk and .url shortcuts are supported",
+        ),
+        (
+            "Не удалось прочитать конфигурацию мониторов",
+            "Cannot read monitor topology",
+        ),
+        (
+            "Монитор рабочего стола недоступен",
+            "No desktop monitor is available",
+        ),
+        (
+            "Не удалось прочитать координаты рабочего стола",
+            "Cannot read desktop screen coordinates",
+        ),
+        (
+            "Не удалось прочитать закреплённый ярлык:",
+            "Cannot read pinned shortcut:",
+        ),
+        (
+            "Активное окно изменилось во время проверки",
+            "Foreground window changed while sampling",
+        ),
+        (
+            "Некорректная команда автозапуска",
+            "Invalid startup command",
+        ),
+        (
+            "Не удалось прочитать команду автозапуска",
+            "Cannot read startup command",
+        ),
+        (
+            "Недопустимое число аргументов автозапуска",
+            "Invalid startup argument count",
+        ),
+        (
+            "Некорректное значение автозапуска в реестре",
+            "Invalid startup registry value",
+        ),
+        (
+            "Установленный файл программы недоступен. Переустановите Desktop Pilot перед включением автозапуска",
+            "The installed executable is missing; reinstall Desktop Pilot before enabling startup",
+        ),
+        (
+            "Путь установки слишком длинный для автозапуска Windows. Выберите более короткий путь профиля",
+            "The installation path is too long for Windows startup; choose a shorter profile path",
+        ),
+        (
+            "Не удалось открыть настройки Desktop Pilot",
+            "Cannot open Desktop Pilot settings",
+        ),
+        (
+            "Не удалось обновить значок Desktop Pilot в области уведомлений",
+            "Cannot update the Desktop Pilot tray icon",
+        ),
+        (
+            "Не удалось включить управление значком с клавиатуры",
+            "Cannot enable keyboard access for the tray icon",
+        ),
+        (
+            "Не удалось зарегистрировать окно области уведомлений Desktop Pilot",
+            "Cannot register the Desktop Pilot tray window",
+        ),
+        (
+            "Не удалось зарегистрировать уведомления о перезапуске Проводника",
+            "Cannot register Explorer restart notifications",
+        ),
+        (
+            "Не удалось запустить таймер завершения фоновой работы",
+            "Cannot start the tray shutdown timer",
+        ),
+        (
+            "Ошибка обработки сообщений области уведомлений Windows",
+            "The Windows tray message loop failed",
+        ),
+        (
+            "Не удалось создать значок в области уведомлений",
+            "Failed to create the tray icon",
+        ),
+        (
+            "Фоновая работа ещё завершается. Подождите и повторно откройте новую версию.",
+            "Background work is still finishing. Wait for it to stop, then open the new version again.",
+        ),
+        (
+            "Установленный файл программы недоступен",
+            "The installed executable is missing",
+        ),
+        (
+            "В выбранной папке уже есть другой desktop-pilot.exe. Выберите пустую папку профиля.",
+            "A different desktop-pilot.exe already exists in the selected folder. Choose an empty profile folder.",
+        ),
+        (
+            "Подготовленное обновление не прошло проверку",
+            "The staged update failed verification",
+        ),
+        (
+            "Установленный файл программы изменился во время обновления",
+            "The installed executable changed during the update",
+        ),
+        (
+            "Путь резервной копии программы занят другим файлом",
+            "A different file already occupies the executable backup path",
+        ),
+        (
+            "Резервная копия программы не прошла проверку",
+            "The executable backup failed verification",
+        ),
+        (
+            "Не удалось заменить установленный файл. Закройте предыдущую версию и повторите попытку.",
+            "Cannot replace the installed executable. Close the previous version and try again.",
+        ),
+        (
+            "Установленный файл программы не прошёл проверку",
+            "The installed executable failed verification",
+        ),
+        (
+            "Восстановление автозапуска также не удалось:",
+            "Startup rollback also failed:",
+        ),
+        (
+            "Фоновое приложение завершилось при запуске:",
+            "Background process exited during startup:",
+        ),
+        (
+            "Фоновое приложение не подтвердило запуск. Подробности доступны в истории.",
+            "Background process did not confirm startup. Check the history for details.",
+        ),
+        (
+            "Нельзя заменять каталог или ссылку файловой системы:",
+            "Refusing to replace a directory or filesystem link:",
+        ),
+        (
+            "Параметр --home можно указать только один раз",
+            "--home may only be specified once",
+        ),
+        ("Не указан путь --home", "Missing --home path"),
+        (
+            "Не указан или недопустим путь --home",
+            "Missing or invalid --home path",
+        ),
+        (
+            "Переменная LOCALAPPDATA недоступна; задайте профиль через --home",
+            "LOCALAPPDATA is missing; use --home to choose a profile",
+        ),
+        ("Недопустимый путь профиля", "Invalid profile path"),
+        (
+            "Недопустимая родительская папка профиля",
+            "Invalid profile parent",
+        ),
+        (
+            "Путь профиля не является каталогом",
+            "The profile path is not a directory",
+        ),
+        (
+            "Не удалось определить начало местного дня",
+            "Cannot determine the start of the local day",
+        ),
+    ];
+    translate_phrases(value, russian, &translations)
+}
+
+// Translate known messages once. Do not reinterpret file paths, URLs or
+// fragments inside words as status messages.
+fn translate_phrases(value: &str, russian: bool, translations: &[(&str, &str)]) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut offset = 0;
+    while offset < value.len() {
+        let rest = &value[offset..];
+        let bytes = rest.as_bytes();
+        let path = rest.starts_with(r"\\")
+            || (bytes.len() >= 3
+                && bytes[0].is_ascii_alphabetic()
+                && bytes[1] == b':'
+                && matches!(bytes[2], b'\\' | b'/'))
+            || rest.starts_with("https://")
+            || rest.starts_with("http://");
+        if path {
+            let length = rest.find('\n').unwrap_or(rest.len());
+            output.push_str(&rest[..length]);
+            offset += length;
+            continue;
+        }
+        let found = translations
+            .iter()
+            .filter_map(|(ru, en)| {
+                let (source, target) = if russian { (*en, *ru) } else { (*ru, *en) };
+                if !rest.starts_with(source) {
+                    return None;
+                }
+                if offset > 0 && !source.contains(' ') && !source.ends_with(':') {
+                    return None;
+                }
+                let protected =
+                    |c: char| c.is_alphanumeric() || matches!(c, '_' | '/' | '\\' | '.' | '-');
+                if value[..offset].chars().next_back().is_some_and(protected)
+                    || rest[source.len()..].chars().next().is_some_and(protected)
+                {
+                    return None;
+                }
+                Some((source, target))
+            })
+            .max_by_key(|(source, _)| source.len());
+        if let Some((source, target)) = found {
+            output.push_str(target);
+            offset += source.len();
         } else {
-            output.replace(ru, en)
-        };
+            let c = rest.chars().next().expect("nonempty remaining message");
+            output.push(c);
+            offset += c.len_utf8();
+        }
     }
     output
 }
@@ -316,5 +724,56 @@ mod tests {
             "Slots must be between 1 and 8"
         );
         assert_eq!(translate("Sample app", false), "Sample app");
+    }
+
+    #[test]
+    fn paths_urls_and_names_inside_messages_are_preserved() {
+        for path in [
+            r"C:\Tools\Undo\Shortcut.lnk",
+            r"\\server\Undo\Shortcut.lnk",
+            "https://example.com/Undo",
+        ] {
+            assert_eq!(translate(path, true), path);
+        }
+        assert_eq!(translate("Undo.exe", true), "Undo.exe");
+        assert_eq!(
+            translate("Manual position pinned: Undo", true),
+            "Ручное положение закреплено: Undo"
+        );
+        assert_eq!(
+            translate(
+                r"Original shortcut is unavailable: C:\Tools\Undo\Original.lnk",
+                true
+            ),
+            r"Исходный ярлык недоступен: C:\Tools\Undo\Original.lnk"
+        );
+    }
+
+    #[test]
+    fn the_longest_message_wins_without_translating_its_output_again() {
+        let phrases = [
+            ("Первый", "Ready"),
+            ("Готово целиком", "Ready now"),
+            ("Ошибочный повтор", "Первый"),
+        ];
+        assert_eq!(
+            translate_phrases("Ready now", true, &phrases),
+            "Готово целиком"
+        );
+        assert_eq!(translate_phrases("Ready", true, &phrases), "Первый");
+    }
+
+    #[test]
+    fn notices_and_background_warnings_switch_languages() {
+        assert_eq!(translate("Settings saved.", true), "Настройки сохранены.");
+        assert_eq!(translate("Sending the command…", true), "Передаём команду…");
+        assert_eq!(
+            translate("Учёт использования приостановлен", false),
+            "Usage tracking is paused"
+        );
+        assert_eq!(
+            translate("Autostart could not be updated: access denied", true),
+            "Не удалось обновить автозапуск: access denied"
+        );
     }
 }

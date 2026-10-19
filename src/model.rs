@@ -7,10 +7,13 @@ pub fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 pub fn norm(s: &str) -> String {
-    expand_env(s)
-        .trim_start_matches(r"\\?\")
-        .replace('/', "\\")
-        .to_lowercase()
+    let expanded = expand_env(s).replace('/', "\\");
+    let ordinary = if let Some(unc) = expanded.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{unc}")
+    } else {
+        expanded.trim_start_matches(r"\\?\").to_owned()
+    };
+    ordinary.to_lowercase()
 }
 pub fn expand_env(s: &str) -> String {
     let mut output = String::new();
@@ -30,6 +33,23 @@ pub fn expand_env(s: &str) -> String {
     output.push_str(rest);
     output
 }
+/// HTTP hosts are case-insensitive; URL paths, credentials and query values are
+/// not Windows paths and must retain their original case and percent encoding.
+pub fn target_identity(target: &str) -> String {
+    if let Some((scheme, rest)) = target.split_once("://")
+        && (scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http"))
+    {
+        let boundary = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+        let (authority, suffix) = rest.split_at(boundary);
+        let authority = if let Some((credentials, host)) = authority.rsplit_once('@') {
+            format!("{credentials}@{}", host.to_lowercase())
+        } else {
+            authority.to_lowercase()
+        };
+        return format!("{}://{authority}{suffix}", scheme.to_lowercase());
+    }
+    norm(target)
+}
 pub fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -42,7 +62,7 @@ pub enum Policy {
     Never,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Config {
     pub language: String,
@@ -169,7 +189,7 @@ impl App {
     pub fn identity(&self) -> String {
         format!(
             "{}\n{}\n{}",
-            norm(&self.target),
+            target_identity(&self.target),
             self.arguments.trim(),
             norm(&self.cwd)
         )
@@ -202,6 +222,9 @@ pub struct Owned {
     pub position: Point,
     pub manual: bool,
     pub since: i64,
+    /// Stable filesystem identity; absent only for profiles created by older versions.
+    #[serde(default)]
+    pub file_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -228,37 +251,40 @@ pub struct Ranked {
 pub fn rank(apps: &[App], days: &[Day], cfg: &Config, time: i64) -> Vec<Ranked> {
     let mut output = Vec::new();
     for app in apps {
-        let mut score = if app.seed_at > 0 {
+        let seed_is_valid =
+            app.seed.is_finite() && app.seed > 0.0 && app.seed_at > 0 && app.seed_at <= time;
+        let mut score = if seed_is_valid {
             app.seed
-                * 2f64.powf(-((time - app.seed_at).max(0) as f64) / (86400.0 * cfg.half_life_days))
+                * 2f64.powf(
+                    -(time.saturating_sub(app.seed_at) as f64) / (86400.0 * cfg.half_life_days),
+                )
         } else {
             0.0
         };
         let mut active_days = HashSet::new();
-        let (mut launches, mut seconds) = (0, 0);
-        for d in days
-            .iter()
-            .filter(|d| d.app == app.id && time - d.date < 90 * 86400 && d.date <= time)
-        {
-            let age = (time - d.date).max(0) as f64 / 86400.0;
+        let (mut launches, mut seconds) = (0u32, 0u32);
+        for d in days.iter().filter(|d| {
+            d.app == app.id && d.date <= time && time.saturating_sub(d.date) < 90 * 86400
+        }) {
+            let age = time.saturating_sub(d.date) as f64 / 86400.0;
             let value = 2.0 * f64::from(d.sessions.min(12))
                 + (f64::from(d.seconds.min(3600)) / 60.0).ln_1p() * 0.4;
             score += value * 2f64.powf(-age / cfg.half_life_days);
             if d.sessions > 0 || d.seconds >= 10 {
                 active_days.insert(d.date);
             }
-            launches += d.launches;
-            seconds += d.seconds;
+            launches = launches.saturating_add(d.launches);
+            seconds = seconds.saturating_add(d.seconds);
         }
         let enough = active_days.len() >= cfg.min_days
-            || (app.seed > 0.0 && time - app.seed_at <= 30 * 86400);
+            || (seed_is_valid && time.saturating_sub(app.seed_at) <= 30 * 86400);
         let (eligible, reason) = if !app.valid {
             (false, "Исходный ярлык или цель недоступны")
         } else if app.policy == Policy::Never {
             (false, "Исключено вручную")
         } else if app.policy == Policy::Always {
             (true, "Постоянно: ручной выбор")
-        } else if app.pinned {
+        } else if cfg.respect_taskbar_pins && app.pinned {
             (false, "Уже закреплено на панели задач")
         } else if !enough {
             (false, "Пока мало независимых дней наблюдений")
@@ -276,7 +302,12 @@ pub fn rank(apps: &[App], days: &[Day], cfg: &Config, time: i64) -> Vec<Ranked> 
             reason: reason.into(),
         });
     }
-    output.sort_by(|a, b| b.score.total_cmp(&a.score).then(a.name.cmp(&b.name)));
+    output.sort_by(|a, b| {
+        b.score
+            .total_cmp(&a.score)
+            .then(a.name.cmp(&b.name))
+            .then(a.id.cmp(&b.id))
+    });
     output
 }
 
@@ -289,6 +320,7 @@ pub fn select(
 ) -> Vec<String> {
     let by_id: HashMap<_, _> = apps.iter().map(|a| (a.id.as_str(), a)).collect();
     let scores: HashMap<_, _> = ranking.iter().map(|r| (r.id.as_str(), r)).collect();
+    let score = |id: &str| scores.get(id).map_or(0.0, |r| r.score);
     let fixed = |id: &str| {
         by_id.get(id).is_some_and(|a| a.policy == Policy::Always)
             || state.owned.iter().any(|o| o.app == id && o.manual)
@@ -300,15 +332,17 @@ pub fn select(
                     .get(id)
                     .is_some_and(|a| a.valid && a.policy != Policy::Never))
     };
+    let mut seen = HashSet::new();
     let mut result: Vec<String> = state
         .owned
         .iter()
         .filter(|o| {
             allowed(&o.app)
-                || by_id
-                    .get(o.app.as_str())
-                    .is_some_and(|a| a.valid && a.policy == Policy::Auto && !a.pinned)
+                || by_id.get(o.app.as_str()).is_some_and(|a| {
+                    a.valid && a.policy == Policy::Auto && !(cfg.respect_taskbar_pins && a.pinned)
+                })
         })
+        .filter(|o| seen.insert(o.app.clone()))
         .map(|o| o.app.clone())
         .collect();
     for a in apps
@@ -324,11 +358,7 @@ pub fn select(
             .iter()
             .enumerate()
             .filter(|(_, id)| !fixed(id))
-            .min_by(|(_, a), (_, b)| {
-                scores[a.as_str()]
-                    .score
-                    .total_cmp(&scores[b.as_str()].score)
-            })
+            .min_by(|(_, a), (_, b)| score(a).total_cmp(&score(b)))
             .map(|(i, _)| i);
         if let Some(i) = worst {
             result.remove(i);
@@ -337,7 +367,10 @@ pub fn select(
         }
     }
     let mut changes = 0;
-    for candidate in ranking.iter().filter(|r| r.eligible) {
+    for candidate in ranking
+        .iter()
+        .filter(|r| r.eligible && by_id.contains_key(r.id.as_str()))
+    {
         if result.contains(&candidate.id) {
             continue;
         }
@@ -353,12 +386,8 @@ pub fn select(
             .iter()
             .enumerate()
             .filter(|(_, id)| !fixed(id))
-            .min_by(|(_, a), (_, b)| {
-                scores[a.as_str()]
-                    .score
-                    .total_cmp(&scores[b.as_str()].score)
-            })
-            .map(|(i, id)| (i, scores[id.as_str()].score));
+            .min_by(|(_, a), (_, b)| score(a).total_cmp(&score(b)))
+            .map(|(i, id)| (i, score(id)));
         if let Some((i, value)) = worst
             && candidate.score >= value * cfg.advantage
             && candidate.score - value >= 3.0
@@ -391,6 +420,7 @@ mod tests {
             position: Point::default(),
             manual,
             since: 0,
+            file_id: None,
         }
     }
     #[test]
@@ -552,5 +582,150 @@ mod tests {
         assert_eq!(cfg.zone_col, 7);
         assert_eq!(cfg.language, "en");
         assert!(cfg.respect_taskbar_pins);
+    }
+    #[test]
+    fn disabling_pin_filter_takes_effect_before_a_rescan() {
+        let mut pinned = app("pinned", 20.0);
+        pinned.pinned = true;
+        let cfg = Config {
+            respect_taskbar_pins: false,
+            ..Default::default()
+        };
+        assert!(rank(&[pinned.clone()], &[], &cfg, now())[0].eligible);
+        pinned.seed = 0.0;
+        let state = State {
+            owned: vec![owned("pinned", false)],
+            ..Default::default()
+        };
+        assert_eq!(
+            select(
+                &[pinned.clone()],
+                &rank(&[pinned], &[], &cfg, now()),
+                &state,
+                &cfg,
+                false
+            ),
+            ["pinned"]
+        );
+    }
+    #[test]
+    fn invalid_or_future_history_cannot_unlock_placement() {
+        let timestamp = now();
+        for (seed, seed_at) in [
+            (f64::NAN, timestamp),
+            (f64::INFINITY, timestamp),
+            (-4.0, timestamp),
+            (10.0, timestamp + 86400),
+        ] {
+            let a = App {
+                id: "invalid".into(),
+                valid: true,
+                seed,
+                seed_at,
+                ..Default::default()
+            };
+            let ranked = rank(&[a], &[], &Config::default(), timestamp);
+            assert!(!ranked[0].eligible);
+            assert_eq!(ranked[0].score, 0.0);
+        }
+    }
+    #[test]
+    fn aggregate_counters_saturate_and_extreme_dates_do_not_overflow() {
+        let days = vec![
+            Day {
+                app: "a".into(),
+                date: now(),
+                launches: u32::MAX,
+                seconds: u32::MAX,
+                ..Default::default()
+            },
+            Day {
+                app: "a".into(),
+                date: now() - 86400,
+                launches: 1,
+                seconds: 1,
+                ..Default::default()
+            },
+            Day {
+                app: "a".into(),
+                date: i64::MIN,
+                sessions: 900,
+                ..Default::default()
+            },
+        ];
+        let ranking = rank(&[app("a", 0.0)], &days, &Config::default(), now());
+        assert_eq!(ranking[0].launches, u32::MAX);
+        assert_eq!(ranking[0].seconds, u32::MAX);
+        assert!(ranking[0].score.is_finite());
+    }
+    #[test]
+    fn old_duplicate_ownership_does_not_consume_extra_slots() {
+        let apps = [app("a", 10.0), app("b", 20.0)];
+        let cfg = Config {
+            slots: 2,
+            ..Default::default()
+        };
+        let state = State {
+            owned: vec![owned("a", false), owned("a", false)],
+            ..Default::default()
+        };
+        assert_eq!(
+            select(&apps, &rank(&apps, &[], &cfg, now()), &state, &cfg, false).len(),
+            2
+        );
+    }
+    #[test]
+    fn incomplete_ranking_does_not_panic_or_choose_unknown_apps() {
+        let apps = [app("a", 10.0), app("b", 20.0)];
+        let state = State {
+            owned: vec![owned("a", false), owned("b", false)],
+            ..Default::default()
+        };
+        let cfg = Config {
+            slots: 1,
+            ..Default::default()
+        };
+        assert_eq!(select(&apps, &[], &state, &cfg, false).len(), 1);
+        let unknown = Ranked {
+            id: "foreign".into(),
+            name: "Foreign".into(),
+            score: 100.0,
+            days: 7,
+            launches: 0,
+            seconds: 0,
+            eligible: true,
+            reason: String::new(),
+        };
+        assert!(select(&[], &[unknown], &State::default(), &cfg, true).is_empty());
+    }
+    #[test]
+    fn windows_unc_normalization_and_url_identity_are_distinct() {
+        assert_eq!(
+            norm(r"\\?\UNC\Server\Share\App.exe"),
+            norm(r"\\server\share\APP.exe")
+        );
+        assert_eq!(
+            target_identity("HTTPS://Example.COM/Path?token=Ab%20CD"),
+            "https://example.com/Path?token=Ab%20CD"
+        );
+        assert_ne!(
+            target_identity("https://example.com/Path"),
+            target_identity("https://example.com/path")
+        );
+        assert_ne!(
+            target_identity("https://User:Pass@EXAMPLE.COM/x"),
+            target_identity("https://user:pass@example.com/x")
+        );
+        assert_eq!(
+            target_identity(r"C:\APP.EXE"),
+            target_identity(r"c:\app.exe")
+        );
+    }
+    #[test]
+    fn old_owned_shortcuts_migrate_without_claiming_an_identity() {
+        let previous = r#"{"app":"app","path":"C:\\Desktop\\App.lnk","sha":"sha","position":{"x":22,"y":2},"manual":false,"since":1}"#;
+        let owned: Owned = serde_json::from_str(previous).unwrap();
+        assert_eq!(owned.app, "app");
+        assert!(owned.file_id.is_none());
     }
 }

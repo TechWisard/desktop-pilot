@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod activity;
+mod cli;
 mod engine;
 mod i18n;
 mod learning;
@@ -27,33 +28,68 @@ fn emit(args: &[String], value: &impl serde::Serialize) -> Result<()> {
     }
     Ok(())
 }
-fn background_running(home: &Path) -> bool {
-    native::exclusive("background", home).is_err()
+fn background_running(home: &Path) -> Result<bool> {
+    native::is_running("background", home)
 }
 fn run() -> Result<()> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args = cli::parse(&std::env::args().skip(1).collect::<Vec<_>>())?;
+    match args[0].as_str() {
+        "--help" => {
+            println!("{}", cli::HELP);
+            return Ok(());
+        }
+        "--version" => {
+            println!("Desktop Pilot {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        "--probe" => {
+            use std::io::Write;
+            let mut marker = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&args[1])?;
+            marker.write_all(&serde_json::to_vec(&serde_json::json!({
+                "cwd": std::env::current_dir()?, "args": args
+            }))?)?;
+            marker.sync_all()?;
+            return Ok(());
+        }
+        _ => {}
+    }
     native::dpi();
     let _com = native::Com::new()?;
     let h = home(&args)?;
+    if args[0] == "--self-test" {
+        return self_test(&h, &args);
+    }
+    if args[0] == "--ui-smoke" {
+        ensure!(
+            h.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("test-")),
+            "UI screenshots require an isolated test-* profile"
+        );
+    }
     let s = Store::open(&h)?;
     let h = s.home.clone();
-    i18n::set(&s.get::<Config>("config")?.language);
-    if args.first().is_some_and(|s| s == "--probe") {
-        let p = PathBuf::from(args.get(1).context("Нет пути проверочного файла")?);
-        std::fs::write(
-            &p,
-            serde_json::to_vec(&serde_json::json!({"cwd":std::env::current_dir()?,"args":args}))?,
-        )?;
-        return Ok(());
+    // Stopping a process must remain possible even when its configuration is damaged.
+    if let Ok(config) = s.get::<Config>("config") {
+        i18n::set(&config.language);
     }
     match args.first().map(String::as_str).unwrap_or("--settings") {
         "--init" => {
+            ensure!(
+                !background_running(&h)?,
+                "При работающем фоне используйте окно настроек"
+            );
+            let _lock = native::exclusive("changes", &h)?;
             ensure!(
                 s.apps()?.is_empty(),
                 "База уже инициализирована; импорт поверх неё запрещён"
             );
             let path = args.get(1).context("Нет seed.json")?;
             let list: Vec<App> = serde_json::from_slice(&std::fs::read(path)?)?;
+            let mut validated = Vec::with_capacity(list.len());
+            let mut identities = std::collections::HashSet::new();
             for mut app in list {
                 let actual = native::read_link(Path::new(&app.source))?;
                 ensure!(
@@ -62,17 +98,31 @@ fn run() -> Result<()> {
                     app.name
                 );
                 app.id = actual.id;
+                app.source = actual.source;
                 app.icon = actual.icon;
                 app.icon_index = actual.icon_index;
                 app.valid = actual.valid;
-                s.put_app(&app)?;
+                ensure!(
+                    identities.insert(app.id.clone()),
+                    "Catalog contains duplicate shortcut identities"
+                );
+                validated.push(app);
             }
-            s.set("config", &Config::default())?;
-            s.set("state", &State::default())?;
-            s.event(
-                "setup",
-                "Импорт исходных ярлыков и исторических приоритетов завершён",
-            )?;
+            s.transaction(|| {
+                ensure!(
+                    s.apps()?.is_empty(),
+                    "База уже инициализирована; импорт поверх неё запрещён"
+                );
+                for app in &validated {
+                    s.put_app(app)?;
+                }
+                s.set("config", &Config::default())?;
+                s.set("state", &State::default())?;
+                s.event(
+                    "setup",
+                    "Импорт исходных ярлыков и исторических приоритетов завершён",
+                )
+            })?;
             emit(
                 &args,
                 &serde_json::json!({"apps":s.apps()?.len(),"config":s.get::<Config>("config")?}),
@@ -80,7 +130,7 @@ fn run() -> Result<()> {
         }
         "--inspect" => emit(
             &args,
-            &serde_json::json!({"config":s.get::<Config>("config")?,"learning":s.get::<learning::Progress>("learning")?,"state":s.get::<State>("state")?,"preview":engine::preview(&s,!s.get::<State>("state")?.initialized)?,"heartbeat":s.get::<i64>("heartbeat")?,"status":s.get::<String>("status")?,"background":background_running(&h)}),
+            &serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"config":s.get::<Config>("config")?,"learning":s.get::<learning::Progress>("learning")?,"state":s.get::<State>("state")?,"preview":engine::preview(&s,!s.get::<State>("state")?.initialized)?,"heartbeat":s.get::<i64>("heartbeat")?,"status":s.get::<String>("status")?,"background":background_running(&h)?}),
         ),
         "--layout" => emit(&args, &native::layout()?),
         "--pins" => emit(&args, &native::pin_identities()?),
@@ -102,6 +152,10 @@ fn run() -> Result<()> {
         }
         "--apply-initial" => {
             ensure!(
+                !background_running(&h)?,
+                "При работающем фоне используйте окно настроек"
+            );
+            ensure!(
                 !s.get::<State>("state")?.initialized,
                 "Первичное размещение уже выполнено"
             );
@@ -109,14 +163,14 @@ fn run() -> Result<()> {
         }
         "--apply" => {
             ensure!(
-                !background_running(&h),
+                !background_running(&h)?,
                 "При работающем фоне используйте окно настроек"
             );
             emit(&args, &engine::apply(&s, false)?)
         }
         "--rollback" => {
             ensure!(
-                !background_running(&h),
+                !background_running(&h)?,
                 "При работающем фоне используйте окно настроек"
             );
             let _lock = native::exclusive("changes", &h)?;
@@ -164,53 +218,58 @@ fn run() -> Result<()> {
                 engine::setup_complete(&s)?,
                 "Complete initial setup before starting background tracking"
             );
-            let _instance = native::exclusive("background", &h)?;
+            let Some(_instance) = native::try_exclusive("background", &h)? else {
+                return Ok(());
+            };
             let _input_hooks = activity::Hooks::install()?;
             s.set(
                 "input_filter",
                 &"non-injected keyboard/buttons/wheel; fresh foreground interaction",
             )?;
             s.set("shutdown", &false)?;
+            s.set("heartbeat", &0i64)?;
+            s.set("background_pid", &std::process::id())?;
+            s.set("background_version", &env!("CARGO_PKG_VERSION"))?;
             let worker_home = h.clone();
             let worker = std::thread::spawn(move || {
-                let r = engine::monitor(worker_home.clone());
-                if let Err(e) = &r
-                    && let Ok(s) = Store::open(&worker_home)
-                {
-                    let _ = s.set("status", &format!("Фоновый учёт остановлен: {e:#}"));
-                    let _ = s.event("error", &format!("{e:#}"));
+                let r = std::panic::catch_unwind(|| engine::monitor(worker_home.clone()))
+                    .unwrap_or_else(|_| {
+                        Err(anyhow::anyhow!("Background process ended unexpectedly"))
+                    });
+                if let Ok(s) = Store::open(&worker_home) {
+                    if let Err(e) = &r {
+                        let _ = s.set("status", &format!("Фоновый учёт остановлен: {e:#}"));
+                        let _ = s.event("error", &format!("{e:#}"));
+                    }
+                    let _ = s.set("shutdown", &true);
                 }
+                let _ = tray::request_close(&worker_home);
                 r
             });
             let result = tray::run(h.clone());
-            s.set("shutdown", &true)?;
-            let _ = worker.join();
-            result
+            let stopped = s.set("shutdown", &true);
+            let worker_result = worker
+                .join()
+                .map_err(|_| anyhow::anyhow!("Background process ended unexpectedly"))?;
+            let _ = s.set("background_pid", &0u32);
+            result.and(stopped).and(worker_result)
         }
         "--stop" => {
             s.set("shutdown", &true)?;
-            unsafe {
-                use windows::{Win32::UI::WindowsAndMessaging::*, core::PCWSTR};
-                let class = native::wide(&tray::class_name(&h));
-                if let Ok(hwnd) = FindWindowW(PCWSTR(class.as_ptr()), None) {
-                    PostMessageW(
-                        hwnd,
-                        WM_CLOSE,
-                        windows::Win32::Foundation::WPARAM(0),
-                        windows::Win32::Foundation::LPARAM(0),
-                    )?;
-                }
-            }
-            Ok(())
+            tray::request_close(&h)
         }
         "--command" => {
+            ensure!(
+                background_running(&h)?,
+                "Background process is not running. Open Settings first."
+            );
             let action = args.get(1).context("Нет команды")?;
             s.command(action)?;
             Ok(())
         }
         "--disable" => {
             ensure!(
-                !background_running(&h),
+                !background_running(&h)?,
                 "Сначала завершите фоновое приложение"
             );
             let mut config: Config = s.get("config")?;
@@ -221,17 +280,25 @@ fn run() -> Result<()> {
             native::autostart(&std::env::current_exe()?, &h, false)?;
             emit(&args, &serde_json::json!({"disabled":true,"config":config}))
         }
-        "--self-test" => self_test(&h, &args),
         "--ui-smoke" => ui::run(
             h,
             Some(PathBuf::from(args.get(1).context("Нет папки снимков")?)),
         ),
         "--settings" => {
-            if engine::setup_complete(&s)? {
-                setup::start_background(&h)?;
-            }
-            let _ui = native::exclusive("settings", &h)?;
-            ui::run(h, None)
+            let Some(_ui) = native::try_exclusive("settings", &h)? else {
+                for _ in 0..10 {
+                    let pid: u32 = s.get("settings_pid")?;
+                    if pid != 0 && native::activate_process_window(pid)? {
+                        return Ok(());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                anyhow::bail!("Settings is already opening. Try again in a moment.");
+            };
+            s.set("settings_pid", &std::process::id())?;
+            let result = ui::run(h.clone(), None);
+            let _ = s.set("settings_pid", &0u32);
+            result
         }
         _ => anyhow::bail!("Неизвестная команда"),
     }
@@ -241,6 +308,10 @@ fn self_test(home: &Path, args: &[String]) -> Result<()> {
         home.file_name()
             .is_some_and(|s| s.to_string_lossy().starts_with("test-")),
         "Для self-test нужен отдельный каталог test-*"
+    );
+    ensure!(
+        !home.exists() || std::fs::read_dir(home)?.next().is_none(),
+        "Self-test requires a new, empty test-* directory"
     );
     let s = Store::open(home)?;
     ensure!(s.apps()?.is_empty(), "Каталог проверки не пуст");
@@ -426,7 +497,7 @@ fn self_test(home: &Path, args: &[String]) -> Result<()> {
         .status()?;
     let stopped = (0..60).any(|_| {
         std::thread::sleep(std::time::Duration::from_millis(100));
-        !background_running(&fresh.home)
+        background_running(&fresh.home).is_ok_and(|running| !running)
     });
     ensure!(
         ready && stopped && stop.success(),
@@ -491,15 +562,19 @@ fn main() {
     if let Err(error) = run() {
         let msg = i18n::runtime(&format!("{error:#}"));
         eprintln!("{msg}");
-        let args: Vec<String> = std::env::args().skip(1).collect();
-        if let Ok(h) = home(&args) {
+        let raw_args: Vec<String> = std::env::args().skip(1).collect();
+        let parsed = cli::parse(&raw_args).ok();
+        if let Some(args) = &parsed
+            && !matches!(args[0].as_str(), "--help" | "--version" | "--probe")
+            && let Ok(h) = home(args)
+        {
             let _ = std::fs::create_dir_all(&h);
             let _ = std::fs::write(h.join("last-error.txt"), &msg);
         }
-        if args.is_empty()
-            || args
-                .first()
-                .is_some_and(|a| a == "--settings" || a == "--launch")
+        if raw_args.is_empty()
+            || parsed
+                .as_ref()
+                .is_some_and(|args| matches!(args[0].as_str(), "--settings" | "--launch"))
         {
             unsafe {
                 let _ = windows::Win32::UI::WindowsAndMessaging::MessageBoxW(

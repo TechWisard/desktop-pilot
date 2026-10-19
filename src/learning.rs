@@ -46,7 +46,23 @@ impl Progress {
         !cfg.learning_enabled || self.completed_at > 0 || self.criteria_met(cfg)
     }
     pub fn observe(&mut self, time: i64, day: &str, seconds: u32) {
-        if self.completed_at > 0 || seconds == 0 || seconds > 4 {
+        if self.completed_at > 0 || time <= 0 || seconds == 0 || seconds > 4 {
+            return;
+        }
+        // Replayed samples and backwards clock corrections cannot create usage.
+        // The caller supplies monotonic elapsed time; wall time identifies the day.
+        if self.last_active_at > 0 && time <= self.last_active_at {
+            if time < self.last_active_at {
+                self.last_active_at = time;
+            }
+            return;
+        }
+        let seconds = if self.last_active_at > 0 {
+            seconds.min(u32::try_from(time.saturating_sub(self.last_active_at)).unwrap_or(u32::MAX))
+        } else {
+            seconds
+        };
+        if chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").is_err() {
             return;
         }
         if self.started_at == 0 {
@@ -157,5 +173,31 @@ mod tests {
         assert!(p.ready(&cfg));
         cfg.learning_enabled = false;
         assert!(Progress::default().ready(&cfg));
+    }
+    #[test]
+    fn repeated_samples_do_not_manufacture_learning_time() {
+        let mut progress = Progress::default();
+        for _ in 0..1000 {
+            progress.observe(10000, "2026-01-01", 2);
+        }
+        assert_eq!(progress.session_seconds, 2);
+        assert_eq!(progress.sessions, 0);
+        assert_eq!(progress.day_seconds["2026-01-01"], 2);
+    }
+    #[test]
+    fn clock_correction_does_not_create_an_extra_computer_session() {
+        let mut progress = Progress::default();
+        activity(&mut progress, 10000, "2026-01-01", 300);
+        progress.observe(9000, "2026-01-01", 2);
+        activity(&mut progress, 9002, "2026-01-01", 300);
+        assert_eq!(progress.sessions, 1);
+    }
+    #[test]
+    fn invalid_days_are_not_accepted_as_learning_evidence() {
+        let mut progress = Progress::default();
+        progress.observe(10000, "invalid", 2);
+        progress.observe(10002, "2026-02-30", 2);
+        assert_eq!(progress.started_at, 0);
+        assert!(progress.day_seconds.is_empty());
     }
 }

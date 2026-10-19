@@ -2,11 +2,16 @@ use crate::{learning::Progress, model::*, native, store::Store};
 use anyhow::{Context, Result, bail, ensure};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
-use std::os::windows::fs::MetadataExt;
+#[cfg(windows)]
+use std::os::windows::{
+    fs::{MetadataExt, OpenOptionsExt},
+    io::AsRawHandle,
+};
 use std::{
     collections::{HashMap, HashSet},
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
 };
 
@@ -15,6 +20,13 @@ pub struct Change {
     pub kind: String,
     pub file: Owned,
     pub backup: String,
+    /// Prepared copy on the destination volume. Its file ID survives publication.
+    #[serde(default)]
+    pub staging: Option<String>,
+    #[serde(default)]
+    pub restore_staging: Option<String>,
+    #[serde(default)]
+    pub restore_file_id: Option<String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Transaction {
@@ -24,6 +36,8 @@ pub struct Transaction {
     pub changes: Vec<Change>,
     #[serde(default)]
     pub before_layout: Option<native::Layout>,
+    #[serde(default)]
+    pub undo_layout: Option<native::Layout>,
 }
 #[derive(Serialize)]
 pub struct Preview {
@@ -54,26 +68,251 @@ fn safe_file(path: &Path, root: &Path) -> Result<()> {
             .is_some_and(|e| e.eq_ignore_ascii_case("lnk") || e.eq_ignore_ascii_case("url")),
         "Only .lnk and .url shortcuts can be managed"
     );
-    if let Ok(m) = path.symlink_metadata() {
-        ensure!(
-            m.file_attributes() & 0x400 == 0 && m.is_file(),
+    match path.symlink_metadata() {
+        Ok(m) => ensure!(
+            !is_reparse(&m) && m.is_file(),
             "Отказ: путь является ссылкой файловой системы или каталогом"
-        );
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
     }
     Ok(())
+}
+fn is_reparse(metadata: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        metadata.file_type().is_symlink()
+    }
+}
+fn file_identity(path: &Path) -> Result<Option<String>> {
+    let file = std::fs::File::open(path)?;
+    identity_of(&file)
+}
+fn identity_of(file: &std::fs::File) -> Result<Option<String>> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::{
+            Foundation::HANDLE,
+            Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle},
+        };
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        unsafe {
+            GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &mut info)?;
+        }
+        if info.nFileIndexHigh == 0 && info.nFileIndexLow == 0 {
+            return Ok(None);
+        }
+        Ok(Some(format!(
+            "{:08x}-{:08x}{:08x}",
+            info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow
+        )))
+    }
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = file.metadata()?;
+        Ok(Some(format!("{}-{}", metadata.dev(), metadata.ino())))
+    }
 }
 fn fingerprint(path: &Path) -> Result<String> {
     Ok(hash(&std::fs::read(path)?))
 }
-fn copy_new(source: &Path, destination: &Path) -> Result<()> {
-    let bytes = std::fs::read(source)?;
-    let mut file = std::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(destination)?;
-    file.write_all(&bytes)?;
-    file.sync_all()?;
+fn move_new(source: &Path, destination: &Path) -> Result<()> {
+    #[cfg(windows)]
+    {
+        use windows::{
+            Win32::Storage::FileSystem::{
+                FILE_ATTRIBUTE_NORMAL, MOVEFILE_WRITE_THROUGH, MoveFileExW, SetFileAttributesW,
+            },
+            core::PCWSTR,
+        };
+        unsafe {
+            // Deliberately omit REPLACE_EXISTING: collisions must preserve user files.
+            MoveFileExW(
+                PCWSTR(native::wide(&source.to_string_lossy()).as_ptr()),
+                PCWSTR(native::wide(&destination.to_string_lossy()).as_ptr()),
+                MOVEFILE_WRITE_THROUGH,
+            )?;
+            // Desktop staging files are hidden. Publication must expose the final
+            // shortcut without briefly displaying temporary icons in Explorer.
+            if !destination
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(".desktop-pilot-"))
+            {
+                SetFileAttributesW(
+                    PCWSTR(native::wide(&destination.to_string_lossy()).as_ptr()),
+                    FILE_ATTRIBUTE_NORMAL,
+                )?;
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::hard_link(source, destination)?;
+        std::fs::remove_file(source)?;
+    }
     Ok(())
+}
+fn copy_new(source: &Path, destination: &Path) -> Result<()> {
+    static SERIAL: AtomicU64 = AtomicU64::new(0);
+    let bytes = std::fs::read(source)?;
+    let temp = destination.with_file_name(format!(
+        ".desktop-pilot-{}-{}-{}.tmp",
+        std::process::id(),
+        now(),
+        SERIAL.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut options = std::fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(windows)]
+    options.attributes(0x2); // FILE_ATTRIBUTE_HIDDEN, including before publication.
+    let mut file = options.open(&temp)?;
+    let result = (|| -> Result<()> {
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        drop(file);
+        move_new(&temp, destination)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
+fn remove_owned(path: &Path, owned: &Owned) -> Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    options.access_mode(0x8000_0000 | 0x0001_0000).share_mode(1);
+    let mut file = options.open(path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    ensure!(
+        hash(&bytes) == owned.sha,
+        "Ярлык изменился во время операции"
+    );
+    if let Some(expected) = &owned.file_id {
+        ensure!(
+            identity_of(&file)?.as_ref() == Some(expected),
+            "Shortcut was replaced by another file; it was preserved"
+        );
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::{
+            Foundation::HANDLE,
+            Storage::FileSystem::{
+                FILE_DISPOSITION_INFO, FileDispositionInfo, SetFileInformationByHandle,
+            },
+        };
+        let disposition = FILE_DISPOSITION_INFO {
+            DeleteFile: true.into(),
+        };
+        unsafe {
+            SetFileInformationByHandle(
+                HANDLE(file.as_raw_handle()),
+                FileDispositionInfo,
+                &disposition as *const _ as *const _,
+                std::mem::size_of_val(&disposition) as u32,
+            )?;
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::remove_file(path)?;
+    }
+    Ok(())
+}
+fn ensure_no_unfinished(store: &Store) -> Result<()> {
+    let unfinished: i64 = store.db.query_row(
+        "SELECT COUNT(*) FROM transactions WHERE status IN ('prepared','rolling_back')",
+        [],
+        |r| r.get(0),
+    )?;
+    ensure!(
+        unfinished == 0,
+        "Есть незавершённая операция. Сначала нажмите «Отменить последнее изменение»."
+    );
+    Ok(())
+}
+struct StagedCopies(Vec<(PathBuf, Owned)>);
+impl Drop for StagedCopies {
+    fn drop(&mut self) {
+        for (path, owned) in &self.0 {
+            let _ = remove_owned(path, owned);
+        }
+    }
+}
+fn shortcut_path(
+    desktop: &Path,
+    name: &str,
+    extension: &str,
+    language: &str,
+    reserved: &mut HashSet<String>,
+) -> Result<PathBuf> {
+    let clean: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || "<>:\"/\\|?*".contains(c) {
+                '_'
+            } else {
+                c
+            }
+        })
+        .take(64)
+        .collect();
+    let mut clean = clean.trim().trim_end_matches(['.', ' ']).to_owned();
+    if clean.is_empty() {
+        clean = "Shortcut".into();
+    }
+    let device = clean
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_uppercase();
+    if ["CON", "PRN", "AUX", "NUL", "CLOCK$", "CONIN$", "CONOUT$"].contains(&device.as_str())
+        || device
+            .strip_prefix("COM")
+            .or_else(|| device.strip_prefix("LPT"))
+            .is_some_and(|suffix| {
+                ["1", "2", "3", "4", "5", "6", "7", "8", "9", "¹", "²", "³"].contains(&suffix)
+            })
+    {
+        clean.insert(0, '_');
+    }
+    for suffix in 0..10_000 {
+        let label = match suffix {
+            0 => clean.clone(),
+            1 => format!(
+                "{clean} · {}",
+                if language == "ru" {
+                    "быстрый"
+                } else {
+                    "quick"
+                }
+            ),
+            n => format!(
+                "{clean} · {} ({n})",
+                if language == "ru" {
+                    "быстрый"
+                } else {
+                    "quick"
+                }
+            ),
+        };
+        let path = desktop.join(format!("{label}.{}", extension.to_ascii_lowercase()));
+        let key = norm(&path.to_string_lossy());
+        if !reserved.contains(&key) && !path.try_exists()? {
+            safe_file(&path, desktop)?;
+            reserved.insert(key);
+            return Ok(path);
+        }
+    }
+    bail!("Unable to find a free shortcut filename")
 }
 fn wait_removed(paths: &[String]) -> Result<()> {
     if paths.is_empty() {
@@ -124,6 +363,7 @@ pub fn preview(store: &Store, initial: bool) -> Result<Preview> {
 }
 
 pub fn refresh_apps(store: &Store) -> Result<()> {
+    ensure_no_unfinished(store)?;
     let real = real_desktop(store)?;
     let config: Config = store.get("config")?;
     let steam = if real {
@@ -131,57 +371,113 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
     } else {
         HashMap::new()
     };
+    let mut warnings = Vec::new();
     let pins = if real && config.respect_taskbar_pins {
-        native::pin_identities()?
-    } else {
-        vec![]
-    };
-    for mut app in store.apps()? {
-        app.valid = native::read_link(Path::new(&app.source))
-            .is_ok_and(|actual| actual.valid && actual.identity() == app.identity());
-        if real {
-            app.pinned = native::is_pinned(&app, &pins);
-            if let Some(id) = app.target.strip_prefix("steam://rungameid/") {
-                app.observed_roots = steam.get(id).cloned().into_iter().collect();
+        match native::pin_identities() {
+            Ok(pins) => Some(pins),
+            Err(e) => {
+                warnings.push(format!("Taskbar pins could not be refreshed: {e:#}"));
+                None
             }
         }
-        store.put_app(&app)?;
+    } else {
+        Some(Vec::new())
+    };
+    let mut known = store.apps()?;
+    for app in &mut known {
+        app.valid = native::read_link(Path::new(&app.source))
+            .is_ok_and(|actual| actual.valid && actual.identity() == app.identity());
+        if let Some(pins) = &pins {
+            app.pinned = real && config.respect_taskbar_pins && native::is_pinned(app, pins);
+        }
+        if real && let Some(id) = app.target.strip_prefix("steam://rungameid/") {
+            app.observed_roots = steam.get(id).cloned().into_iter().collect();
+        }
     }
-    // Scan only launcher-bearing folders. Source trees, node_modules and archives are excluded.
-    fn visit(path: &Path, depth: usize, out: &mut Vec<PathBuf>) -> Result<()> {
-        if depth > 3 {
+    // A locked or inaccessible unrelated subfolder must not stop the catalog.
+    fn visit(
+        path: &Path,
+        depth: usize,
+        out: &mut Vec<PathBuf>,
+        warnings: &mut Vec<String>,
+    ) -> Result<()> {
+        if depth > 5 || out.len() >= 3000 {
             return Ok(());
         }
         for entry in std::fs::read_dir(path)? {
-            let entry = entry?;
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(e) => {
+                    warnings.push(e.to_string());
+                    continue;
+                }
+            };
             let p = entry.path();
-            let m = entry.metadata()?;
-            if m.file_attributes() & 0x400 != 0 {
+            let m = match p.symlink_metadata() {
+                Ok(m) => m,
+                Err(e) => {
+                    warnings.push(e.to_string());
+                    continue;
+                }
+            };
+            if is_reparse(&m) {
                 continue;
             }
             if m.is_dir() {
-                let n = entry.file_name().to_string_lossy().to_lowercase();
-                if ["служебное", "node_modules", "архив ярлыков", ".git", "venv"]
-                    .contains(&n.as_str())
+                let name = entry.file_name().to_string_lossy().to_lowercase();
+                if [
+                    "служебное",
+                    "node_modules",
+                    "архив ярлыков",
+                    ".git",
+                    "venv",
+                    ".venv",
+                ]
+                .contains(&name.as_str())
                 {
                     continue;
                 }
-                visit(&p, depth + 1, out)?;
-            } else if p
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("lnk") || e.eq_ignore_ascii_case("url"))
+                if let Err(e) = visit(&p, depth + 1, out, warnings) {
+                    warnings.push(format!("{}: {e:#}", p.display()));
+                }
+            } else if m.is_file()
+                && p.extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("lnk") || e.eq_ignore_ascii_case("url"))
             {
                 out.push(p);
-                ensure!(out.len() < 3000, "Слишком большой каталог ярлыков");
+                if out.len() >= 3000 {
+                    warnings.push("Shortcut scan limit reached (3000); existing catalog entries were retained".into());
+                    break;
+                }
             }
         }
         Ok(())
     }
     let desktop = root(store)?;
+    let mut roots = vec![desktop.clone()];
+    if real {
+        for optional in [native::programs(), native::common_programs()] {
+            match optional {
+                Ok(path) if path.is_dir() => roots.push(path),
+                Ok(_) => {}
+                Err(e) => warnings.push(format!("Start menu could not be scanned: {e:#}")),
+            }
+        }
+    }
     let mut paths = Vec::new();
-    visit(&desktop, 0, &mut paths)?;
-    let known = store.apps()?;
+    for (index, root) in roots.iter().enumerate() {
+        if let Err(e) = visit(root, 0, &mut paths, &mut warnings) {
+            if index == 0 {
+                return Err(e);
+            }
+            warnings.push(format!("{}: {e:#}", root.display()));
+        }
+    }
+    paths.sort_by_key(|p| norm(&p.to_string_lossy()));
+    paths.dedup_by(|a, b| norm(&a.to_string_lossy()) == norm(&b.to_string_lossy()));
     let state: State = store.get("state")?;
+    let executable = norm(&std::env::current_exe()?.to_string_lossy());
+    let installed = norm(&store.home.join("desktop-pilot.exe").to_string_lossy());
     for path in paths {
         if state
             .owned
@@ -191,40 +487,93 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
             continue;
         }
         if let Ok(mut app) = native::read_link(&path) {
-            if norm(&app.target) == norm(&std::env::current_exe()?.to_string_lossy()) {
+            if [executable.as_str(), installed.as_str()].contains(&norm(&app.target).as_str()) {
                 continue;
             }
-            if let Some(old) = known.iter().find(|a| a.id == app.id) {
-                if old.valid {
+            // Match logical identities as well as IDs so legacy URL identities keep
+            // their statistics and policies after correcting URL case handling.
+            let old = known.iter().position(|a| a.identity() == app.identity());
+            if let Some(index) = old {
+                if known[index].valid {
                     continue;
                 }
-                app.policy = old.policy.clone();
-                app.seed = old.seed;
-                app.seed_at = old.seed_at;
-                app.observed_roots = old.observed_roots.clone();
-                app.note = old.note.clone();
+                let previous = &known[index];
+                app.id = previous.id.clone();
+                app.policy = previous.policy.clone();
+                app.seed = previous.seed;
+                app.seed_at = previous.seed_at;
+                app.observed_roots = previous.observed_roots.clone();
+                app.note = previous.note.clone();
             }
-            app.category = path
-                .strip_prefix(&desktop)
-                .ok()
-                .and_then(|p| p.components().next())
-                .map(|c| c.as_os_str().to_string_lossy().into_owned())
-                .unwrap_or_default();
-            app.pinned = real && native::is_pinned(&app, &pins);
-            if let Some(id) = app.target.strip_prefix("steam://rungameid/") {
+            let catalog_root = roots.iter().find(|root| path.starts_with(root));
+            app.category = catalog_root
+                .and_then(|root| path.parent()?.strip_prefix(root).ok())
+                .filter(|relative| !relative.as_os_str().is_empty())
+                .map(|relative| relative.to_string_lossy().into_owned())
+                .unwrap_or_else(|| {
+                    if path.starts_with(&desktop) {
+                        "Desktop"
+                    } else {
+                        "Start menu"
+                    }
+                    .into()
+                });
+            if let Some(pins) = &pins {
+                app.pinned = real && config.respect_taskbar_pins && native::is_pinned(&app, pins);
+            } else if let Some(index) = old {
+                app.pinned = known[index].pinned;
+            }
+            if real && let Some(id) = app.target.strip_prefix("steam://rungameid/") {
                 app.observed_roots = steam.get(id).cloned().into_iter().collect();
             }
-            if !Path::new(&app.target).is_file() && !app.target.contains("://") {
+            if old.is_none()
+                && !Path::new(&expand_env(&app.target)).is_file()
+                && !app.target.contains("://")
+            {
                 app.note = "Специальный запуск: включение только вручную".into();
                 app.policy = Policy::Never;
             }
-            store.put_app(&app)?;
+            if let Some(index) = old {
+                known[index] = app;
+            } else {
+                known.push(app);
+            }
         }
     }
-    Ok(())
+    store.transaction(|| {
+        store.set(
+            "pins_verified",
+            &(!real || !config.respect_taskbar_pins || pins.is_some()),
+        )?;
+        for mut app in known {
+            if let Ok(latest) = store.app(&app.id) {
+                // A policy changed while the filesystem scan was running belongs to
+                // the user; refresh only filesystem-derived fields.
+                app.policy = latest.policy;
+                app.seed = latest.seed;
+                app.seed_at = latest.seed_at;
+                app.note = latest.note;
+            }
+            store.put_app(&app)?;
+        }
+        let warning = warnings.join("\n");
+        if store.get::<String>("catalog_warning")? != warning {
+            store.set("catalog_warning", &warning)?;
+            if !warning.is_empty() {
+                store.event("warning", &warning)?;
+            }
+        }
+        Ok(())
+    })
 }
 
 pub fn reconcile_manual(store: &Store) -> Result<()> {
+    let _lock = native::exclusive("changes", &store.home)?;
+    reconcile_manual_locked(store)
+}
+fn reconcile_manual_locked(store: &Store) -> Result<()> {
+    // A half-applied transaction is not evidence of the user's manual intentions.
+    ensure_no_unfinished(store)?;
     let mut state: State = store.get("state")?;
     if state.owned.is_empty() {
         return Ok(());
@@ -236,73 +585,162 @@ pub fn reconcile_manual(store: &Store) -> Result<()> {
         None
     };
     if let Some(l) = &snap
+        && !state.topology.is_empty()
         && l.topology != state.topology
     {
         bail!(
-            "Изменилась геометрия экрана. Примите текущую геометрию в настройках; существующие значки не перемещались."
+            "Изменилась геометрия экрана. Нажмите «Принять текущее размещение» в настройках; существующие значки не перемещались."
         );
     }
+    let apps = store.apps()?;
+    let sources: HashSet<_> = apps.iter().map(|a| norm(&a.source)).collect();
+    let managed: HashSet<_> = state.owned.iter().map(|o| norm(&o.path)).collect();
     let mut kept = Vec::new();
+    let mut policies = Vec::new();
+    let mut messages = Vec::new();
     for mut o in state.owned.clone() {
         safe_file(Path::new(&o.path), &desktop)?;
-        if !Path::new(&o.path).exists() {
-            let mut renamed = None;
-            for entry in std::fs::read_dir(&desktop)? {
-                let p = entry?.path();
-                if p.extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("lnk") || e.eq_ignore_ascii_case("url"))
-                    && fingerprint(&p).is_ok_and(|h| h == o.sha)
-                {
-                    renamed = Some(p);
-                    break;
+        let app = apps.iter().find(|a| a.id == o.app);
+        let display_name = app.map_or(o.app.as_str(), |a| a.name.as_str()).to_owned();
+        if sources.contains(&norm(&o.path)) {
+            // Repair old profiles that accidentally claimed an original copy.
+            policies.push((o.app.clone(), Policy::Never));
+            messages.push(format!(
+                "Original shortcut released from management: {display_name}"
+            ));
+            continue;
+        }
+        if !Path::new(&o.path).try_exists()? {
+            let mut renamed = Vec::new();
+            if let Some(expected) = &o.file_id {
+                for entry in std::fs::read_dir(&desktop)? {
+                    let p = entry?.path();
+                    let key = norm(&p.to_string_lossy());
+                    if sources.contains(&key)
+                        || managed.contains(&key)
+                        || kept.iter().any(|item: &Owned| norm(&item.path) == key)
+                    {
+                        continue;
+                    }
+                    if safe_file(&p, &desktop).is_ok()
+                        && file_identity(&p).is_ok_and(|id| id.as_ref() == Some(expected))
+                        && fingerprint(&p).is_ok_and(|sha| sha == o.sha)
+                    {
+                        renamed.push(p);
+                    }
                 }
             }
-            if let Some(p) = renamed {
-                o.path = p.to_string_lossy().into_owned();
+            if renamed.len() == 1 {
+                o.path = renamed[0].to_string_lossy().into_owned();
                 o.manual = true;
-                let mut a = store.app(&o.app)?;
-                a.policy = Policy::Always;
-                store.put_app(&a)?;
-                store.event("manual", &format!("Переименование принято: {}", a.name))?;
+                if !app.is_some_and(|a| a.policy == Policy::Never) {
+                    policies.push((o.app.clone(), Policy::Always));
+                }
+                messages.push(format!("Переименование принято: {display_name}"));
             } else {
-                store.policy(&o.app, Policy::Never)?;
-                store.event(
-                    "manual",
-                    &format!(
-                        "Ручное удаление/перенос: {} исключён из возврата",
-                        store.app(&o.app)?.name
-                    ),
-                )?;
+                policies.push((o.app.clone(), Policy::Never));
+                messages.push(format!(
+                    "Ручное удаление/перенос: {display_name} исключён из возврата"
+                ));
                 continue;
             }
         }
-        if fingerprint(Path::new(&o.path))? != o.sha {
-            store.policy(&o.app, Policy::Never)?;
-            store.event(
-                "manual",
-                "Изменённый пользователем ярлык оставлен без управления",
-            )?;
+        let actual_id = file_identity(Path::new(&o.path))?;
+        if fingerprint(Path::new(&o.path))? != o.sha
+            || o.file_id
+                .as_ref()
+                .is_some_and(|expected| actual_id.as_ref() != Some(expected))
+        {
+            policies.push((o.app.clone(), Policy::Never));
+            messages.push("Изменённый пользователем ярлык оставлен без управления".into());
             continue;
         }
+        o.file_id = actual_id;
         if let Some(l) = &snap
             && let Some(item) = l.items.iter().find(|i| norm(&i.path) == norm(&o.path))
             && item.position != o.position
         {
             o.position = item.position.clone();
             o.manual = true;
-            store.policy(&o.app, Policy::Always)?;
-            store.event(
-                "manual",
-                &format!("Ручное положение закреплено: {}", store.app(&o.app)?.name),
-            )?;
+            if !app.is_some_and(|a| a.policy == Policy::Never) {
+                policies.push((o.app.clone(), Policy::Always));
+            }
+            messages.push(format!("Ручное положение закреплено: {display_name}"));
         }
         kept.push(o);
     }
     state.owned = kept;
-    store.set("state", &state)?;
-    Ok(())
+    store.transaction(|| {
+        for (id, policy) in policies {
+            if apps.iter().any(|a| a.id == id) {
+                store.policy(&id, policy)?;
+            }
+        }
+        for message in messages {
+            store.event("manual", &message)?;
+        }
+        store.set("state", &state)
+    })
 }
 
+fn grid_offset(layout: &native::Layout) -> Result<(i64, i64)> {
+    let sx = i64::from(layout.spacing.x);
+    let sy = i64::from(layout.spacing.y);
+    ensure!(
+        sx > 0
+            && sy > 0
+            && layout.icon_size > 0
+            && i64::from(layout.icon_size) <= sx
+            && i64::from(layout.icon_size) < sy,
+        "Icon size does not fit the desktop grid"
+    );
+    let base = layout
+        .items
+        .iter()
+        .find(|i| Path::new(&i.path).is_dir())
+        .or_else(|| layout.items.first());
+    Ok((
+        base.map_or((sx - i64::from(layout.icon_size)) / 2, |b| {
+            i64::from(b.position.x).rem_euclid(sx)
+        }),
+        base.map_or(2, |b| i64::from(b.position.y).rem_euclid(sy)),
+    ))
+}
+/// Exact cells used by both the preview UI and the placement engine. Occupied or
+/// off-screen candidates are retained here so the UI can explain the conflict.
+pub(crate) fn zone_candidates(layout: &native::Layout, cfg: &Config) -> Result<Vec<Point>> {
+    ensure!(
+        (1..=8).contains(&cfg.slots)
+            && (1..=8).contains(&cfg.zone_columns)
+            && (0..=40).contains(&cfg.zone_col)
+            && (0..=40).contains(&cfg.zone_row),
+        "Недопустимая область размещения"
+    );
+    let (bx, by) = grid_offset(layout)?;
+    let (sx, sy) = (i64::from(layout.spacing.x), i64::from(layout.spacing.y));
+    let start_col = -(-i64::from(layout.work[0])).div_euclid(sx);
+    let start_row = -(-i64::from(layout.work[1])).div_euclid(sy);
+    (0..cfg.slots as i64)
+        .map(|index| {
+            Ok(Point {
+                x: i32::try_from(
+                    bx + (start_col
+                        + i64::from(cfg.zone_col)
+                        + index % i64::from(cfg.zone_columns))
+                        * sx,
+                )
+                .context("Desktop coordinates overflow")?,
+                y: i32::try_from(
+                    by + (start_row
+                        + i64::from(cfg.zone_row)
+                        + index / i64::from(cfg.zone_columns))
+                        * sy,
+                )
+                .context("Desktop coordinates overflow")?,
+            })
+        })
+        .collect()
+}
 pub(crate) fn reserve_positions(
     layout: &native::Layout,
     cfg: &Config,
@@ -313,23 +751,8 @@ pub(crate) fn reserve_positions(
     if needed == 0 {
         return Ok(vec![]);
     }
-    let base = layout
-        .items
-        .iter()
-        .find(|i| Path::new(&i.path).is_dir())
-        .or_else(|| layout.items.first());
-    let sx = layout.spacing.x;
-    let sy = layout.spacing.y;
-    ensure!(
-        sx > 0 && sy > 0 && layout.icon_size <= sx && layout.icon_size < sy,
-        "Icon size does not fit the desktop grid"
-    );
-    let bx = base
-        .map(|b| b.position.x.rem_euclid(sx))
-        .unwrap_or((sx - layout.icon_size) / 2);
-    let by = base.map(|b| b.position.y.rem_euclid(sy)).unwrap_or(2);
-    let start_col = -(-layout.work[0]).div_euclid(sx);
-    let start_row = -(-layout.work[1]).div_euclid(sy);
+    let (bx, by) = grid_offset(layout)?;
+    let (sx, sy) = (i64::from(layout.spacing.x), i64::from(layout.spacing.y));
     let retiring: HashSet<_> = state
         .owned
         .iter()
@@ -337,23 +760,19 @@ pub(crate) fn reserve_positions(
         .map(|o| norm(&o.path))
         .collect();
     let mut result = Vec::new();
-    for index in 0..cfg.slots as i32 {
-        let point = Point {
-            x: bx + (start_col + cfg.zone_col + index % cfg.zone_columns) * sx,
-            y: by + (start_row + cfg.zone_row + index / cfg.zone_columns) * sy,
-        };
-        // Reserve the entire grid cell, including its caption. Do not move other items.
-        if point.x - bx < layout.work[0]
-            || point.y - by < layout.work[1]
-            || point.x - bx + sx > layout.work[2]
-            || point.y - by + sy > layout.work[3]
+    for point in zone_candidates(layout, cfg)? {
+        let (x, y) = (i64::from(point.x), i64::from(point.y));
+        if x - bx < i64::from(layout.work[0])
+            || y - by < i64::from(layout.work[1])
+            || x - bx + sx > i64::from(layout.work[2])
+            || y - by + sy > i64::from(layout.work[3])
         {
             continue;
         }
         if layout.items.iter().any(|i| {
             !retiring.contains(&norm(&i.path))
-                && (i.position.x - point.x).abs() < sx - 2
-                && (i.position.y - point.y).abs() < sy - 2
+                && (i64::from(i.position.x) - x).abs() < sx - 2
+                && (i64::from(i.position.y) - y).abs() < sy - 2
         }) {
             continue;
         }
@@ -377,20 +796,16 @@ pub fn apply(store: &Store, initial: bool) -> Result<String> {
             .ready(&store.get::<Config>("config")?),
         "Passive observation is still in progress. No shortcuts were changed."
     );
-    let unfinished: i64 = store.db.query_row(
-        "SELECT COUNT(*) FROM transactions WHERE status='prepared'",
-        [],
-        |r| r.get(0),
-    )?;
-    ensure!(
-        unfinished == 0,
-        "Есть незавершённая операция. Сначала нажмите «Откатить»."
-    );
+    ensure_no_unfinished(store)?;
     refresh_apps(store)?;
-    reconcile_manual(store)?;
+    ensure!(
+        store.get::<bool>("pins_verified")?,
+        "Taskbar pins could not be verified. Refresh the list or turn off taskbar pin filtering in Settings."
+    );
+    reconcile_manual_locked(store)?;
     let cfg: Config = store.get("config")?;
     let before: State = store.get("state")?;
-    let choice = preview(store, initial)?;
+    let choice = preview(store, initial || !before.initialized)?;
     let desktop = root(store)?;
     let snap = if real_desktop(store)? {
         Some(native::layout()?)
@@ -404,12 +819,12 @@ pub fn apply(store: &Store, initial: bool) -> Result<String> {
         );
         ensure!(
             before.topology.is_empty() || l.topology == before.topology,
-            "Изменилась геометрия экрана. Нажмите «Принять текущую геометрию»."
+            "Изменилась геометрия экрана. Нажмите «Принять текущее размещение»."
         );
     }
     let mut after = before.clone();
     after.last_review = now();
-    after.initialized = true;
+    after.initialized = before.initialized || !choice.selected.is_empty();
     if let Some(l) = &snap {
         after.topology = l.topology.clone();
     }
@@ -440,7 +855,9 @@ pub fn apply(store: &Store, initial: bool) -> Result<String> {
         after: State::default(),
         changes: vec![],
         before_layout: snap.clone(),
+        undo_layout: None,
     };
+    let mut staging = StagedCopies(Vec::new());
     for owned in &before.owned {
         if choice.removed.contains(&owned.app) {
             let p = Path::new(&owned.path);
@@ -449,30 +866,30 @@ pub fn apply(store: &Store, initial: bool) -> Result<String> {
                 fingerprint(p)? == owned.sha,
                 "Ярлык изменился: удаление отменено"
             );
-            let backup = directory.join(format!("before-{}.lnk", owned.app));
+            let extension = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .context("Shortcut extension is missing")?;
+            let backup = directory.join(format!("before-{}.{extension}", owned.app));
             copy_new(p, &backup)?;
             tx.changes.push(Change {
                 kind: "remove".into(),
                 file: owned.clone(),
                 backup: backup.to_string_lossy().into_owned(),
+                staging: None,
+                restore_staging: None,
+                restore_file_id: None,
             });
         }
     }
     after.owned.retain(|o| !choice.removed.contains(&o.app));
+    let mut reserved = HashSet::new();
     for (id, point) in choice.added.iter().zip(points) {
         let app = store.app(id)?;
         ensure!(
             Path::new(&app.source).is_file(),
             "Исходный ярлык недоступен"
         );
-        let mut name = app
-            .name
-            .chars()
-            .map(|c| if "<>:\"/\\|?*".contains(c) { '_' } else { c })
-            .collect::<String>();
-        if name.chars().count() > 24 {
-            name = name.chars().take(21).collect::<String>() + "…";
-        }
         let extension = Path::new(&app.source)
             .extension()
             .and_then(|e| e.to_str())
@@ -481,24 +898,7 @@ pub fn apply(store: &Store, initial: bool) -> Result<String> {
             extension.eq_ignore_ascii_case("lnk") || extension.eq_ignore_ascii_case("url"),
             "Unsupported shortcut extension"
         );
-        let mut file = desktop.join(format!("{}.{extension}", name.trim().trim_end_matches('.')));
-        if file.exists() {
-            file = desktop.join(format!(
-                "{} · {}.{extension}",
-                name.chars().take(18).collect::<String>(),
-                if cfg.language == "ru" {
-                    "быстрый"
-                } else {
-                    "quick"
-                }
-            ));
-        }
-        safe_file(&file, &desktop)?;
-        ensure!(
-            !file.exists(),
-            "Место занято одноимённым ярлыком: {}",
-            file.display()
-        );
+        let file = shortcut_path(&desktop, &app.name, extension, &cfg.language, &mut reserved)?;
         let stage = directory.join(format!("new-{id}.{extension}"));
         let source = Path::new(&app.source);
         ensure!(
@@ -510,6 +910,8 @@ pub fn apply(store: &Store, initial: bool) -> Result<String> {
             native::read_link(&stage)?.identity() == app.identity(),
             "Copied shortcut identity changed"
         );
+        let publish = desktop.join(format!(".desktop-pilot-{}-{id}.tmp", tx.id));
+        copy_new(&stage, &publish)?;
         let owned = Owned {
             app: id.clone(),
             path: file.to_string_lossy().into_owned(),
@@ -517,11 +919,20 @@ pub fn apply(store: &Store, initial: bool) -> Result<String> {
             position: point,
             manual: app.policy == Policy::Always,
             since: now(),
+            file_id: file_identity(&publish)?,
         };
+        staging.0.push((publish.clone(), owned.clone()));
+        ensure!(
+            owned.file_id.is_some(),
+            "The desktop filesystem cannot verify shortcut ownership; placement was cancelled"
+        );
         tx.changes.push(Change {
             kind: "add".into(),
             file: owned.clone(),
             backup: stage.to_string_lossy().into_owned(),
+            staging: Some(publish.to_string_lossy().into_owned()),
+            restore_staging: None,
+            restore_file_id: None,
         });
         after.owned.push(owned);
     }
@@ -536,13 +947,12 @@ pub fn apply(store: &Store, initial: bool) -> Result<String> {
             let file = Path::new(&c.file.path);
             safe_file(file, &desktop)?;
             if c.kind == "remove" {
-                ensure!(
-                    fingerprint(file)? == c.file.sha,
-                    "Ярлык изменился во время операции"
-                );
-                std::fs::remove_file(file)?;
+                remove_owned(file, &c.file)?;
             } else {
-                copy_new(Path::new(&c.backup), file)?;
+                move_new(
+                    Path::new(c.staging.as_ref().context("Prepared shortcut is missing")?),
+                    file,
+                )?;
                 ensure!(
                     fingerprint(file)? == c.file.sha,
                     "Запись ярлыка не подтверждена"
@@ -591,13 +1001,14 @@ pub fn apply(store: &Store, initial: bool) -> Result<String> {
                 return Err(e);
             }
         }
-        let dbtx = store.db.unchecked_transaction()?;
-        store.set("state", &tx.after)?;
-        store.db.execute(
-            "UPDATE transactions SET status='committed' WHERE id=?1",
-            [&tx.id],
-        )?;
-        dbtx.commit()?;
+        store.transaction(|| {
+            store.set("state", &tx.after)?;
+            store.db.execute(
+                "UPDATE transactions SET status='committed' WHERE id=?1",
+                [&tx.id],
+            )?;
+            Ok(())
+        })?;
         Ok(())
     })();
     if let Err(e) = operation {
@@ -646,111 +1057,311 @@ pub fn setup_complete(store: &Store) -> Result<bool> {
     Ok(store.get::<bool>("setup_complete")? || store.get::<State>("state")?.initialized)
 }
 
+fn safe_staging(path: &Path, desktop: &Path) -> Result<()> {
+    ensure!(
+        path.parent().is_some_and(
+            |parent| norm(&parent.to_string_lossy()) == norm(&desktop.to_string_lossy())
+        ) && path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with(".desktop-pilot-"))
+            && path.extension().is_some_and(|extension| extension == "tmp"),
+        "Invalid transaction staging path"
+    );
+    match path.symlink_metadata() {
+        Ok(metadata) => ensure!(
+            metadata.is_file() && !is_reparse(&metadata),
+            "Invalid transaction staging file"
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+    Ok(())
+}
 pub fn rollback(store: &Store) -> Result<String> {
-    let row=store.db.query_row("SELECT id,data,status FROM transactions WHERE status IN ('prepared','committed') ORDER BY at DESC,rowid DESC LIMIT 1",[],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?)));
+    let row = store.db.query_row(
+        "SELECT id,data,status FROM transactions WHERE status IN ('prepared','rolling_back','committed') ORDER BY CASE WHEN status IN ('prepared','rolling_back') THEN 0 ELSE 1 END,at DESC,rowid DESC LIMIT 1",
+        [], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)));
     let (id, data, status) = match row {
         Ok(r) => r,
         Err(rusqlite::Error::QueryReturnedNoRows) => return Ok("Нет изменений для отката".into()),
         Err(e) => return Err(e.into()),
     };
-    let tx: Transaction = serde_json::from_str(&data)?;
+    let mut tx: Transaction = serde_json::from_str(&data)?;
+    ensure!(
+        tx.id == id && !id.is_empty() && !id.contains(['/', '\\', ':']),
+        "Invalid transaction identifier"
+    );
     let desktop = root(store)?;
-    let layout_before_undo = if real_desktop(store)? {
-        if status == "prepared" {
-            tx.before_layout.clone().or(Some(native::layout()?))
-        } else {
-            Some(native::layout()?)
-        }
+    let sources: HashSet<_> = store.apps()?.iter().map(|app| norm(&app.source)).collect();
+    let current_state: State = store.get("state")?;
+    let current_layout = if real_desktop(store)? {
+        Some(native::layout()?)
     } else {
         None
     };
-    for c in &tx.changes {
-        let p = Path::new(&c.file.path);
-        safe_file(p, &desktop)?;
+    let geometry_matches = current_layout.as_ref().is_none_or(|layout| {
+        tx.before_layout
+            .as_ref()
+            .is_none_or(|before| before.topology == layout.topology)
+    });
+    if status != "rolling_back" {
+        tx.undo_layout = if status == "prepared" && geometry_matches {
+            tx.before_layout.clone().or_else(|| current_layout.clone())
+        } else {
+            current_layout.clone()
+        };
+    }
+    let mut seen = HashSet::new();
+    let mut foreign_adds = HashSet::new();
+    // Validate the complete undo before changing even one user-visible file.
+    for change in &tx.changes {
         ensure!(
-            fingerprint(Path::new(&c.backup))? == c.file.sha,
+            matches!(change.kind.as_str(), "add" | "remove"),
+            "Invalid transaction operation"
+        );
+        let path = Path::new(&change.file.path);
+        safe_file(path, &desktop)?;
+        let key = norm(&change.file.path);
+        ensure!(
+            seen.insert(key.clone()),
+            "Transaction contains conflicting shortcut paths"
+        );
+        ensure!(
+            !sources.contains(&key),
+            "An original shortcut cannot be modified by Undo"
+        );
+        let backup = Path::new(&change.backup);
+        ensure!(
+            backup
+                .parent()
+                .is_some_and(|parent| norm(&parent.to_string_lossy())
+                    == norm(&store.home.join("history").join(&id).to_string_lossy())),
+            "Invalid transaction backup path"
+        );
+        let metadata = backup.symlink_metadata()?;
+        ensure!(
+            metadata.is_file() && !is_reparse(&metadata) && fingerprint(backup)? == change.file.sha,
             "Повреждена резервная копия"
         );
-        if p.exists() {
+        for staged in [&change.staging, &change.restore_staging]
+            .into_iter()
+            .flatten()
+        {
+            safe_staging(Path::new(staged), &desktop)?;
+        }
+        if path.try_exists()? {
+            let actual_id = file_identity(path)?;
+            let same_original = change
+                .file
+                .file_id
+                .as_ref()
+                .is_none_or(|expected| actual_id.as_ref() == Some(expected));
+            let same_restoration = change
+                .restore_file_id
+                .as_ref()
+                .is_some_and(|expected| actual_id.as_ref() == Some(expected));
+            if change.kind == "add" && status != "committed" && !same_original {
+                // A create-new collision never transferred ownership of this file.
+                foreign_adds.insert(key);
+                continue;
+            }
             ensure!(
-                fingerprint(p)? == c.file.sha,
+                (same_original || same_restoration) && fingerprint(path)? == change.file.sha,
                 "Пользователь изменил файл; откат остановлен без перезаписи: {}",
-                p.display()
+                path.display()
             );
         }
     }
-    for c in tx.changes.iter().rev() {
-        let p = Path::new(&c.file.path);
-        if c.kind == "add" {
-            if p.exists() {
-                std::fs::remove_file(p)?;
+    let mut restore_staging = StagedCopies(Vec::new());
+    for (index, change) in tx.changes.iter_mut().enumerate() {
+        if change.kind != "remove" || Path::new(&change.file.path).try_exists()? {
+            continue;
+        }
+        let staging = change
+            .restore_staging
+            .clone()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| desktop.join(format!(".desktop-pilot-{id}-undo-{index}.tmp")));
+        safe_staging(&staging, &desktop)?;
+        if staging.try_exists()? {
+            ensure!(
+                fingerprint(&staging)? == change.file.sha
+                    && change
+                        .restore_file_id
+                        .as_ref()
+                        .is_some_and(|expected| file_identity(&staging)
+                            .is_ok_and(|actual| actual.as_ref() == Some(expected))),
+                "Undo staging file was changed; it was preserved"
+            );
+        } else {
+            copy_new(Path::new(&change.backup), &staging)?;
+        }
+        let mut restored = change.file.clone();
+        restored.file_id = file_identity(&staging)?;
+        change.restore_file_id = restored.file_id.clone();
+        change.restore_staging = Some(staging.to_string_lossy().into_owned());
+        restore_staging.0.push((staging, restored));
+    }
+    // Persist the undo intent before touching files. An interrupted Undo is resumed
+    // before older history and can never become evidence of a manual deletion.
+    store.transaction(|| {
+        let mut config: Config = store.get("config")?;
+        config.automatic = false;
+        store.set("config", &config)?;
+        store.db.execute(
+            "UPDATE transactions SET status='rolling_back',data=?2 WHERE id=?1",
+            params![id, serde_json::to_string(&tx)?],
+        )?;
+        Ok(())
+    })?;
+    for change in tx.changes.iter().rev() {
+        let path = Path::new(&change.file.path);
+        if change.kind == "add" {
+            if !foreign_adds.contains(&norm(&change.file.path)) && path.try_exists()? {
+                remove_owned(path, &change.file)?;
             }
-        } else if !p.exists() {
-            copy_new(Path::new(&c.backup), p)?;
+        } else if !path.try_exists()? {
+            move_new(
+                Path::new(
+                    change
+                        .restore_staging
+                        .as_ref()
+                        .context("Undo staging file is missing")?,
+                ),
+                path,
+            )?;
         }
     }
-    if let Some(layout) = layout_before_undo {
+    for change in &tx.changes {
+        if let Some(staging) = &change.staging {
+            let path = Path::new(staging);
+            if path.try_exists()? {
+                remove_owned(path, &change.file)?;
+            }
+        }
+    }
+    if let Some(layout) = &tx.undo_layout {
         native::refresh(&desktop);
         wait_removed(
             &tx.changes
                 .iter()
-                .filter(|c| c.kind == "add")
+                .filter(|c| c.kind == "add" && !foreign_adds.contains(&norm(&c.file.path)))
                 .map(|c| c.file.path.clone())
                 .collect::<Vec<_>>(),
         )?;
         let mut positions: Vec<_> = layout
             .items
-            .into_iter()
-            .filter(|i| {
-                !tx.changes
-                    .iter()
-                    .any(|c| c.kind == "add" && norm(&c.file.path) == norm(&i.path))
+            .iter()
+            .filter(|item| {
+                !tx.changes.iter().any(|c| {
+                    c.kind == "add"
+                        && !foreign_adds.contains(&norm(&c.file.path))
+                        && norm(&c.file.path) == norm(&item.path)
+                })
             })
-            .map(|i| (i.path, i.position))
+            .filter(|item| Path::new(&item.path).exists() || item.path.starts_with("::"))
+            .map(|item| (item.path.clone(), item.position.clone()))
             .collect();
-        for o in &tx.before.owned {
-            if Path::new(&o.path).exists()
-                && !positions.iter().any(|(p, _)| norm(p) == norm(&o.path))
-            {
-                positions.push((o.path.clone(), o.position.clone()));
-            }
-        }
-        let mut last = None;
-        for _ in 0..20 {
-            match native::position_many(&positions) {
-                Ok(()) => {
-                    last = None;
-                    break;
-                }
-                Err(e) => {
-                    last = Some(e);
-                    std::thread::sleep(Duration::from_millis(100));
+        if geometry_matches {
+            for owned in &tx.before.owned {
+                if Path::new(&owned.path).exists()
+                    && !positions
+                        .iter()
+                        .any(|(path, _)| norm(path) == norm(&owned.path))
+                {
+                    positions.push((owned.path.clone(), owned.position.clone()));
                 }
             }
         }
-        if let Some(e) = last {
-            return Err(e);
+        if layout.flags & 1 == 0 {
+            let mut last = None;
+            for _ in 0..20 {
+                match native::position_many(&positions) {
+                    Ok(()) => {
+                        last = None;
+                        break;
+                    }
+                    Err(e) => {
+                        last = Some(e);
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                }
+            }
+            if let Some(e) = last {
+                return Err(e);
+            }
         }
     }
-    let dbtx = store.db.unchecked_transaction()?;
-    store.set("state", &tx.before)?;
-    let mut cfg: Config = store.get("config")?;
-    cfg.automatic = false;
-    store.set("config", &cfg)?;
-    store.db.execute(
-        "UPDATE transactions SET status='rolled_back' WHERE id=?1",
-        [&id],
-    )?;
-    dbtx.commit()?;
-    store.event(
-        "rollback",
-        &format!("Откат {id}; автоматика приостановлена"),
-    )?;
+    let actual_layout = if real_desktop(store)? {
+        Some(native::layout()?)
+    } else {
+        None
+    };
+    let mut restored = tx.before.clone();
+    let mut kept = Vec::new();
+    for mut owned in restored.owned {
+        let was_removed = tx
+            .changes
+            .iter()
+            .any(|change| change.kind == "remove" && change.file.app == owned.app);
+        if !was_removed
+            && let Some(current) = current_state
+                .owned
+                .iter()
+                .find(|current| current.app == owned.app)
+        {
+            owned = current.clone();
+        }
+        let path = Path::new(&owned.path);
+        if !path.try_exists()? || sources.contains(&norm(&owned.path)) {
+            continue;
+        }
+        safe_file(path, &desktop)?;
+        let actual_id = file_identity(path)?;
+        if fingerprint(path)? != owned.sha {
+            continue;
+        }
+        if !was_removed
+            && owned
+                .file_id
+                .as_ref()
+                .is_some_and(|expected| actual_id.as_ref() != Some(expected))
+        {
+            continue;
+        }
+        owned.file_id = actual_id;
+        if let Some(layout) = &actual_layout
+            && let Some(item) = layout
+                .items
+                .iter()
+                .find(|item| norm(&item.path) == norm(&owned.path))
+        {
+            owned.position = item.position.clone();
+        }
+        kept.push(owned);
+    }
+    restored.owned = kept;
+    if let Some(layout) = actual_layout {
+        restored.topology = layout.topology;
+    }
+    store.transaction(|| {
+        store.set("state", &restored)?;
+        store.db.execute(
+            "UPDATE transactions SET status='rolled_back' WHERE id=?1",
+            [&id],
+        )?;
+        store.event(
+            "rollback",
+            &format!("Откат {id}; автоматика приостановлена"),
+        )
+    })?;
     Ok("Предыдущее размещение восстановлено. Автоматика приостановлена.".into())
 }
 
 pub fn command(store: &Store, action: &str) -> Result<String> {
     if let Some(rest) = action.strip_prefix("policy:") {
+        let _lock = native::exclusive("changes", &store.home)?;
+        ensure_no_unfinished(store)?;
         let (id, mode) = rest.split_once(':').context("Некорректная команда")?;
         let policy = match mode {
             "Auto" => Policy::Auto,
@@ -758,14 +1369,18 @@ pub fn command(store: &Store, action: &str) -> Result<String> {
             "Never" => Policy::Never,
             _ => bail!("Неизвестное правило"),
         };
-        let mut s: State = store.get("state")?;
-        for o in &mut s.owned {
-            if o.app == id {
-                o.manual = policy == Policy::Always;
+        store.transaction(|| {
+            // Validate the application before altering the matching ownership flag.
+            store.app(id)?;
+            let mut s: State = store.get("state")?;
+            for o in &mut s.owned {
+                if o.app == id {
+                    o.manual = policy == Policy::Always;
+                }
             }
-        }
-        store.set("state", &s)?;
-        store.policy(id, policy)?;
+            store.set("state", &s)?;
+            store.policy(id, policy)
+        })?;
         return Ok("Правило сохранено. Нажмите «Применить сейчас» для изменения состава.".into());
     }
     match action {
@@ -775,6 +1390,8 @@ pub fn command(store: &Store, action: &str) -> Result<String> {
             rollback(store)
         }
         "accept_geometry" => {
+            let _lock = native::exclusive("changes", &store.home)?;
+            ensure_no_unfinished(store)?;
             let mut s: State = store.get("state")?;
             let l = native::layout()?;
             s.topology = l.topology;
@@ -787,25 +1404,30 @@ pub fn command(store: &Store, action: &str) -> Result<String> {
             Ok("Текущая геометрия принята; существующие позиции сохранены".into())
         }
         "rescan" => {
+            let _lock = native::exclusive("changes", &store.home)?;
             refresh_apps(store)?;
             Ok("Список ярлыков и закрепления обновлены".into())
         }
         "clear_stats" => {
-            store.db.execute("DELETE FROM days", [])?;
-            for mut a in store.apps()? {
-                a.seed = 0.0;
-                a.seed_at = 0;
-                store.put_app(&a)?;
-            }
-            let completed = store.get::<Progress>("learning")?.completed_at;
-            store.set(
-                "learning",
-                &Progress {
-                    started_at: now(),
-                    completed_at: completed,
-                    ..Default::default()
-                },
-            )?;
+            store.transaction(|| {
+                store.db.execute("DELETE FROM days", [])?;
+                for mut a in store.apps()? {
+                    a.seed = 0.0;
+                    a.seed_at = 0;
+                    store.put_app(&a)?;
+                }
+                let mut progress: Progress = store.get("learning")?;
+                progress.finish_if_ready(&store.get("config")?, now());
+                store.set(
+                    "learning",
+                    &Progress {
+                        started_at: now(),
+                        completed_at: progress.completed_at,
+                        ..Default::default()
+                    },
+                )?;
+                store.set("app_session_times", &HashMap::<String, i64>::new())
+            })?;
             Ok("История использования очищена; ярлыки и правила сохранены".into())
         }
         _ => bail!("Неизвестная команда"),
@@ -841,11 +1463,15 @@ fn observe_app_id(apps: &[App], id: &str) -> Option<String> {
         .iter()
         .filter(|a| {
             a.valid
-                && a.arguments
-                    .to_lowercase()
-                    .split("shell:appsfolder\\")
-                    .nth(1)
-                    .is_some_and(|suffix| suffix.trim_matches(['"', ' ']).eq_ignore_ascii_case(id))
+                && [&a.target, &a.arguments].into_iter().any(|value| {
+                    let value = value.trim().trim_matches('"').to_lowercase();
+                    value
+                        .strip_prefix("shell:appsfolder\\")
+                        .or_else(|| {
+                            value.strip_prefix("::{4234d49b-0245-4df3-b780-3893943456e1}\\")
+                        })
+                        .is_some_and(|suffix| suffix.eq_ignore_ascii_case(id))
+                })
         })
         .map(|a| a.id.clone())
         .collect();
@@ -858,13 +1484,18 @@ fn observe_app_id(apps: &[App], id: &str) -> Option<String> {
 
 pub fn automatic_review(store: &Store, quiet: bool) -> Result<bool> {
     let config: Config = store.get("config")?;
+    config.validate()?;
     let state: State = store.get("state")?;
     let mut progress: Progress = store.get("learning")?;
     progress.finish_if_ready(&config, now());
     store.set("learning", &progress)?;
     if config.automatic
         && progress.ready(&config)
-        && (!state.initialized || now() >= state.last_review + config.interval_days * 86400)
+        && (!state.initialized
+            || now()
+                >= state
+                    .last_review
+                    .saturating_add(config.interval_days * 86400))
         && quiet
         && (state.initialized || !preview(store, true)?.selected.is_empty())
     {
@@ -873,9 +1504,40 @@ pub fn automatic_review(store: &Store, quiet: bool) -> Result<bool> {
     }
     Ok(false)
 }
+#[derive(Default)]
+struct UsageAccumulator {
+    id: String,
+    seconds: f64,
+    recorded: u32,
+}
+impl UsageAccumulator {
+    fn sample(&mut self, id: Option<&str>, elapsed: f64) -> Option<(String, u32, bool)> {
+        if id.is_none() || !elapsed.is_finite() || !(0.0..5.0).contains(&elapsed) {
+            *self = Self::default();
+            return None;
+        }
+        let id = id?;
+        if self.id != id {
+            self.id = id.into();
+            self.seconds = 0.0;
+            self.recorded = 0;
+            return None;
+        }
+        self.seconds += elapsed;
+        let whole = self.seconds.floor().min(f64::from(u32::MAX)) as u32;
+        if whole < 10 || whole <= self.recorded {
+            return None;
+        }
+        let first = self.recorded == 0;
+        let delta = whole - self.recorded;
+        self.recorded = whole;
+        Some((self.id.clone(), delta, first))
+    }
+}
 pub fn monitor(home: PathBuf) -> Result<()> {
     let _com = native::Com::new()?;
     let store = Store::open(&home)?;
+    store.recover_commands()?;
     let mut progress: Progress = store.get("learning")?;
     if progress.started_at == 0 && store.get::<State>("state")?.initialized {
         progress.completed_at = now();
@@ -883,92 +1545,128 @@ pub fn monitor(home: PathBuf) -> Result<()> {
         store.set("learning", &progress)?;
     }
     let mut apps = store.apps()?;
-    let mut last_id = String::new();
     let mut focus = crate::activity::FocusEvidence::default();
-    let mut seconds = 0;
-    let mut session_times: HashMap<String, i64> = HashMap::new();
+    let mut usage = UsageAccumulator::default();
+    let mut learning_fraction = 0.0f64;
+    let mut session_times: HashMap<String, i64> = store.get("app_session_times")?;
     let mut last_tick = Instant::now();
     let mut maintenance: Option<Instant> = None;
     let mut scanned: Option<Instant> = None;
     let mut last_autostart = None;
+    let mut autostart_retry: Option<Instant> = None;
+    let mut previous_collect = None;
     loop {
         if store.get::<bool>("shutdown")? {
             store.set("shutdown", &false)?;
             return Ok(());
         }
         for (id, action) in store.pending()? {
-            let r = command(&store, &action);
-            store.finish(id, &r)?;
+            if !store.claim_command(id)? {
+                continue;
+            }
+            let result = command(&store, &action);
+            store.finish(id, &result)?;
             apps = store.apps()?;
+            if action == "clear_stats" && result.is_ok() {
+                usage = UsageAccumulator::default();
+                learning_fraction = 0.0;
+                session_times.clear();
+            }
+            maintenance = None;
         }
         let config: Config = store.get("config")?;
         config.validate()?;
         crate::activity::set_enabled(config.collect);
-        if last_autostart != Some(config.autostart) {
-            if real_desktop(&store)? {
-                native::autostart(&std::env::current_exe()?, &store.home, config.autostart)?;
+        if previous_collect != Some(config.collect) {
+            previous_collect = Some(config.collect);
+            usage = UsageAccumulator::default();
+            learning_fraction = 0.0;
+            focus = crate::activity::FocusEvidence::default();
+        }
+        if last_autostart != Some(config.autostart)
+            && autostart_retry.is_none_or(|last| last.elapsed() >= Duration::from_secs(30))
+        {
+            autostart_retry = Some(Instant::now());
+            let result = if real_desktop(&store)? {
+                native::autostart(&std::env::current_exe()?, &store.home, config.autostart)
+            } else {
+                Ok(())
+            };
+            let warning = match result {
+                Ok(()) => {
+                    last_autostart = Some(config.autostart);
+                    String::new()
+                }
+                Err(error) => format!("Autostart could not be updated: {error:#}"),
+            };
+            if store.get::<String>("autostart_warning")? != warning {
+                store.set("autostart_warning", &warning)?;
+                if !warning.is_empty() {
+                    store.event("warning", &warning)?;
+                }
             }
-            last_autostart = Some(config.autostart);
         }
         let elapsed = last_tick.elapsed().as_secs_f64();
         last_tick = Instant::now();
+        let mut active_id = None;
+        let mut learning_active = false;
         if config.collect && elapsed < 5.0 {
             if let Ok(foreground) = native::foreground() {
                 let input = crate::activity::snapshot();
                 let tick = crate::activity::tick();
-                let engaged = focus.active(foreground.window, input, tick, config.idle_seconds);
-                if foreground.idle < config.idle_seconds && input.recent(tick, config.idle_seconds)
-                {
-                    if config.learning_enabled {
-                        let mut progress: Progress = store.get("learning")?;
-                        if progress.completed_at == 0 {
-                            progress.observe(
-                                now(),
-                                &chrono::Local::now().date_naive().to_string(),
-                                elapsed.round() as u32,
-                            );
-                            store.set("learning", &progress)?;
-                        }
-                    }
-                    if engaged
-                        && let Some(id) = observe_app_id(&apps, &foreground.app_id)
-                            .or_else(|| observe_match(&apps, &foreground.process))
-                    {
-                        if id != last_id {
-                            last_id = id.clone();
-                            seconds = 0;
-                        } else {
-                            seconds += 2;
-                        }
-                        if seconds >= 10 {
-                            let session = seconds == 10
-                                && now() - session_times.get(&id).copied().unwrap_or(0) >= 1200;
-                            let count = if seconds == 10 { 10 } else { 2 };
-                            store.observe(&id, count, session, false)?;
-                            if session {
-                                session_times.insert(id, now());
-                            }
-                        }
-                    } else {
-                        last_id.clear();
-                        seconds = 0;
-                    }
-                } else {
-                    last_id.clear();
-                    seconds = 0;
+                let engaged = focus.active(foreground.window, input, tick, config.idle_seconds)
+                    && foreground.idle < config.idle_seconds
+                    && input.recent(tick, config.idle_seconds);
+                if engaged {
+                    learning_active = true;
+                    active_id = observe_app_id(&apps, &foreground.app_id)
+                        .or_else(|| observe_match(&apps, &foreground.process));
                 }
-            } else {
-                last_id.clear();
-                seconds = 0;
             }
         } else {
-            last_id.clear();
-            seconds = 0;
             focus = crate::activity::FocusEvidence::default();
         }
+        if config.learning_enabled && learning_active {
+            learning_fraction += elapsed;
+            let seconds = learning_fraction.floor() as u32;
+            if seconds > 0 {
+                learning_fraction -= f64::from(seconds);
+                store.transaction(|| {
+                    let mut progress: Progress = store.get("learning")?;
+                    if progress.completed_at == 0 {
+                        progress.observe(
+                            now(),
+                            &chrono::Local::now().date_naive().to_string(),
+                            seconds.min(4),
+                        );
+                        progress.finish_if_ready(&config, now());
+                        store.set("learning", &progress)?;
+                    }
+                    Ok(())
+                })?;
+            }
+        } else {
+            learning_fraction = 0.0;
+        }
+        if let Some((id, seconds, first)) = usage.sample(active_id.as_deref(), elapsed) {
+            let time = now();
+            let session = first
+                && session_times
+                    .get(&id)
+                    .is_none_or(|last| time.saturating_sub(*last) >= 1200);
+            store.transaction(|| {
+                store.observe(&id, seconds, session, false)?;
+                if session {
+                    session_times.insert(id.clone(), time);
+                    session_times.retain(|_, last| time.saturating_sub(*last) < 90 * 86400);
+                    store.set("app_session_times", &session_times)?;
+                }
+                Ok(())
+            })?;
+        }
+        store.set("heartbeat", &now())?;
         if maintenance.is_none_or(|at| at.elapsed() >= Duration::from_secs(60)) {
             maintenance = Some(Instant::now());
-            store.set("heartbeat", &now())?;
             let result = (|| -> Result<()> {
                 if scanned.is_none_or(|at| at.elapsed() >= Duration::from_secs(21600)) {
                     refresh_apps(&store)?;
@@ -980,10 +1678,15 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                 automatic_review(&store, native::quiet_for_changes())?;
                 Ok(())
             })();
-            let status = match result {
-                Ok(()) => "Фоновый учёт работает".into(),
+            let mut status = match result {
+                Ok(()) if config.collect => "Фоновый учёт работает".into(),
+                Ok(()) => "Учёт использования приостановлен".into(),
                 Err(e) => format!("Изменения приостановлены: {e:#}"),
             };
+            let warning: String = store.get("autostart_warning")?;
+            if !warning.is_empty() {
+                status.push_str(&format!("\n{warning}"));
+            }
             store.set("status", &status)?;
         }
         std::thread::sleep(Duration::from_secs(2));
@@ -993,6 +1696,419 @@ pub fn monitor(home: PathBuf) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn with_store(test: impl FnOnce(&Store)) {
+        static SERIAL: AtomicU64 = AtomicU64::new(0);
+        let home = std::env::temp_dir().join(format!(
+            "desktop-pilot-engine-test-{}-{}-{}",
+            std::process::id(),
+            now(),
+            SERIAL.fetch_add(1, Ordering::Relaxed)
+        ));
+        let store = Store::open(&home).unwrap();
+        let desktop = home.join("Desktop");
+        std::fs::create_dir_all(&desktop).unwrap();
+        store
+            .set("test_desktop", &desktop.to_string_lossy())
+            .unwrap();
+        store
+            .set(
+                "config",
+                &Config {
+                    learning_enabled: false,
+                    respect_taskbar_pins: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        test(&store);
+        drop(store);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+    fn add_test_app(store: &Store, name: &str, target: &str) -> App {
+        let source = store
+            .home
+            .join(format!("source-{}.url", store.apps().unwrap().len()));
+        std::fs::write(&source, format!("[InternetShortcut]\r\nURL={target}\r\n")).unwrap();
+        let mut app = native::read_link(&source).unwrap();
+        app.name = name.into();
+        app.policy = Policy::Always;
+        store.put_app(&app).unwrap();
+        app
+    }
+    fn replace_with_identical_file(path: &Path) {
+        let replacement = path.with_extension("replacement");
+        std::fs::copy(path, &replacement).unwrap();
+        std::fs::remove_file(path).unwrap();
+        std::fs::rename(replacement, path).unwrap();
+    }
+    #[test]
+    fn same_display_names_get_distinct_files_and_reversible_ownership() {
+        with_store(|store| {
+            add_test_app(store, "Same name", "steam://rungameid/101");
+            add_test_app(store, "Same name", "steam://rungameid/102");
+            apply(store, true).unwrap();
+            let state: State = store.get("state").unwrap();
+            assert_eq!(state.owned.len(), 2);
+            assert_ne!(norm(&state.owned[0].path), norm(&state.owned[1].path));
+            for owned in &state.owned {
+                let app = store.app(&owned.app).unwrap();
+                assert_eq!(
+                    std::fs::read(&owned.path).unwrap(),
+                    std::fs::read(&app.source).unwrap()
+                );
+            }
+            rollback(store).unwrap();
+            assert!(
+                state
+                    .owned
+                    .iter()
+                    .all(|owned| !Path::new(&owned.path).exists())
+            );
+            assert!(
+                store
+                    .apps()
+                    .unwrap()
+                    .iter()
+                    .all(|app| Path::new(&app.source).exists())
+            );
+        });
+    }
+    #[test]
+    fn empty_apply_keeps_first_fill_available_when_evidence_arrives() {
+        with_store(|store| {
+            apply(store, false).unwrap();
+            assert!(!store.get::<State>("state").unwrap().initialized);
+            for (name, target) in [
+                ("First", "steam://rungameid/501"),
+                ("Second", "steam://rungameid/502"),
+            ] {
+                let mut app = add_test_app(store, name, target);
+                app.policy = Policy::Auto;
+                app.seed = 20.0;
+                app.seed_at = now();
+                store.put_app(&app).unwrap();
+            }
+            apply(store, false).unwrap();
+            let state: State = store.get("state").unwrap();
+            assert!(state.initialized);
+            assert_eq!(state.owned.len(), 2);
+        });
+    }
+    #[test]
+    fn filenames_handle_devices_empty_names_and_multiple_existing_copies() {
+        with_store(|store| {
+            let desktop = root(store).unwrap();
+            let mut reserved = HashSet::new();
+            assert_eq!(
+                shortcut_path(&desktop, "CON", "url", "en", &mut reserved)
+                    .unwrap()
+                    .file_name()
+                    .unwrap(),
+                "_CON.url"
+            );
+            assert_eq!(
+                shortcut_path(&desktop, "...", "lnk", "en", &mut reserved)
+                    .unwrap()
+                    .file_name()
+                    .unwrap(),
+                "Shortcut.lnk"
+            );
+            assert_eq!(
+                shortcut_path(&desktop, "Name", "url", "en", &mut reserved)
+                    .unwrap()
+                    .file_name()
+                    .unwrap(),
+                "Name.url"
+            );
+            assert_eq!(
+                shortcut_path(&desktop, "Name", "url", "en", &mut reserved)
+                    .unwrap()
+                    .file_name()
+                    .unwrap(),
+                "Name · quick.url"
+            );
+            assert_eq!(
+                shortcut_path(&desktop, "Name", "url", "en", &mut reserved)
+                    .unwrap()
+                    .file_name()
+                    .unwrap(),
+                "Name · quick (2).url"
+            );
+            assert_eq!(
+                shortcut_path(&desktop, "LPT1.txt", "lnk", "en", &mut reserved)
+                    .unwrap()
+                    .file_name()
+                    .unwrap(),
+                "_LPT1.txt.lnk"
+            );
+        });
+    }
+    #[test]
+    fn deleting_a_quick_copy_never_claims_the_byte_identical_original() {
+        with_store(|store| {
+            let mut app = add_test_app(store, "Original", "steam://rungameid/103");
+            let original = root(store).unwrap().join("Original.url");
+            std::fs::rename(&app.source, &original).unwrap();
+            app.source = original.to_string_lossy().into_owned();
+            store.put_app(&app).unwrap();
+            let bytes = std::fs::read(&original).unwrap();
+            apply(store, true).unwrap();
+            let state: State = store.get("state").unwrap();
+            assert_ne!(Path::new(&state.owned[0].path), original);
+            std::fs::remove_file(&state.owned[0].path).unwrap();
+            reconcile_manual(store).unwrap();
+            assert!(store.get::<State>("state").unwrap().owned.is_empty());
+            assert_eq!(store.app(&app.id).unwrap().policy, Policy::Never);
+            apply(store, false).unwrap();
+            assert_eq!(std::fs::read(&original).unwrap(), bytes);
+        });
+    }
+    #[test]
+    fn renamed_file_keeps_its_identity_but_a_replacement_is_released() {
+        with_store(|store| {
+            let app = add_test_app(store, "Rename", "steam://rungameid/104");
+            apply(store, true).unwrap();
+            let before: State = store.get("state").unwrap();
+            let renamed = root(store).unwrap().join("Renamed by user.url");
+            std::fs::rename(&before.owned[0].path, &renamed).unwrap();
+            reconcile_manual(store).unwrap();
+            let after: State = store.get("state").unwrap();
+            assert_eq!(Path::new(&after.owned[0].path), renamed);
+            assert_eq!(after.owned[0].file_id, before.owned[0].file_id);
+            assert!(after.owned[0].manual);
+            replace_with_identical_file(&renamed);
+            reconcile_manual(store).unwrap();
+            assert!(store.get::<State>("state").unwrap().owned.is_empty());
+            assert_eq!(store.app(&app.id).unwrap().policy, Policy::Never);
+            assert!(renamed.is_file());
+        });
+    }
+    #[test]
+    fn unfinished_transactions_are_not_interpreted_as_manual_deletions() {
+        with_store(|store| {
+            let mut app = add_test_app(store, "Prepared", "steam://rungameid/105");
+            app.policy = Policy::Auto;
+            app.seed = 20.0;
+            app.seed_at = now();
+            store.put_app(&app).unwrap();
+            apply(store, true).unwrap();
+            let state: State = store.get("state").unwrap();
+            store
+                .db
+                .execute("UPDATE transactions SET status='prepared'", [])
+                .unwrap();
+            std::fs::remove_file(&state.owned[0].path).unwrap();
+            assert!(reconcile_manual(store).is_err());
+            assert!(refresh_apps(store).is_err());
+            assert_eq!(store.app(&app.id).unwrap().policy, Policy::Auto);
+            rollback(store).unwrap();
+            assert!(store.get::<State>("state").unwrap().owned.is_empty());
+        });
+    }
+    #[test]
+    fn undo_preflight_preserves_all_files_if_one_file_was_edited() {
+        with_store(|store| {
+            add_test_app(store, "First", "steam://rungameid/106");
+            add_test_app(store, "Second", "steam://rungameid/107");
+            apply(store, true).unwrap();
+            let state: State = store.get("state").unwrap();
+            let first = std::fs::read(&state.owned[0].path).unwrap();
+            std::fs::write(&state.owned[1].path, b"User changes").unwrap();
+            assert!(rollback(store).is_err());
+            assert_eq!(std::fs::read(&state.owned[0].path).unwrap(), first);
+            assert_eq!(
+                std::fs::read(&state.owned[1].path).unwrap(),
+                b"User changes"
+            );
+            assert_eq!(store.get::<State>("state").unwrap().owned.len(), 2);
+        });
+    }
+    #[test]
+    fn prepared_create_collision_does_not_delete_an_identical_user_file() {
+        with_store(|store| {
+            add_test_app(store, "Collision", "steam://rungameid/108");
+            apply(store, true).unwrap();
+            let state: State = store.get("state").unwrap();
+            let path = Path::new(&state.owned[0].path);
+            let bytes = std::fs::read(path).unwrap();
+            replace_with_identical_file(path);
+            store
+                .db
+                .execute("UPDATE transactions SET status='prepared'", [])
+                .unwrap();
+            rollback(store).unwrap();
+            assert_eq!(std::fs::read(path).unwrap(), bytes);
+            assert!(store.get::<State>("state").unwrap().owned.is_empty());
+        });
+    }
+    #[test]
+    fn interrupted_undo_resumes_the_same_transaction_and_restored_file_identity() {
+        with_store(|store| {
+            let first = add_test_app(store, "First", "steam://rungameid/109");
+            apply(store, true).unwrap();
+            store.policy(&first.id, Policy::Never).unwrap();
+            let second = add_test_app(store, "Second", "steam://rungameid/110");
+            apply(store, false).unwrap();
+            let id: String = store
+                .db
+                .query_row(
+                    "SELECT id FROM transactions ORDER BY rowid DESC LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            rollback(store).unwrap();
+            let restored: State = store.get("state").unwrap();
+            assert_eq!(restored.owned.len(), 1);
+            assert_eq!(restored.owned[0].app, first.id);
+            assert_eq!(
+                file_identity(Path::new(&restored.owned[0].path)).unwrap(),
+                restored.owned[0].file_id
+            );
+            // Simulate the final DB commit being interrupted after file restoration.
+            store
+                .db
+                .execute(
+                    "UPDATE transactions SET status='rolling_back' WHERE id=?1",
+                    [&id],
+                )
+                .unwrap();
+            store
+                .db
+                .execute(
+                    "UPDATE transactions SET at=?1 WHERE status='committed'",
+                    [now() + 10000],
+                )
+                .unwrap();
+            rollback(store).unwrap();
+            let retried: State = store.get("state").unwrap();
+            assert_eq!(retried.owned.len(), 1);
+            assert_eq!(retried.owned[0].app, first.id);
+            assert!(retried.owned.iter().all(|owned| owned.app != second.id));
+            assert!(Path::new(&retried.owned[0].path).is_file());
+        });
+    }
+    #[test]
+    fn atomic_copy_refuses_to_overwrite_existing_files() {
+        with_store(|store| {
+            let source = store.home.join("source");
+            let destination = store.home.join("destination");
+            std::fs::write(&source, b"New").unwrap();
+            std::fs::write(&destination, b"User file").unwrap();
+            assert!(copy_new(&source, &destination).is_err());
+            assert_eq!(std::fs::read(&destination).unwrap(), b"User file");
+            assert!(
+                !std::fs::read_dir(&store.home)
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .any(|entry| entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(".desktop-pilot-"))
+            );
+        });
+    }
+    #[cfg(windows)]
+    #[test]
+    fn temporary_desktop_files_are_hidden_and_published_shortcuts_are_visible() {
+        with_store(|store| {
+            let source = store.home.join("source.url");
+            std::fs::write(
+                &source,
+                b"[InternetShortcut]\r\nURL=steam://rungameid/10\r\n",
+            )
+            .unwrap();
+            let staging = root(store).unwrap().join(".desktop-pilot-visibility.tmp");
+            copy_new(&source, &staging).unwrap();
+            assert_ne!(
+                std::fs::metadata(&staging).unwrap().file_attributes() & 0x2,
+                0
+            );
+            let published = root(store).unwrap().join("Visible.url");
+            move_new(&staging, &published).unwrap();
+            assert_eq!(
+                std::fs::metadata(&published).unwrap().file_attributes() & 0x2,
+                0
+            );
+            assert_eq!(
+                std::fs::read(published).unwrap(),
+                std::fs::read(source).unwrap()
+            );
+        });
+    }
+    #[test]
+    fn failed_statistics_clear_keeps_the_existing_usage_history() {
+        with_store(|store| {
+            store.observe("broken", 30, true, false).unwrap();
+            store
+                .db
+                .execute("INSERT INTO apps VALUES('broken','{broken')", [])
+                .unwrap();
+            assert!(command(store, "clear_stats").is_err());
+            assert_eq!(store.days().unwrap()[0].seconds, 30);
+        });
+    }
+    #[test]
+    fn url_catalog_refresh_preserves_legacy_ids_and_case_sensitive_targets() {
+        with_store(|store| {
+            let source = root(store).unwrap().join("Old.url");
+            std::fs::write(
+                &source,
+                b"[InternetShortcut]\r\nURL=https://example.com/Path?Key=Value\r\n",
+            )
+            .unwrap();
+            let mut app = native::read_link(&source).unwrap();
+            app.id = hash(format!("{}\\n\\n", norm(&app.target)).as_bytes())[..20].to_owned();
+            app.policy = Policy::Always;
+            app.seed = 20.0;
+            app.seed_at = now();
+            store.put_app(&app).unwrap();
+            refresh_apps(store).unwrap();
+            assert_eq!(store.apps().unwrap().len(), 1);
+            assert_eq!(store.app(&app.id).unwrap().policy, Policy::Always);
+            std::fs::write(
+                root(store).unwrap().join("Other.url"),
+                b"[InternetShortcut]\r\nURL=https://example.com/path?Key=Value\r\n",
+            )
+            .unwrap();
+            refresh_apps(store).unwrap();
+            assert_eq!(store.apps().unwrap().len(), 2);
+            assert_eq!(store.app(&app.id).unwrap().seed, 20.0);
+        });
+    }
+    #[test]
+    fn foreground_accumulator_uses_actual_elapsed_time_and_discards_sleep() {
+        let mut usage = UsageAccumulator::default();
+        assert!(usage.sample(Some("app"), 2.0).is_none());
+        for _ in 0..3 {
+            assert!(usage.sample(Some("app"), 2.6).is_none());
+        }
+        assert_eq!(
+            usage.sample(Some("app"), 2.6),
+            Some(("app".into(), 10, true))
+        );
+        assert_eq!(
+            usage.sample(Some("app"), 2.6),
+            Some(("app".into(), 3, false))
+        );
+        assert!(usage.sample(Some("app"), 600.0).is_none());
+        assert!(usage.sample(Some("app"), 2.0).is_none());
+        assert!(usage.sample(Some("other"), 2.0).is_none());
+        assert!(usage.sample(None, 2.0).is_none());
+    }
+    #[test]
+    fn appsfolder_targets_can_match_without_explorer_arguments() {
+        let app = App {
+            id: "packaged".into(),
+            target: "shell:AppsFolder\\Example.Package!App".into(),
+            valid: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            observe_app_id(&[app], "example.package!app"),
+            Some("packaged".into())
+        );
+    }
     #[test]
     fn ambiguous_profiles_not_merged() {
         let mut a = App {

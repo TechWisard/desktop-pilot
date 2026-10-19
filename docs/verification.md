@@ -1,23 +1,35 @@
-# Verification scope
+# Verification scope — 0.2.0
 
 [Русский](verification.ru.md) · [Home](../README.md)
 
-## Automated checks
+## Release gates
 
-- Rust formatting and Clippy with warnings treated as errors.
-- 31 unit tests covering selection stability, manual precedence, taskbar/context-menu exclusions, independent active days, configuration migration, profile ambiguity, Windows app identity, Steam roots, PIDL bounds, localization, passive-observation thresholds, meaningful sessions, restart continuity and combined day/session conditions, injected-input rejection, foreground-interaction requirements and zero ranking from launch requests alone.
-- Geometry matrix: 5 resolutions × 5 grid/scaling configurations × 4 desktop origins = 100 combinations. Occupied and undersized areas are rejected; existing positions are preserved in the model.
-- Native integration fixture: shortcut creation and identity, actual Shell launch through an inert fixture, transactional apply/undo, manual edit/rename/delete behavior, interrupted-operation recovery, refusal to overwrite changed files, clean-profile installation and background shutdown, blocked early placement and automatic first placement after the observation threshold.
-- Windows CI builds and tests on `windows-2022` and `windows-2025`. CI does not claim interactive Explorer or Windows 10 desktop acceptance; see the actual [run results](https://github.com/TechWisard/desktop-pilot/actions).
+The Windows workflow checks formatting, runs the test suite, rejects Clippy warnings, builds the executable and runs `scripts/test-native.ps1` on both `windows-2022` and `windows-2025`. Publishing depends on both jobs succeeding. The optimized release executable runs the native fixture again before packaging. The package script checks its Windows product version against Cargo metadata and produces SHA-256 checksums for both archives.
 
-- Regression checks cover direct launch after deleting the app catalog entry, byte-identical `.lnk` and `.url` copies, and installed-profile selection across different launch environments.
+[Actual workflow results](https://github.com/TechWisard/desktop-pilot/actions/workflows/checks.yml) are the authoritative record for a given commit. The release archives are built from the published tag's commit.
 
-## Interactive Windows 11 checks
+## Regression coverage
 
-Real desktop apply/undo/reapply, original shortcut byte preservation, existing folder coordinates, settings rendering in both languages, startup registration, background single-instance behavior and source-shortcut identity have been checked. User applications were not launched as part of shortcut validation. The only integration-test launch target is an inert test executable.
+- Shortcut identity, exact `.lnk` / `.url` copies, case-sensitive URL paths and arguments, Windows names and duplicate display names.
+- Stable ownership through rename, deletion and manual edits; byte-identical user files cannot be silently adopted or overwritten.
+- Prepared and partially completed operations, interrupted undo, staging collisions and recovery after process interruption.
+- Atomic configuration and catalog writes, nested transaction rollback, old-profile migration, unrelated database refusal, corrupt-data reporting and command recovery.
+- Ranking stability, manual precedence, independent active days, restart continuity, measured elapsed time, sleep gaps and learning thresholds.
+- Foreground interaction evidence, stale/injected input rejection and no ranking increase from a launch request alone.
+- Profile selection, quoting, installation and replacement, preservation of profile data, and refusal to overwrite an unrelated executable.
+- UTF-8/BOM, UTF-16 and INI parsing; taskbar argument matching, Steam path bounds and Windows resource handling.
+- Settings merging, conflict handling, saved versus draft state, operating modes, search, interface scale and localization that preserves filenames and paths.
 
-Public screenshots use synthetic profiles. Source and release packaging exclude the installed profile, activity history and local backups. Build-machine source paths are remapped in the release executable.
+The geometry matrix covers **5 resolutions × 5 grid/scaling configurations × 4 desktop origins = 100 combinations**, including occupied and undersized areas. Existing positions are preserved by the placement calculations.
 
-## Not established
+## Native fixture and interface checks
 
-Physical acceptance across every display/DPI combination, Windows 10, ARM64, alternative shells, third-party desktop organizers and arbitrary future taskbar formats has not been established. Automated geometry coverage is evidence for the placement calculations, not a promise of universal hardware compatibility. Version 0.1.1 remains a preview.
+The native fixture uses new isolated `test-*` profiles. It checks 16 end-to-end conditions: shortcut creation and identity, a real Shell launch of an inert test executable, operation apply/undo/recovery, original byte preservation, manual rename/delete/edit handling, refusal to overwrite modified files, clean installation, background startup/shutdown, observation-only behavior and the initial learning threshold. It does not launch user applications or modify the user's desktop/startup entries.
+
+Local checks also run the Windows executable under Wine. Interface capture covers Russian and English Home, Apps, all five settings pages, History and the three setup steps, including a larger interface scale in a smaller window. Screenshots use fictional profiles and a supplied desktop diagram. These checks verify the rendered application, not a physical Explorer desktop.
+
+Release packaging excludes installed profiles, usage databases and undo backups. Build-machine source paths are remapped in the release executable.
+
+## Limits
+
+Windows Server CI and Wine do not establish interactive acceptance on every Windows 10/11 desktop. Physical multi-monitor/DPI changes, alternative shells, third-party desktop organizers, ARM64 and future taskbar formats have not been established for this release. The 100 geometry combinations verify placement calculations, not universal hardware compatibility. Version **0.2.0 remains a preview**.

@@ -4,22 +4,40 @@
 
 ## First launch
 
-The welcome page lets you choose the interface language, automatic changes, Windows startup, taskbar filtering and a free area for 1–8 shortcuts. Opening the welcome page alone does not start tracking or configure startup. **Start using Desktop Pilot** installs a per-user executable, scans shortcuts and starts the tray process. You can use tracking without automatic changes.
+Setup is divided into short steps: choose how the app should work, set shortcut count and observation preferences, then choose an area on the desktop. Opening setup does not start collection or enable startup. **Start using Desktop Pilot** installs the per-user executable and starts the background process.
 
-The app uses Windows Known Folders rather than hardcoded account paths, including redirected desktops. It scans the current user's desktop, including shortcut folders up to three levels deep. Reparse points, common source/dependency folders and shortcut archives are skipped. Public Desktop-only shortcuts and Start menu shortcuts can be added explicitly from the Apps tab. It does not automatically inventory or publish installed software.
+The catalog reads desktop and Start menu shortcuts, including folders up to five levels deep. Filesystem links, source/dependency folders and shortcut archives are skipped. An inaccessible subfolder does not cancel the entire scan. The scan is limited to 3,000 files; a warning appears if the limit is reached, and existing catalog entries are retained. Other `.lnk` or `.url` files can be added from Apps.
 
-Installed Settings and startup use an explicit profile path; normal launches also recognize the database beside the installed executable. This prevents a redirected installation from silently opening a separate empty profile.
+Windows Known Folders are used for redirected desktops. An explicit `--home` always selects that profile. A normal launch recognizes a profile beside the installed executable before falling back to `%LOCALAPPDATA%\DesktopPilot`.
 
 ## Everyday use
 
-- **Overview:** see managed shortcuts, apply the current selection, or undo the previous change.
-- **Apps:** inspect ranking reasons, refresh the catalog, add an existing shortcut, and set Always / Automatic / Never.
-- **Settings:** switch English/Russian, pause collection or changes, adjust review timing and the shortcut area, accept a changed display geometry, or clear usage history.
-- **History:** review changes and errors. Records stay local.
+| Section | What you can do |
+| --- | --- |
+| **Home** | See the actual operating state, observation progress, current shortcuts and the proposed changes. Apply a reviewed selection or undo a placement. |
+| **Apps** | Search and filter the catalog, inspect why an app is selected, and choose Always on desktop / Automatic selection / Never add. Detailed statistics and paths open separately. |
+| **Settings → Mode** | Choose automatic adaptation, observation only, or manual control. Set Windows startup. |
+| **Settings → Shortcuts & space** | Choose 1–8 shortcuts, click an area on the desktop map, or find a free area automatically. |
+| **Settings → Observation** | Choose the initial learning requirement in sessions or active days. |
+| **Settings → Fine tuning** | Adjust review intervals, replacement limits and ranking thresholds. |
+| **Settings → Data** | Review local data and clear usage history with confirmation. |
+| **History** | Review completed operations and errors. |
 
-The flag button in the top-right corner is available on every page, including setup. Choose English or Русский; the language changes and saves immediately, without saving other pending edits. Save other settings after changing them. Manual rules are submitted immediately to the background process; use Apply now to change the shortcut selection. A rule change or slot reduction may remove more than the ordinary replacement limit. More manual pins than available slots blocks changes until you resolve the conflict.
+Language and interface scale are available at the top of the window. English/Russian and 100%/125%/150% scale save immediately. Other settings are drafts until **Save** is selected; **Discard edits** restores the saved values. Closing with unsaved edits offers save, discard or return to the window. Settings changed in the tray while you are editing are preserved, or a conflicting edit is reported.
 
-Moving or renaming a managed quick shortcut pins it at your chosen position. Deleting or moving it out of the desktop excludes it from automatic return. Editing its file content releases ownership. The tracker checks these changes approximately once per minute. Existing category folders are not reorganized.
+### Choose a mode
+
+**Adapt automatically** collects activity and updates shortcuts after learning, during idle periods. **Observe only** collects activity and shows suggestions, while placement requires your action. **Control manually** stops new activity collection and removes the learning requirement; choose apps explicitly and apply them yourself.
+
+### Choose where shortcuts go
+
+![Desktop placement map with fictional demonstration data](images/placement-en.png)
+
+Open **Settings → Shortcuts & space**. Select the number of shortcuts and use **Find a free place**, or click on the desktop map. Occupied cells are shown separately from the selected area. The selection is checked against the complete Explorer grid, including space for captions. Save the settings before applying a placement. Changing the area determines where new shortcuts are placed; existing manually chosen positions are preserved.
+
+Manual app rules are sent to the background process. A progress indicator remains visible until completion, and failures are shown. Apply and rule actions are unavailable while conflicting operations are in progress. The Home preview uses saved settings, so it describes the configuration that will actually run.
+
+A rule change or slot reduction may remove more than the ordinary replacement limit. More manual pins than slots blocks placement until you increase the capacity or release a pin. Moving or renaming a managed quick shortcut pins its position. Deleting or moving it out of the desktop excludes it from automatic return. Editing its contents releases ownership. Original catalog shortcuts are never adopted as managed copies. Existing category folders are not reorganized.
 
 ## How ranking works
 
@@ -44,7 +62,7 @@ Manual choices override ranking. Taskbar pins are excluded by default. Context-m
 
 The shortcut area uses Explorer's grid on the primary monitor. Initial setup finds an unoccupied area; existing items are included in the positioning batch so that Explorer does not shift them. Full grid cells are reserved, including space for captions. Long quick-shortcut names are shortened; the original name and shortcut are retained in the catalog.
 
-Display geometry changes, unexpected taskbar formats, an occupied area or an interrupted transaction pause placement. Fix the reported condition, or explicitly disable the taskbar filter when appropriate. **Accept current display geometry** acknowledges the current display layout; it does not move existing icons.
+Display geometry changes, unexpected taskbar formats, an occupied area or an interrupted transaction pause placement. Fix the reported condition, or explicitly disable the taskbar filter when appropriate. **Accept current layout** acknowledges the current display layout; it does not move existing icons.
 
 Each transaction records before/after state and backup bytes before changing files. Undo checks hashes before removing or restoring a file. If a user edited a file, it stops instead of overwriting the edit. Undo pauses automatic changes. New quick shortcuts preserve the original file bytes, extension, arguments, working directory, icon and elevation behavior. They remain usable if Desktop Pilot is stopped or its catalog is unavailable.
 
@@ -62,12 +80,13 @@ Local data is retained for recovery. After undo completes successfully and no ma
 
 ## Update
 
-Close Settings, use **Exit** in the tray menu, and back up the local data directory after the process stops. Replace only `desktop-pilot.exe` in `%LOCALAPPDATA%\DesktopPilot` with the new release executable, then run it. Configuration and history live separately from the executable. Updates are manual; there is no background downloader.
+Close the existing Settings window, extract the new release and run its `desktop-pilot.exe`. The current executable is installed safely, the previous background process is stopped and the new one starts using the same profile. Settings, usage history, app rules and undo data are retained. The previous executable is kept as a local backup. An unsuccessful atomic file replacement leaves the installed copy intact. Updates are started by you; there is no background downloader.
 
 ## Source layout
 
 | Module | Responsibility |
 | --- | --- |
+| `cli.rs` | Argument validation and command help |
 | `model.rs` | Identity, configuration, ranking and stable selection |
 | `native.rs` | Windows Shell, desktop geometry, activity and taskbar integration |
 | `engine.rs` | Catalog, ownership, transactions, rollback and observation loop |
@@ -75,5 +94,5 @@ Close Settings, use **Exit** in the tray menu, and back up the local data direct
 | `learning.rs` | Persistent passive observation, computer sessions and active-day thresholds |
 | `activity.rs` | Input-provenance filtering and fresh foreground-interaction evidence |
 | `profile.rs` | Consistent installed-profile selection across launch environments |
-| `setup.rs` | Per-user first-run installation |
+| `setup.rs` | Per-user installation and executable updates |
 | `ui.rs`, `i18n.rs`, `tray.rs` | Bilingual settings and tray controls |

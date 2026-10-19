@@ -1,5 +1,5 @@
 use crate::model::{App, Point, hash, norm};
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{
     mem::size_of,
@@ -9,6 +9,7 @@ use std::{
 use windows::{
     Win32::{
         Foundation::*,
+        Globalization::{CP_ACP, MULTI_BYTE_TO_WIDE_CHAR_FLAGS, MultiByteToWideChar},
         Graphics::Gdi::*,
         System::{Com::*, Registry::*, SystemInformation::GetTickCount, Threading::*},
         UI::{HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
@@ -49,16 +50,115 @@ pub fn desktop() -> Result<PathBuf> {
 pub fn programs() -> Result<PathBuf> {
     known_folder(&FOLDERID_Programs)
 }
+pub fn common_programs() -> Result<PathBuf> {
+    known_folder(&FOLDERID_CommonPrograms)
+}
 fn known_folder(id: &GUID) -> Result<PathBuf> {
     unsafe {
         let p = SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None)?;
-        let s = p.to_string()?;
+        let s = p.to_string();
         CoTaskMemFree(Some(p.0.cast()));
-        Ok(s.into())
+        Ok(s?.into())
     }
 }
 
+fn shortcut_text(bytes: &[u8]) -> Result<String> {
+    ensure!(bytes.len() <= 1024 * 1024, "Internet shortcut is too large");
+    if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
+        ensure!(
+            bytes.len().is_multiple_of(2),
+            "Incomplete UTF-16 internet shortcut"
+        );
+        let little = bytes[0] == 0xff;
+        let chars: Vec<_> = bytes[2..]
+            .chunks_exact(2)
+            .map(|pair| {
+                if little {
+                    u16::from_le_bytes([pair[0], pair[1]])
+                } else {
+                    u16::from_be_bytes([pair[0], pair[1]])
+                }
+            })
+            .collect();
+        return String::from_utf16(&chars).context("Invalid UTF-16 internet shortcut");
+    }
+    let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
+    if let Ok(value) = std::str::from_utf8(bytes) {
+        return Ok(value.into());
+    }
+    // Older Windows launchers write .url files using the user's ANSI code page.
+    // Lossy UTF-8 decoding silently changed Cyrillic icon and file names.
+    unsafe {
+        let count = MultiByteToWideChar(CP_ACP, MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0), bytes, None);
+        ensure!(count > 0, "Cannot decode internet shortcut");
+        let mut chars = vec![0u16; count as usize];
+        ensure!(
+            MultiByteToWideChar(
+                CP_ACP,
+                MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0),
+                bytes,
+                Some(&mut chars)
+            ) == count,
+            "Cannot decode internet shortcut"
+        );
+        String::from_utf16(&chars).context("Invalid internet shortcut encoding")
+    }
+}
+
+fn internet_shortcut_fields(value: &str) -> Result<(String, String, i32)> {
+    ensure!(
+        !value.contains('\0'),
+        "Internet shortcut contains an embedded NUL"
+    );
+    let mut section = false;
+    let (mut target, mut icon, mut icon_index) = (None, String::new(), 0);
+    for line in value.lines().map(str::trim) {
+        if line.starts_with([';', '#']) || line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            section = line[1..line.len() - 1]
+                .trim()
+                .eq_ignore_ascii_case("InternetShortcut");
+            continue;
+        }
+        if !section {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            let value = value.trim();
+            let value = value
+                .strip_prefix('"')
+                .and_then(|v| v.strip_suffix('"'))
+                .unwrap_or(value);
+            if key.trim().eq_ignore_ascii_case("URL") && target.is_none() {
+                target = Some(value.to_owned());
+            } else if key.trim().eq_ignore_ascii_case("IconFile") && icon.is_empty() {
+                icon = value.to_owned();
+            } else if key.trim().eq_ignore_ascii_case("IconIndex") {
+                icon_index = value.parse().unwrap_or(0);
+            }
+        }
+    }
+    let target = target
+        .filter(|value| !value.is_empty())
+        .context("Нет URL в ярлыке")?;
+    Ok((target, icon, icon_index))
+}
+
 pub fn read_link(path: &Path) -> Result<App> {
+    ensure!(
+        path.is_file(),
+        "Shortcut file does not exist: {}",
+        path.display()
+    );
+    ensure!(
+        path.extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("lnk") || ext.eq_ignore_ascii_case("url")),
+        "Only .lnk and .url shortcuts are supported"
+    );
+    let absolute = crate::profile::ordinary_path(std::fs::canonicalize(path)?);
+    let path = absolute.as_path();
     let source = path.to_string_lossy().into_owned();
     let name = path
         .file_stem()
@@ -75,30 +175,12 @@ pub fn read_link(path: &Path) -> Result<App> {
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("url"))
     {
-        let bytes = std::fs::read(path)?;
-        let s = if bytes.starts_with(&[255, 254]) {
-            String::from_utf16_lossy(
-                &bytes[2..]
-                    .chunks_exact(2)
-                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                    .collect::<Vec<_>>(),
-            )
-        } else {
-            String::from_utf8_lossy(&bytes).into_owned()
-        };
-        a.target = s
-            .lines()
-            .find_map(|l| l.strip_prefix("URL="))
-            .unwrap_or("")
-            .trim()
-            .into();
-        a.icon = s
-            .lines()
-            .find_map(|l| l.strip_prefix("IconFile="))
-            .unwrap_or("")
-            .trim()
-            .into();
-        ensure!(!a.target.is_empty(), "Нет URL в ярлыке");
+        ensure!(
+            std::fs::metadata(path)?.len() <= 1024 * 1024,
+            "Internet shortcut is too large"
+        );
+        (a.target, a.icon, a.icon_index) =
+            internet_shortcut_fields(&shortcut_text(&std::fs::read(path)?)?)?;
     } else {
         unsafe {
             let l: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
@@ -107,6 +189,14 @@ pub fn read_link(path: &Path) -> Result<App> {
             let mut b = vec![0u16; 32768];
             l.GetPath(&mut b, null_mut(), SLGP_RAWPATH.0 as u32)?;
             a.target = text(&b);
+            if a.target.is_empty()
+                && let Ok(pidl) = l.GetIDList()
+                && !pidl.is_null()
+            {
+                let parsed = pidl_name(pidl, SIGDN_DESKTOPABSOLUTEPARSING);
+                CoTaskMemFree(Some(pidl.cast()));
+                a.target = parsed?;
+            }
             b.fill(0);
             l.GetArguments(&mut b)?;
             a.arguments = text(&b);
@@ -123,13 +213,40 @@ pub fn read_link(path: &Path) -> Result<App> {
     Ok(a)
 }
 pub fn valid_target(a: &App) -> bool {
-    if a.target.starts_with("steam://")
-        || a.target.starts_with("https://")
-        || a.target.starts_with("http://")
+    let target = a.target.trim();
+    if target.is_empty() || target.contains('\0') {
+        return false;
+    }
+    let lower = target.to_ascii_lowercase();
+    if lower.starts_with("steam://")
+        || lower.starts_with("https://")
+        || lower.starts_with("http://")
+        || lower.starts_with("shell:")
+        || lower.starts_with("::{")
     {
         return true;
     }
-    Path::new(&crate::model::expand_env(&a.target)).exists()
+    // Registered launchers (Epic, mailto, etc.) are valid shell targets too.
+    if let Some((scheme, _)) = target.split_once(':')
+        && scheme.len() > 1
+        && scheme.bytes().enumerate().all(|(i, c)| {
+            c.is_ascii_alphabetic() || (i > 0 && (c.is_ascii_digit() || b"+-.".contains(&c)))
+        })
+    {
+        let key = wide(scheme);
+        return unsafe {
+            RegGetValueW(
+                HKEY_CLASSES_ROOT,
+                PCWSTR(key.as_ptr()),
+                w!("URL Protocol"),
+                RRF_RT_REG_SZ,
+                None,
+                None,
+                None,
+            )
+        } == ERROR_SUCCESS;
+    }
+    Path::new(&crate::model::expand_env(target)).exists()
         && (a.cwd.is_empty() || Path::new(&crate::model::expand_env(&a.cwd)).is_dir())
 }
 pub fn make_link(
@@ -233,8 +350,11 @@ impl Desktop {
                 let p = self.view.Item(i)?;
                 let result = (|| -> Result<_> {
                     let pos = self.view.GetItemPosition(p)?;
-                    let name = pidl_name(p, SIGDN_NORMALDISPLAY)?;
-                    let path = pidl_name(p, SIGDN_DESKTOPABSOLUTEPARSING)?;
+                    // Item() supplies a child PIDL, not an absolute PIDL. Ask
+                    // the folder view for an IShellItem before resolving names.
+                    let item: IShellItem = self.view2.GetItem(i)?;
+                    let name = shell_item_name(&item, SIGDN_NORMALDISPLAY)?;
+                    let path = shell_item_name(&item, SIGDN_DESKTOPABSOLUTEPARSING)?;
                     let bytes =
                         std::slice::from_raw_parts(p.cast::<u8>(), ILGetSize(Some(p)) as usize)
                             .to_vec();
@@ -262,6 +382,57 @@ unsafe fn pidl_name(p: *const Common::ITEMIDLIST, kind: SIGDN) -> Result<String>
         Ok(value?)
     }
 }
+unsafe fn shell_item_name(item: &IShellItem, kind: SIGDN) -> Result<String> {
+    unsafe {
+        let s = item.GetDisplayName(kind)?;
+        let value = s.to_string();
+        CoTaskMemFree(Some(s.0.cast()));
+        Ok(value?)
+    }
+}
+
+fn monitor_topology() -> Result<Vec<[i32; 9]>> {
+    unsafe extern "system" fn visit(monitor: HMONITOR, _: HDC, _: *mut RECT, data: LPARAM) -> BOOL {
+        unsafe {
+            let mut info = MONITORINFO {
+                cbSize: size_of::<MONITORINFO>() as u32,
+                ..Default::default()
+            };
+            if !GetMonitorInfoW(monitor, &mut info).as_bool() {
+                return BOOL(0);
+            }
+            let values = &mut *(data.0 as *mut Vec<[i32; 9]>);
+            values.push([
+                info.rcMonitor.left,
+                info.rcMonitor.top,
+                info.rcMonitor.right,
+                info.rcMonitor.bottom,
+                info.rcWork.left,
+                info.rcWork.top,
+                info.rcWork.right,
+                info.rcWork.bottom,
+                info.dwFlags as i32,
+            ]);
+            BOOL(1)
+        }
+    }
+    let mut values: Vec<[i32; 9]> = Vec::new();
+    ensure!(
+        unsafe {
+            EnumDisplayMonitors(
+                None,
+                None,
+                Some(visit),
+                LPARAM((&mut values as *mut Vec<[i32; 9]>) as isize),
+            )
+        }
+        .as_bool(),
+        "Cannot read monitor topology"
+    );
+    ensure!(!values.is_empty(), "No desktop monitor is available");
+    values.sort_unstable();
+    Ok(values)
+}
 pub fn layout() -> Result<Layout> {
     unsafe {
         let d = Desktop::new()?;
@@ -270,7 +441,10 @@ pub fn layout() -> Result<Layout> {
         ensure!(spacing.x > 20 && spacing.y > 20, "Недопустимая сетка");
         let h = d.window;
         let mut origin = POINT::default();
-        let _ = ClientToScreen(h, &mut origin);
+        ensure!(
+            ClientToScreen(h, &mut origin).as_bool(),
+            "Cannot read desktop screen coordinates"
+        );
         let mon = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
         let mut mi = MONITORINFO {
             cbSize: size_of::<MONITORINFO>() as u32,
@@ -292,7 +466,8 @@ pub fn layout() -> Result<Layout> {
         d.view2.GetViewModeAndIconSize(&mut mode, &mut icon_size)?;
         let topology = hash(
             format!(
-                "{work:?}/{spacing:?}/{origin:?}/{}/{}/{}/{}",
+                "{work:?}/{spacing:?}/{origin:?}/{icon_size}/{:?}/{}/{}/{}/{}",
+                monitor_topology()?,
                 GetSystemMetrics(SM_XVIRTUALSCREEN),
                 GetSystemMetrics(SM_YVIRTUALSCREEN),
                 GetSystemMetrics(SM_CXVIRTUALSCREEN),
@@ -360,7 +535,8 @@ pub fn position_many(positions: &[(String, Point)]) -> Result<()> {
             .find(|i| norm(&i.path) == norm(path))
             .context("Потерян объект после позиционирования")?;
         ensure!(
-            (item.position.x - point.x).abs() <= 1 && (item.position.y - point.y).abs() <= 1,
+            (i64::from(item.position.x) - i64::from(point.x)).abs() <= 1
+                && (i64::from(item.position.y) - i64::from(point.y)).abs() <= 1,
             "Проводник не подтвердил координаты: {path}"
         );
     }
@@ -382,7 +558,7 @@ pub fn favorites() -> Result<Vec<String>> {
     unsafe {
         let key = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Taskband");
         let mut size = 0;
-        RegGetValueW(
+        let result = RegGetValueW(
             HKEY_CURRENT_USER,
             key,
             w!("Favorites"),
@@ -390,9 +566,15 @@ pub fn favorites() -> Result<Vec<String>> {
             None,
             None,
             Some(&mut size),
-        )
-        .ok()?;
+        );
+        if matches!(result, ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND) {
+            return Ok(Vec::new());
+        }
+        result.ok()?;
         ensure!(size < 2_000_000, "Слишком большой Taskband");
+        if size == 0 {
+            return Ok(Vec::new());
+        }
         let mut b = vec![0u8; size as usize];
         RegGetValueW(
             HKEY_CURRENT_USER,
@@ -404,6 +586,7 @@ pub fn favorites() -> Result<Vec<String>> {
             Some(&mut size),
         )
         .ok()?;
+        b.truncate(size as usize);
         let mut off = 0;
         let mut names = Vec::new();
         while off < b.len() && b[off] == 0 {
@@ -445,13 +628,13 @@ pub fn pin_identities() -> Result<Vec<String>> {
     let mut ids = Vec::new();
     for p in favorites()? {
         if p.to_lowercase().ends_with(".lnk") {
-            if let Ok(a) = read_link(Path::new(&p)) {
-                ids.push(format!(
-                    "{}|{}",
-                    norm(&a.target),
-                    a.arguments.trim().to_lowercase()
-                ));
-            }
+            let a = read_link(Path::new(&p))
+                .with_context(|| format!("Cannot read pinned shortcut: {p}"))?;
+            ids.push(format!(
+                "{}|{}",
+                crate::model::target_identity(&a.target),
+                a.arguments.trim()
+            ));
         } else {
             ids.push(p.to_lowercase());
         }
@@ -459,16 +642,22 @@ pub fn pin_identities() -> Result<Vec<String>> {
     Ok(ids)
 }
 pub fn is_pinned(a: &App, pins: &[String]) -> bool {
-    let k = format!("{}|{}", norm(&a.target), a.arguments.trim().to_lowercase());
+    let k = format!(
+        "{}|{}",
+        crate::model::target_identity(&a.target),
+        a.arguments.trim()
+    );
+    let args = a.arguments.trim().trim_matches('"').to_lowercase();
+    let app_id = args
+        .strip_prefix("shell:appsfolder\\")
+        .filter(|id| !id.is_empty() && !id.contains(['\\', '/', '"']));
     pins.iter().any(|p| {
         *p == k
-            || (!a.arguments.is_empty()
-                && p.ends_with(
-                    a.arguments
-                        .trim_start_matches("shell:AppsFolder\\")
-                        .to_lowercase()
-                        .as_str(),
-                ))
+            || (a.arguments.trim().is_empty()
+                && crate::model::target_identity(p) == crate::model::target_identity(&a.target))
+            || app_id.is_some_and(|id| {
+                p.eq_ignore_ascii_case(id) || p.to_lowercase().ends_with(&format!("\\{id}"))
+            })
     })
 }
 
@@ -520,7 +709,7 @@ pub fn steam_locations() -> std::collections::HashMap<String, String> {
                     let directory = manifest.lines().find_map(|l| field(l, "installdir"));
                     if let (Some(id), Some(directory)) = (id, directory) {
                         let folder = apps.join("common").join(&directory);
-                        if !directory.contains(['/', '\\', ':']) && folder.is_dir() {
+                        if valid_steam_directory(&id, &directory) && folder.is_dir() {
                             result.insert(id, folder.to_string_lossy().into_owned());
                         }
                     }
@@ -531,13 +720,22 @@ pub fn steam_locations() -> std::collections::HashMap<String, String> {
     result
 }
 
+fn valid_steam_directory(id: &str, directory: &str) -> bool {
+    !id.is_empty()
+        && id.bytes().all(|c| c.is_ascii_digit())
+        && !directory.is_empty()
+        && !directory.ends_with(['.', ' '])
+        && !directory.contains(['/', '\\', ':', '<', '>', '"', '|', '?', '*', '\0'])
+}
+
 pub struct Foreground {
     pub window: isize,
     pub process: String,
     pub app_id: String,
     pub idle: u32,
 }
-pub fn foreground() -> Result<Foreground> {
+
+fn idle_seconds() -> Result<u32> {
     unsafe {
         let mut input = LASTINPUTINFO {
             cbSize: size_of::<LASTINPUTINFO>() as u32,
@@ -547,7 +745,13 @@ pub fn foreground() -> Result<Foreground> {
             GetLastInputInfo(&mut input).as_bool(),
             "Нет данных активности"
         );
-        let idle = GetTickCount().wrapping_sub(input.dwTime) / 1000;
+        Ok(GetTickCount().wrapping_sub(input.dwTime) / 1000)
+    }
+}
+
+pub fn foreground() -> Result<Foreground> {
+    unsafe {
+        let idle = idle_seconds()?;
         let w = GetForegroundWindow();
         ensure!(!w.is_invalid(), "Нет активного окна");
         let mut pid = 0;
@@ -575,6 +779,12 @@ pub fn foreground() -> Result<Foreground> {
         };
         let _ = CloseHandle(h);
         r?;
+        // Focus can change while Windows resolves a process. Never attribute a
+        // new foreground window's input to the previous foreground process.
+        ensure!(
+            GetForegroundWindow() == w,
+            "Foreground window changed while sampling"
+        );
         Ok(Foreground {
             window: w.0 as isize,
             process: text(&b),
@@ -585,7 +795,10 @@ pub fn foreground() -> Result<Foreground> {
 }
 pub fn quiet_for_changes() -> bool {
     unsafe {
-        if GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 || GetAsyncKeyState(VK_RBUTTON.0 as i32) < 0 {
+        if [VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2]
+            .iter()
+            .any(|key| GetAsyncKeyState(key.0 as i32) < 0)
+        {
             return false;
         }
         let h = GetForegroundWindow();
@@ -604,35 +817,187 @@ pub fn quiet_for_changes() -> bool {
         if !GetMonitorInfoW(m, &mut mi).as_bool() {
             return false;
         }
-        let full = r.left <= mi.rcMonitor.left
+        let mut class = [0u16; 256];
+        let n = GetClassNameW(h, &mut class);
+        let is_desktop = n > 0 && matches!(text(&class).as_str(), "Progman" | "WorkerW");
+        let full = !is_desktop
+            && r.left <= mi.rcMonitor.left
             && r.top <= mi.rcMonitor.top
             && r.right >= mi.rcMonitor.right
             && r.bottom >= mi.rcMonitor.bottom;
-        !full && foreground().is_ok_and(|f| f.idle >= 15)
+        !full && idle_seconds().is_ok_and(|idle| idle >= 15)
     }
 }
+
+pub fn quote_arg(value: &str) -> String {
+    let mut quoted = String::from("\"");
+    let mut slashes = 0;
+    for c in value.chars() {
+        if c == '\\' {
+            slashes += 1;
+            continue;
+        }
+        if c == '"' {
+            quoted.extend(std::iter::repeat_n('\\', slashes * 2 + 1));
+        } else {
+            quoted.extend(std::iter::repeat_n('\\', slashes));
+        }
+        quoted.push(c);
+        slashes = 0;
+    }
+    quoted.extend(std::iter::repeat_n('\\', slashes * 2));
+    quoted.push('"');
+    quoted
+}
+
+fn command_line_args(command: &str) -> Result<Vec<String>> {
+    ensure!(
+        !command.is_empty() && !command.contains('\0'),
+        "Invalid startup command"
+    );
+    unsafe {
+        let mut count = 0;
+        let chars = wide(command);
+        let pointers = CommandLineToArgvW(PCWSTR(chars.as_ptr()), &mut count);
+        ensure!(!pointers.is_null(), "Cannot read startup command");
+        let result = (|| -> Result<Vec<String>> {
+            ensure!(
+                (1..=32768).contains(&count),
+                "Invalid startup argument count"
+            );
+            std::slice::from_raw_parts(pointers, count as usize)
+                .iter()
+                .map(|value| Ok(value.to_string()?))
+                .collect()
+        })();
+        let _ = LocalFree(HLOCAL(pointers.cast()));
+        result
+    }
+}
+
+fn command_belongs_to_home(command: &str, home: &Path) -> bool {
+    let Ok(args) = command_line_args(command) else {
+        return false;
+    };
+    let target = norm(&home.to_string_lossy());
+    if let Some(index) = args.iter().position(|value| value == "--home") {
+        return args
+            .get(index + 1)
+            .is_some_and(|value| norm(value) == target);
+    }
+    args.first()
+        .and_then(|value| Path::new(value).parent())
+        .is_some_and(|parent| norm(&parent.to_string_lossy()) == target)
+}
+
+fn startup_value(name: &str) -> Result<Option<String>> {
+    unsafe {
+        let name = wide(name);
+        let mut size = 0;
+        let key = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+        let result = RegGetValueW(
+            HKEY_CURRENT_USER,
+            key,
+            PCWSTR(name.as_ptr()),
+            RRF_RT_REG_SZ,
+            None,
+            None,
+            Some(&mut size),
+        );
+        if matches!(
+            result,
+            ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND | ERROR_UNSUPPORTED_TYPE
+        ) {
+            return Ok(None);
+        }
+        result.ok()?;
+        ensure!(
+            size <= 65536 && size % 2 == 0,
+            "Invalid startup registry value"
+        );
+        let mut buffer = vec![0u16; (size / 2).max(1) as usize];
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            key,
+            PCWSTR(name.as_ptr()),
+            RRF_RT_REG_SZ,
+            None,
+            Some(buffer.as_mut_ptr().cast()),
+            Some(&mut size),
+        )
+        .ok()?;
+        Ok(Some(text(&buffer)))
+    }
+}
+
 pub fn autostart(exe: &Path, home: &Path, enable: bool) -> Result<()> {
+    if home.file_name().is_some_and(|name| {
+        name.to_string_lossy()
+            .to_ascii_lowercase()
+            .starts_with("test-")
+    }) {
+        return Ok(());
+    }
     unsafe {
         let key = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
-        let name = w!("DesktopPilot");
+        let profile = format!(
+            "DesktopPilot-{}",
+            &hash(norm(&home.to_string_lossy()).as_bytes())[..12]
+        );
+        let name = wide(&profile);
+        let legacy = startup_value("DesktopPilot")?
+            .is_some_and(|value| command_belongs_to_home(&value, home));
         if enable {
-            let command = wide(&format!(
-                "\"{}\" --background --home \"{}\"",
-                exe.display(),
-                home.display()
-            ));
-            RegSetKeyValueW(
-                HKEY_CURRENT_USER,
-                key,
-                name,
-                REG_SZ.0,
-                Some(command.as_ptr().cast()),
-                (command.len() * 2) as u32,
-            )
-            .ok()?;
+            ensure!(
+                exe.is_file(),
+                "The installed executable is missing; reinstall Desktop Pilot before enabling startup"
+            );
+            let command = format!(
+                "{} --background --home {}",
+                quote_arg(&exe.to_string_lossy()),
+                quote_arg(&home.to_string_lossy())
+            );
+            ensure!(
+                !command.contains('\0') && command.encode_utf16().count() <= 260,
+                "The installation path is too long for Windows startup; choose a shorter profile path"
+            );
+            if startup_value(&profile)?.as_deref() != Some(&command) {
+                let command = wide(&command);
+                let mut handle = HKEY::default();
+                RegCreateKeyExW(
+                    HKEY_CURRENT_USER,
+                    key,
+                    0,
+                    None,
+                    REG_OPTION_NON_VOLATILE,
+                    KEY_SET_VALUE,
+                    None,
+                    &mut handle,
+                    None,
+                )
+                .ok()?;
+                let result = RegSetKeyValueW(
+                    handle,
+                    None,
+                    PCWSTR(name.as_ptr()),
+                    REG_SZ.0,
+                    Some(command.as_ptr().cast()),
+                    (command.len() * 2) as u32,
+                );
+                let _ = RegCloseKey(handle);
+                result.ok()?;
+            }
         } else {
-            let code = RegDeleteKeyValueW(HKEY_CURRENT_USER, key, name);
-            if code != ERROR_FILE_NOT_FOUND {
+            let code = RegDeleteKeyValueW(HKEY_CURRENT_USER, key, PCWSTR(name.as_ptr()));
+            if !matches!(code, ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND) {
+                code.ok()?;
+            }
+        }
+        // Remove the old shared value only when its arguments identify this
+        // profile. Disabling a test/custom profile must not disable another.
+        if legacy {
+            let code = RegDeleteKeyValueW(HKEY_CURRENT_USER, key, w!("DesktopPilot"));
+            if !matches!(code, ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND) {
                 code.ok()?;
             }
         }
@@ -641,14 +1006,14 @@ pub fn autostart(exe: &Path, home: &Path, enable: bool) -> Result<()> {
 }
 pub struct Lock(HANDLE);
 impl Lock {
-    pub fn take(name: &str) -> Result<Self> {
+    fn try_take(name: &str) -> Result<Option<Self>> {
         unsafe {
             let h = CreateMutexW(None, true, PCWSTR(wide(name).as_ptr()))?;
             if GetLastError() == ERROR_ALREADY_EXISTS {
                 let _ = CloseHandle(h);
-                bail!("Операция уже выполняется другим экземпляром");
+                return Ok(None);
             }
-            Ok(Self(h))
+            Ok(Some(Self(h)))
         }
     }
 }
@@ -661,10 +1026,84 @@ impl Drop for Lock {
     }
 }
 pub fn exclusive(name: &str, home: &Path) -> Result<Lock> {
-    Lock::take(&format!(
+    try_exclusive(name, home)?.context("Операция уже выполняется другим экземпляром")
+}
+
+fn lock_name(name: &str, home: &Path) -> String {
+    format!(
         "Local\\DesktopPilot-{name}-{}",
         &hash(norm(&home.to_string_lossy()).as_bytes())[..12]
-    ))
+    )
+}
+
+pub fn try_exclusive(name: &str, home: &Path) -> Result<Option<Lock>> {
+    Lock::try_take(&lock_name(name, home))
+}
+
+pub fn is_running(name: &str, home: &Path) -> Result<bool> {
+    let name = wide(&lock_name(name, home));
+    unsafe {
+        match OpenMutexW(SYNCHRONIZATION_SYNCHRONIZE, false, PCWSTR(name.as_ptr())) {
+            Ok(handle) => {
+                let _ = CloseHandle(handle);
+                Ok(true)
+            }
+            Err(error)
+                if error.code() == windows::core::HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0) =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+
+pub fn activate_process_window(pid: u32) -> Result<bool> {
+    if pid == 0 {
+        return Ok(false);
+    }
+    struct Search {
+        pid: u32,
+        window: HWND,
+    }
+    unsafe extern "system" fn visit(window: HWND, data: LPARAM) -> BOOL {
+        unsafe {
+            let search = &mut *(data.0 as *mut Search);
+            let mut pid = 0;
+            GetWindowThreadProcessId(window, Some(&mut pid));
+            if search.window.is_invalid()
+                && pid == search.pid
+                && IsWindowVisible(window).as_bool()
+                && GetWindow(window, GW_OWNER).is_err()
+            {
+                search.window = window;
+            }
+            BOOL(1)
+        }
+    }
+    let mut search = Search {
+        pid,
+        window: HWND::default(),
+    };
+    unsafe {
+        EnumWindows(Some(visit), LPARAM((&mut search as *mut Search) as isize))?;
+        if search.window.is_invalid() {
+            return Ok(false);
+        }
+        if IsIconic(search.window).as_bool() {
+            let _ = ShowWindowAsync(search.window, SW_RESTORE);
+        }
+        if !SetForegroundWindow(search.window).as_bool() {
+            let _ = FlashWindowEx(&FLASHWINFO {
+                cbSize: size_of::<FLASHWINFO>() as u32,
+                hwnd: search.window,
+                dwFlags: FLASHW_TRAY | FLASHW_TIMERNOFG,
+                uCount: 3,
+                dwTimeout: 0,
+            });
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -676,5 +1115,136 @@ mod tests {
             assert!(validate_pidl(b).is_err());
         }
         assert!(validate_pidl(&[2, 0, 0, 0]).is_ok());
+    }
+
+    #[test]
+    fn internet_shortcuts_follow_ini_case_sections_and_icon_indices() {
+        let source = "[Other]\r\nURL=https://wrong.invalid\r\n[ internetshortcut ]\r\n url = https://example.com/A?Key=Value \r\n IconFile = \"C:\\Иконки\\icon.dll\"\r\n iconindex=-42\r\n";
+        let (url, icon, index) = internet_shortcut_fields(source).unwrap();
+        assert_eq!(url, "https://example.com/A?Key=Value");
+        assert_eq!(icon, r"C:\Иконки\icon.dll");
+        assert_eq!(index, -42);
+        assert!(internet_shortcut_fields("[Other]\nURL=https://example.com").is_err());
+        assert!(
+            internet_shortcut_fields("[InternetShortcut]\nURL=\nURL=https://ignored.invalid")
+                .is_err()
+        );
+        assert!(internet_shortcut_fields("[InternetShortcut]\nURL=https://a\0b").is_err());
+    }
+
+    #[test]
+    fn internet_shortcut_encodings_are_lossless() {
+        let expected = "[InternetShortcut]\r\nURL=https://example.com/Путь\r\n";
+        for little in [true, false] {
+            let mut bytes = if little {
+                vec![0xff, 0xfe]
+            } else {
+                vec![0xfe, 0xff]
+            };
+            bytes.extend(expected.encode_utf16().flat_map(|c| {
+                if little {
+                    c.to_le_bytes()
+                } else {
+                    c.to_be_bytes()
+                }
+            }));
+            assert_eq!(shortcut_text(&bytes).unwrap(), expected);
+        }
+        let mut utf8_bom = vec![0xef, 0xbb, 0xbf];
+        utf8_bom.extend_from_slice(expected.as_bytes());
+        assert_eq!(shortcut_text(&utf8_bom).unwrap(), expected);
+        assert!(shortcut_text(&[0xff, 0xfe, b'x']).is_err());
+        assert!(shortcut_text(&[0xff, 0xfe, 0x00, 0xd8]).is_err());
+    }
+
+    #[test]
+    fn empty_shortcut_target_is_never_the_working_directory() {
+        assert!(!valid_target(&App::default()));
+        assert!(!valid_target(&App {
+            target: "   ".into(),
+            ..Default::default()
+        }));
+        assert!(valid_target(&App {
+            target: "HTTPS://example.com/A".into(),
+            ..Default::default()
+        }));
+    }
+
+    #[test]
+    fn startup_arguments_roundtrip_spaces_quotes_and_trailing_backslashes() {
+        for arg in [
+            "",
+            r"C:\",
+            r"C:\My profile\",
+            "a\"b",
+            r"\server\share\",
+            "кириллица 😀",
+        ] {
+            let command = format!("pilot.exe --home {}", quote_arg(arg));
+            let args = command_line_args(&command).unwrap();
+            assert_eq!(args, ["pilot.exe", "--home", arg]);
+        }
+        assert!(command_belongs_to_home(
+            r#""C:\Pilot\desktop-pilot.exe" --background --home "C:\Profile A""#,
+            Path::new(r"c:\profile a")
+        ));
+        assert!(!command_belongs_to_home(
+            r#""C:\Pilot\desktop-pilot.exe" --background --home "C:\Profile B""#,
+            Path::new(r"C:\Profile A")
+        ));
+    }
+
+    #[test]
+    fn pin_matching_preserves_case_sensitive_arguments_and_exact_app_ids() {
+        let app = App {
+            target: r"C:\browser.exe".into(),
+            arguments: "--profile=A".into(),
+            ..Default::default()
+        };
+        assert!(!is_pinned(&app, &[r"c:\browser.exe|--profile=a".into()]));
+        assert!(!is_pinned(&app, &[r"something--profile=a".into()]));
+        assert!(is_pinned(&app, &[r"c:\browser.exe|--profile=A".into()]));
+        let app = App {
+            arguments: r"shell:AppsFolder\Publisher.App!Main".into(),
+            ..app
+        };
+        assert!(is_pinned(
+            &app,
+            &[r"::{namespace}\publisher.app!main".into()]
+        ));
+        assert!(!is_pinned(
+            &app,
+            &[r"::{namespace}\otherpublisher.app!main".into()]
+        ));
+    }
+
+    #[test]
+    fn steam_manifest_paths_cannot_escape_common() {
+        assert!(valid_steam_directory("42", "My Game"));
+        for directory in [
+            "",
+            ".",
+            "..",
+            ".. ",
+            r"..\outside",
+            r"C:\Other",
+            "Game.",
+            "Game ",
+        ] {
+            assert!(!valid_steam_directory("42", directory));
+        }
+        assert!(!valid_steam_directory("42/13", "Game"));
+    }
+
+    #[test]
+    fn singleton_presence_probe_does_not_take_ownership() {
+        let home = std::env::temp_dir().join(format!("test-mutex-{}", std::process::id()));
+        assert!(!is_running("test", &home).unwrap());
+        let lock = try_exclusive("test", &home).unwrap().unwrap();
+        assert!(is_running("test", &home).unwrap());
+        assert!(try_exclusive("test", &home).unwrap().is_none());
+        drop(lock);
+        assert!(!is_running("test", &home).unwrap());
+        assert!(try_exclusive("test", &home).unwrap().is_some());
     }
 }
