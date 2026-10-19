@@ -1,4 +1,4 @@
-# Verification scope — 0.2.0
+# Verification scope — 0.2.1
 
 [Русский](verification.ru.md) · [Home](../README.md)
 
@@ -32,4 +32,4 @@ Release packaging excludes installed profiles, usage databases and undo backups.
 
 ## Limits
 
-Windows Server CI and Wine do not establish interactive acceptance on every Windows 10/11 desktop. Physical multi-monitor/DPI changes, alternative shells, third-party desktop organizers, ARM64 and future taskbar formats have not been established for this release. The 100 geometry combinations verify placement calculations, not universal hardware compatibility. Version **0.2.0 remains a preview**.
+Windows Server CI and Wine do not establish interactive acceptance on every Windows 10/11 desktop. Physical multi-monitor/DPI changes, alternative shells, third-party desktop organizers, ARM64 and future taskbar formats have not been established for this release. The 100 geometry combinations verify placement calculations, not universal hardware compatibility. Version **0.2.1 remains a preview**.
