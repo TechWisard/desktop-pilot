@@ -2832,7 +2832,9 @@ pub fn run(home: PathBuf, capture: Option<PathBuf>) -> Result<()> {
         app.layout_error.clear();
         app.layout = Some(layout);
     }
-    if app.capture.is_none() && !app.onboarding && !app.background_alive {
+    // The running worker may belong to the previous release. The installer
+    // checks the executable first and leaves a matching worker untouched.
+    if app.capture.is_none() && !app.onboarding {
         app.restart_background();
     }
     let scale = app.ui_scale;
