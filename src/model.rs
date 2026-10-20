@@ -33,12 +33,23 @@ pub fn expand_env(s: &str) -> String {
     output.push_str(rest);
     output
 }
-/// HTTP hosts are case-insensitive; URL paths, credentials and query values are
-/// not Windows paths and must retain their original case and percent encoding.
+/// URI payloads are not Windows paths: preserve their case, separators and
+/// percent encoding. Only HTTP(S) hostnames have an additional known case rule.
 pub fn target_identity(target: &str) -> String {
-    if let Some((scheme, rest)) = target.split_once("://")
-        && (scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http"))
+    if let Some((scheme, payload)) = target.split_once(':')
+        && scheme.len() > 1
+        && scheme.as_bytes()[0].is_ascii_alphabetic()
+        && scheme
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
     {
+        // A single ASCII letter followed by ':' is a Windows drive prefix.
+        // Other valid schemes may have opaque payloads without '//', e.g. mailto.
+        let Some(rest) = payload.strip_prefix("//").filter(|_| {
+            scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http")
+        }) else {
+            return format!("{}:{payload}", scheme.to_ascii_lowercase());
+        };
         let boundary = rest.find(['/', '?', '#']).unwrap_or(rest.len());
         let (authority, suffix) = rest.split_at(boundary);
         let authority = if let Some((credentials, host)) = authority.rsplit_once('@') {
@@ -46,7 +57,7 @@ pub fn target_identity(target: &str) -> String {
         } else {
             authority.to_lowercase()
         };
-        return format!("{}://{authority}{suffix}", scheme.to_lowercase());
+        return format!("{}://{authority}{suffix}", scheme.to_ascii_lowercase());
     }
     norm(target)
 }
@@ -249,6 +260,15 @@ pub struct Ranked {
 }
 
 pub fn rank(apps: &[App], days: &[Day], cfg: &Config, time: i64) -> Vec<Ranked> {
+    // Group retained rows once. Scanning every day's history for every shortcut
+    // made a large catalog quadratic and blocked regular Settings refreshes.
+    let mut history: HashMap<&str, Vec<&Day>> = HashMap::new();
+    for day in days
+        .iter()
+        .filter(|day| day.date <= time && time.saturating_sub(day.date) < 90 * 86400)
+    {
+        history.entry(day.app.as_str()).or_default().push(day);
+    }
     let mut output = Vec::new();
     for app in apps {
         let seed_is_valid =
@@ -263,9 +283,7 @@ pub fn rank(apps: &[App], days: &[Day], cfg: &Config, time: i64) -> Vec<Ranked> 
         };
         let mut active_days = HashSet::new();
         let (mut launches, mut seconds) = (0u32, 0u32);
-        for d in days.iter().filter(|d| {
-            d.app == app.id && d.date <= time && time.saturating_sub(d.date) < 90 * 86400
-        }) {
+        for d in history.get(app.id.as_str()).into_iter().flatten() {
             let age = time.saturating_sub(d.date) as f64 / 86400.0;
             let value = 2.0 * f64::from(d.sessions.min(12))
                 + (f64::from(d.seconds.min(3600)) / 60.0).ln_1p() * 0.4;
@@ -659,6 +677,86 @@ mod tests {
         assert!(ranking[0].score.is_finite());
     }
     #[test]
+    fn indexed_history_preserves_scores_filters_and_order_at_time_boundaries() {
+        let time = 100 * 86400;
+        let cfg = Config {
+            min_days: 2,
+            ..Default::default()
+        };
+        let apps: Vec<_> = [
+            ("alpha", 0.0, 0, Policy::Auto, false),
+            ("beta", 100.0, time - 86400, Policy::Auto, false),
+            ("future", 999.0, time + 1, Policy::Auto, false),
+            ("manual", 0.0, 0, Policy::Always, true),
+            ("never", 200.0, time, Policy::Never, false),
+            ("pinned", 150.0, time, Policy::Auto, true),
+        ]
+        .into_iter()
+        .map(|(id, seed, seed_at, policy, pinned)| App {
+            id: id.into(),
+            name: id.into(),
+            seed,
+            seed_at,
+            policy,
+            pinned,
+            valid: true,
+            ..Default::default()
+        })
+        .collect();
+        let days: Vec<_> = [
+            ("alpha", time - 86400, 2, 1, 60),
+            ("beta", time, 0, u32::MAX, 3600),
+            ("alpha", time - 2 * 86400, 20, 2, 7200),
+            ("missing", time, u32::MAX, u32::MAX, u32::MAX),
+            ("alpha", time - 86400, 1, 3, 30),
+            ("beta", time - 90 * 86400, 99, 99, 99),
+            ("beta", time + 1, 99, 99, 99),
+            ("alpha", i64::MIN, 99, 99, 99),
+            ("beta", time - 90 * 86400 + 1, 1, 1, 10),
+            ("future", time, 0, 100, 0),
+        ]
+        .into_iter()
+        .map(|(app, date, sessions, launches, seconds)| Day {
+            app: app.into(),
+            date,
+            sessions,
+            launches,
+            seconds,
+        })
+        .collect();
+        let ranking = rank(&apps, &days, &cfg, time);
+        assert_eq!(
+            ranking
+                .iter()
+                .map(|row| row.id.as_str())
+                .collect::<Vec<_>>(),
+            ["never", "pinned", "beta", "alpha", "future", "manual"]
+        );
+        let alpha = &ranking[3];
+        let expected_alpha = (4.0 + 2.0f64.ln() * 0.4) * 2.0f64.powf(-1.0 / 14.0)
+            + (24.0 + 61.0f64.ln() * 0.4) * 2.0f64.powf(-2.0 / 14.0)
+            + (2.0 + 1.5f64.ln() * 0.4) * 2.0f64.powf(-1.0 / 14.0);
+        assert!((alpha.score - expected_alpha).abs() < 1e-12);
+        assert_eq!((alpha.days, alpha.launches, alpha.seconds), (2, 6, 7290));
+        assert!(alpha.eligible);
+        let beta = &ranking[2];
+        let expected_beta = 100.0 * 2.0f64.powf(-1.0 / 14.0)
+            + 61.0f64.ln() * 0.4
+            + (2.0 + (10.0f64 / 60.0).ln_1p() * 0.4) * 2.0f64.powf(-(90.0 - 1.0 / 86400.0) / 14.0);
+        assert!((beta.score - expected_beta).abs() < 1e-12);
+        assert_eq!(
+            (beta.days, beta.launches, beta.seconds),
+            (2, u32::MAX, 3610)
+        );
+        assert!(beta.eligible);
+        assert!(!ranking[0].eligible && !ranking[1].eligible && !ranking[4].eligible);
+        assert_eq!(
+            (ranking[4].score, ranking[4].days, ranking[4].launches),
+            (0.0, 0, 100)
+        );
+        assert!(ranking[5].eligible);
+    }
+    #[test]
     fn old_duplicate_ownership_does_not_consume_extra_slots() {
         let apps = [app("a", 10.0), app("b", 20.0)];
         let cfg = Config {
@@ -719,6 +817,59 @@ mod tests {
         assert_eq!(
             target_identity(r"C:\APP.EXE"),
             target_identity(r"c:\app.exe")
+        );
+    }
+    #[test]
+    fn protocol_shortcuts_preserve_case_sensitive_parameters_and_percent_sequences() {
+        let original = "obsidian://open?vault=Research&file=Topic%20A%20B&token=Secret";
+        assert_eq!(target_identity(original), original);
+        assert_eq!(
+            target_identity("OBSIDIAN://open?vault=Research&file=Topic"),
+            "obsidian://open?vault=Research&file=Topic"
+        );
+        assert_ne!(
+            target_identity(original),
+            target_identity("obsidian://open?vault=research&file=topic%20a%20b&token=secret")
+        );
+        assert_eq!(
+            target_identity("custom://open?value=%PATH%"),
+            "custom://open?value=%PATH%"
+        );
+    }
+    #[test]
+    fn opaque_uri_payloads_are_distinct_from_windows_drive_paths() {
+        assert_eq!(
+            target_identity("MAILTO:Name@Example.com?subject=Topic%20A&body=%PATH%"),
+            "mailto:Name@Example.com?subject=Topic%20A&body=%PATH%"
+        );
+        assert_ne!(
+            target_identity("mailto:Name@Example.com?subject=Topic"),
+            target_identity("mailto:name@example.com?subject=topic")
+        );
+        for (source, expected) in [
+            ("MS-SETTINGS:Display", "ms-settings:Display"),
+            (
+                "OneNote:Notebook/Section%20A",
+                "onenote:Notebook/Section%20A",
+            ),
+            (
+                "Custom+App-1.2:CaseSensitive",
+                "custom+app-1.2:CaseSensitive",
+            ),
+        ] {
+            assert_eq!(target_identity(source), expected);
+        }
+        assert_eq!(
+            target_identity(r"C:\Folder\App.EXE"),
+            target_identity(r"c:\folder\app.exe")
+        );
+        assert_eq!(
+            target_identity("C:Relative.EXE"),
+            target_identity("c:relative.exe")
+        );
+        assert_eq!(
+            target_identity("1invalid:Payload"),
+            norm("1invalid:Payload")
         );
     }
     #[test]

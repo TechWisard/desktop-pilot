@@ -23,6 +23,7 @@ const CALLBACK: u32 = WM_APP + 7;
 const ICON_ID: u32 = 1;
 const KEY_SELECT: u32 = NIN_SELECT | NINF_KEY;
 const TIMER: usize = 1;
+const TRAY_WARNING: &str = "The tray icon is temporarily unavailable. Background tracking continues; you can open Settings from the Start menu.";
 // MAKEINTRESOURCEW(1): this is an integer resource identifier, never dereferenced.
 // A u16 dangling pointer has address 2 and would select the wrong resource.
 #[allow(clippy::manual_dangling_ptr)]
@@ -82,7 +83,6 @@ struct TrayState {
     icon_added: Cell<bool>,
     tooltip: RefCell<String>,
     icon_missing_since: Cell<Option<Instant>>,
-    terminal_error: RefCell<Option<String>>,
 }
 
 impl TrayState {
@@ -108,7 +108,7 @@ impl TrayState {
         let config: model::Config = self.store.get("config")?;
         i18n::set(&config.language);
         let tip = format!(
-            "Desktop Pilot\n{} · {}",
+            "Desktop Pilot\n{} · {}\n{}",
             if config.collect {
                 t("Учёт включён", "Tracking on")
             } else {
@@ -118,7 +118,8 @@ impl TrayState {
                 t("Автоматика включена", "Automation on")
             } else {
                 t("Автоматика на паузе", "Automation paused")
-            }
+            },
+            self.home.display()
         );
         if self.icon_added.get() && *self.tooltip.borrow() == tip {
             return Ok(());
@@ -127,13 +128,16 @@ impl TrayState {
         copy_text(&mut data.szTip, &tip);
         unsafe {
             if self.icon_added.get() {
-                ensure!(
-                    Shell_NotifyIconW(NIM_MODIFY, &data).as_bool(),
-                    "Cannot update the Desktop Pilot tray icon"
-                );
+                if !Shell_NotifyIconW(NIM_MODIFY, &data).as_bool() {
+                    // The icon may have disappeared before Explorer delivered
+                    // TaskbarCreated. The next retry must be allowed to add it.
+                    self.icon_added.set(false);
+                    anyhow::bail!("Cannot update the Desktop Pilot tray icon");
+                }
             } else {
                 ensure!(
-                    Shell_NotifyIconW(NIM_ADD, &data).as_bool(),
+                    Shell_NotifyIconW(NIM_ADD, &data).as_bool()
+                        || Shell_NotifyIconW(NIM_MODIFY, &data).as_bool(),
                     "Не удалось создать значок в трее"
                 );
                 self.icon_added.set(true);
@@ -145,22 +149,46 @@ impl TrayState {
             }
         }
         self.tooltip.replace(tip);
-        self.icon_missing_since.set(None);
         Ok(())
     }
 
     fn retry_icon(&self, window: HWND) {
-        if let Err(error) = self.sync_icon(window) {
-            let since = self.icon_missing_since.get().unwrap_or_else(Instant::now);
-            self.icon_missing_since.set(Some(since));
-            if since.elapsed() >= Duration::from_secs(15) {
-                self.terminal_error.replace(Some(format!("{error:#}")));
-                let _ = self.store.set("shutdown", &true);
-                unsafe {
-                    let _ = DestroyWindow(window);
+        if let Err(error) = self.record_icon_result(self.sync_icon(window), Instant::now()) {
+            self.report_error(window, error);
+        }
+    }
+
+    fn record_icon_result(&self, result: Result<()>, at: Instant) -> Result<()> {
+        let warning = match result {
+            Ok(()) => {
+                self.icon_missing_since.set(None);
+                None
+            }
+            Err(error) => {
+                let since = self.icon_missing_since.get().unwrap_or(at);
+                self.icon_missing_since.set(Some(since));
+                if at.saturating_duration_since(since) < Duration::from_secs(15) {
+                    return Ok(());
+                }
+                Some(error)
+            }
+        };
+        // Explorer being unavailable is recoverable, including at sign-in or
+        // after a lengthy shell restart. Keep the worker and its controls alive.
+        let message = if warning.is_some() { TRAY_WARNING } else { "" };
+        if self.store.get::<String>("tray_warning")? == message {
+            return Ok(());
+        }
+        self.store.transaction(|| {
+            if self.store.get::<String>("tray_warning")? != message {
+                self.store.set("tray_warning", &message)?;
+                if let Some(error) = warning {
+                    self.store
+                        .event("warning", &format!("{TRAY_WARNING} {error:#}"))?;
                 }
             }
-        }
+            Ok(())
+        })
     }
 
     fn report_error(&self, window: HWND, error: anyhow::Error) {
@@ -377,7 +405,6 @@ pub fn run(home: PathBuf) -> Result<()> {
             icon_added: Cell::new(false),
             tooltip: RefCell::new(String::new()),
             icon_missing_since: Cell::new(None),
-            terminal_error: RefCell::new(None),
         });
         let window = match CreateWindowExW(
             WINDOW_EX_STYLE::default(),
@@ -428,9 +455,6 @@ pub fn run(home: PathBuf) -> Result<()> {
                 let _ = TranslateMessage(&message);
                 DispatchMessageW(&message);
             }
-            if let Some(error) = state.terminal_error.borrow().as_ref() {
-                anyhow::bail!("{error}");
-            }
             Ok(())
         })();
         if IsWindow(window).as_bool() {
@@ -444,6 +468,76 @@ pub fn run(home: PathBuf) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_extended_shell_outage_keeps_background_work_alive_and_recovers() {
+        let home = std::env::temp_dir().join(format!(
+            "test-tray-recovery-{}-{}",
+            std::process::id(),
+            model::now()
+        ));
+        let store = Store::open(&home).unwrap();
+        store.set("shutdown", &false).unwrap();
+        let state = TrayState {
+            home: home.clone(),
+            store,
+            icon: HICON::default(),
+            taskbar_created: 0,
+            test_mode: true,
+            icon_added: Cell::new(false),
+            tooltip: RefCell::new(String::new()),
+            icon_missing_since: Cell::new(None),
+        };
+        let start = Instant::now();
+        state
+            .record_icon_result(Err(anyhow::anyhow!("shell unavailable")), start)
+            .unwrap();
+        assert!(
+            state
+                .store
+                .get::<String>("tray_warning")
+                .unwrap()
+                .is_empty()
+        );
+        for seconds in [16, 30, 180] {
+            state
+                .record_icon_result(
+                    Err(anyhow::anyhow!("shell unavailable")),
+                    start + Duration::from_secs(seconds),
+                )
+                .unwrap();
+            assert!(!state.store.get::<bool>("shutdown").unwrap());
+            assert_eq!(
+                state.store.get::<String>("tray_warning").unwrap(),
+                TRAY_WARNING
+            );
+        }
+        let warnings: i64 = state
+            .store
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE kind='warning'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(warnings, 1);
+        state
+            .record_icon_result(Ok(()), start + Duration::from_secs(181))
+            .unwrap();
+        assert!(
+            state
+                .store
+                .get::<String>("tray_warning")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!state.store.get::<bool>("shutdown").unwrap());
+        assert!(state.icon_missing_since.get().is_none());
+        drop(state);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
     #[test]
     fn tooltip_truncation_preserves_utf16_and_nul_termination() {
         let mut buffer = [9u16; 4];

@@ -4,9 +4,9 @@
 
 ## First launch
 
-Setup is divided into short steps: choose how the app should work, set shortcut count and observation preferences, then choose an area on the desktop. Opening setup does not start collection or enable startup. **Start using Desktop Pilot** installs the per-user executable and starts the background process.
+Setup is divided into short steps: choose how the app should work, set shortcut count and observation preferences, then choose an area on the desktop. Opening setup does not start collection or enable startup. **Start using Desktop Pilot** installs the per-user executable and starts the background process. Closing setup offers to save your choices and current step, discard them or continue editing. A saved draft resumes on the next launch and does not enable observation by itself.
 
-The catalog reads desktop and Start menu shortcuts, including folders up to five levels deep. Filesystem links, source/dependency folders and shortcut archives are skipped. An inaccessible subfolder does not cancel the entire scan. The scan is limited to 3,000 files; a warning appears if the limit is reached, and existing catalog entries are retained. Other `.lnk` or `.url` files can be added from Apps.
+The catalog reads personal and shared desktop shortcuts, together with the Start menu, including folders up to five levels deep. Filesystem links, source/dependency folders and shortcut archives are skipped. An inaccessible subfolder does not cancel the entire scan. The scan is limited to 3,000 files; a warning appears if the limit is reached, and existing catalog entries are retained. Add other `.lnk` or `.url` files from Apps: select several files, paste one path per line or drag files into the window. Existing rules and history are preserved. The recently added list opens after import, even if a previous search or filter would have hidden the new entries.
 
 Windows Known Folders are used for redirected desktops. An explicit `--home` always selects that profile. A normal launch recognizes a profile beside the installed executable before falling back to `%LOCALAPPDATA%\DesktopPilot`.
 
@@ -20,10 +20,12 @@ Windows Known Folders are used for redirected desktops. An explicit `--home` alw
 | **Settings → Shortcuts & space** | Choose 1–8 shortcuts, click an area on the desktop map, or find a free area automatically. |
 | **Settings → Observation** | Choose the initial learning requirement in sessions or active days. |
 | **Settings → Fine tuning** | Adjust review intervals, replacement limits and ranking thresholds. |
-| **Settings → Data** | Review local data and clear usage history with confirmation. |
+| **Settings → Data** | Review local data, clear usage history or completely disable the app with confirmation. |
 | **History** | Review completed operations and errors. |
 
 Language and interface scale are available at the top of the window. English/Russian and 100%/125%/150% scale save immediately. Other settings are drafts until **Save** is selected; **Discard edits** restores the saved values. Closing with unsaved edits offers save, discard or return to the window. Settings changed in the tray while you are editing are preserved, or a conflicting edit is reported.
+
+In **Apps**, **Ctrl+F** focuses search and **F5** refreshes the data. **Show in folder** opens the original shortcut in Explorer. When Always rules exceed available slots, a warning shows the count and provides a link to the slot settings.
 
 ### Choose a mode
 
@@ -68,7 +70,9 @@ Each transaction records before/after state and backup bytes before changing fil
 
 ## Disable or remove
 
-Extract the release archive and run:
+To disable the app completely, open **Settings → Data → Disable Desktop Pilot**. This stops the background process, observation, automatic changes and Windows startup. Shortcuts and local data remain. Opening Settings or updating does not undo this choice; resume explicitly from the window.
+
+To also undo managed changes in sequence, extract the release archive and run:
 
 ```powershell
 powershell -NoProfile -File .\disable.ps1
@@ -80,13 +84,16 @@ Local data is retained for recovery. After undo completes successfully and no ma
 
 ## Update
 
-Close the existing Settings window, extract the new release and run its `desktop-pilot.exe`. The current executable is installed safely, the previous background process is stopped and the new one starts using the same profile. Settings, usage history, app rules and undo data are retained. The previous executable is kept as a local backup. An unsuccessful atomic file replacement leaves the installed copy intact. Updates are started by you; there is no background downloader.
+Close the existing Settings window, extract the new release and run its `desktop-pilot.exe`. The current executable is installed safely, the previous background process is stopped and the new one starts using the same profile. A completely disabled profile stays disabled. If another version of Settings is still open, the app asks you to close it; unsaved edits are not discarded automatically. Settings, usage history, app rules and undo data are retained. The previous executable is kept as a local backup. An unsuccessful atomic file replacement leaves the installed copy intact and restores the previously running background process. The installer checks the installed executable version and refuses to replace a newer version with an older one. Updates are started by you; there is no background downloader.
+
+On restart, unfinished commands are cancelled with a history entry. Old placement or undo requests are not replayed without a new request. Diagnostic reports are written atomically; the database, executable and shortcut paths cannot be used as report destinations.
 
 ## Source layout
 
 | Module | Responsibility |
 | --- | --- |
 | `cli.rs` | Argument validation and command help |
+| `report.rs` | Destination checks and atomic diagnostic report writes |
 | `model.rs` | Identity, configuration, ranking and stable selection |
 | `native.rs` | Windows Shell, desktop geometry, activity and taskbar integration |
 | `engine.rs` | Catalog, ownership, transactions, rollback and observation loop |

@@ -9,8 +9,8 @@ use crate::{
 use anyhow::{Context, Result, ensure};
 use eframe::egui::{self, Color32, RichText};
 use std::{
-    collections::HashMap,
-    path::PathBuf,
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
     sync::mpsc::{self, Receiver},
     time::{Duration, Instant},
 };
@@ -36,15 +36,22 @@ struct PendingCommand {
     action: String,
     submitted: Instant,
 }
+struct ImportResult {
+    added: Vec<(String, String)>,
+    failed: Vec<(PathBuf, String)>,
+}
 enum JobResult {
     Setup(Config),
-    Saved(Config),
+    Saved(Config, Option<String>),
     Queued(i64, String),
     Started,
-    Added,
+    Prepared,
+    Added(ImportResult),
+    Disabled(Config),
 }
 struct Job {
     label: &'static str,
+    started: Instant,
     receiver: Receiver<std::result::Result<JobResult, String>>,
 }
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -62,6 +69,7 @@ enum Health {
     Observing,
     ObservationPaused,
     Automatic,
+    Suggestions,
     Manual,
 }
 
@@ -86,10 +94,13 @@ pub struct Settings {
     app_sort: usize,
     app_page: usize,
     notice: Option<Notice>,
+    notice_details: bool,
     status: String,
     catalog_warning: String,
     autostart_warning: String,
+    tray_warning: String,
     background_alive: bool,
+    background_disabled: bool,
     heartbeat: i64,
     last: Instant,
     dirty: bool,
@@ -97,6 +108,15 @@ pub struct Settings {
     onboarding_step: usize,
     confirm_clear: bool,
     confirm_close: bool,
+    confirm_setup_close: bool,
+    confirm_disable: bool,
+    import_open: bool,
+    import_paths: String,
+    import_error: String,
+    focus_import: bool,
+    focus_search: bool,
+    highlighted_apps: HashSet<String>,
+    page_scroll_reset: bool,
     allow_close: bool,
     close_after_save: bool,
     pending_commands: Vec<PendingCommand>,
@@ -111,9 +131,81 @@ pub struct Settings {
     events: Vec<(i64, String, String)>,
     events_error: String,
     capture: Option<PathBuf>,
+    capture_view: Option<String>,
     capture_scroll_bottom: bool,
     capture_at: Instant,
     capture_pending: bool,
+}
+
+fn shortcut_paths(value: &str) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    let mut seen = HashSet::new();
+    for line in value.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let line = line
+            .strip_prefix('"')
+            .and_then(|line| line.strip_suffix('"'))
+            .unwrap_or(line);
+        let path = PathBuf::from(line);
+        ensure!(path.is_absolute(), "Use a full shortcut path: {line}");
+        ensure!(
+            path.extension().is_some_and(|extension| matches!(
+                extension.to_str().map(str::to_ascii_lowercase).as_deref(),
+                Some("lnk" | "url")
+            )),
+            "Choose a .lnk or .url shortcut: {line}"
+        );
+        if seen.insert(norm(line)) {
+            paths.push(path);
+        }
+    }
+    ensure!(
+        !paths.is_empty(),
+        "Choose a shortcut or paste its full path."
+    );
+    Ok(paths)
+}
+
+fn preserve_app_preferences(app: &mut App, existing: Option<&App>) {
+    if let Some(existing) = existing {
+        app.id = existing.id.clone();
+        app.policy = existing.policy.clone();
+        app.seed = existing.seed;
+        app.seed_at = existing.seed_at;
+        app.pinned = existing.pinned;
+        app.observed_roots = existing.observed_roots.clone();
+        if app.note.is_empty() {
+            app.note = existing.note.clone();
+        }
+        app.category = existing.category.clone();
+    } else {
+        app.category = "Manual".into();
+    }
+}
+
+fn prepare_imported_app(app: &mut App, existing: &HashMap<String, App>) -> Result<()> {
+    let previous = if let Some(previous) = existing.get(&app.id) {
+        Some(previous)
+    } else {
+        // Earlier releases used different IDs for URLs. Keep the stable catalog
+        // ID so a repeated import retains its usage history and desktop ownership.
+        let identity = app.identity();
+        let mut matches = existing.values().filter(|old| old.identity() == identity);
+        let previous = matches.next();
+        ensure!(
+            matches.next().is_none(),
+            "Several saved shortcuts match this app. Refresh the list before importing it again."
+        );
+        previous
+    };
+    preserve_app_preferences(app, previous);
+    Ok(())
+}
+
+fn should_resume_background(disabled: bool, base: &Config, draft: &Config) -> bool {
+    disabled
+        && ((!base.collect && draft.collect)
+            || (!base.automatic && draft.automatic)
+            || (!base.autostart && draft.autostart))
 }
 
 fn when(timestamp: i64) -> String {
@@ -202,6 +294,8 @@ fn health(
     }
     if config.automatic {
         Health::Automatic
+    } else if config.collect {
+        Health::Suggestions
     } else {
         Health::Manual
     }
@@ -218,6 +312,7 @@ fn health_label(value: Health) -> &'static str {
         Health::Observing => t("Изучает ваши привычки", "Learning your routine"),
         Health::ObservationPaused => t("Наблюдение на паузе", "Observation paused"),
         Health::Automatic => t("Подстраивается автоматически", "Adapting automatically"),
+        Health::Suggestions => t("Наблюдение и предложения", "Observation and suggestions"),
         Health::Manual => t("Ручное управление", "Manual control"),
     }
 }
@@ -351,6 +446,32 @@ fn primary(ui: &mut egui::Ui, enabled: bool, label: &str) -> egui::Response {
             .min_size(egui::vec2(0.0, 42.0)),
     )
 }
+fn dialog(
+    ctx: &egui::Context,
+    id: &'static str,
+    width: f32,
+    title: &str,
+    content: impl FnOnce(&mut egui::Ui),
+) -> egui::ModalResponse<()> {
+    egui::Modal::new(egui::Id::new(id))
+        .frame(egui::Frame::popup(&ctx.style()).inner_margin(18.0))
+        .show(ctx, |ui| {
+            ui.set_width(width.min((ctx.screen_rect().width() - 60.0).max(120.0)));
+            let height = (ctx.screen_rect().height() - 72.0).max(90.0);
+            // An Area remembers its previous size. Let a longer dialog grow
+            // instead of making its scroll viewport inherit an old short size.
+            ui.set_max_height(height);
+            ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+            egui::ScrollArea::vertical()
+                .id_salt(id)
+                .max_height(height)
+                .show(ui, |ui| {
+                    ui.heading(title);
+                    ui.add_space(8.0);
+                    content(ui);
+                });
+        })
+}
 fn number(ui: &mut egui::Ui, label: &str, value: &mut i64, min: i64, max: i64) -> bool {
     let before = *value;
     ui.label(label);
@@ -392,10 +513,22 @@ impl Settings {
         let saved_config: Config = store.get("config")?;
         let mut config = saved_config.clone();
         if onboarding {
-            config.automatic = true;
-            config.collect = true;
-            config.autostart = true;
+            if let Some(draft) = store.get::<Option<Config>>("setup_draft")?
+                && draft.validate().is_ok()
+            {
+                config = draft;
+                config.language = saved_config.language.clone();
+            } else {
+                config.automatic = true;
+                config.collect = true;
+                config.autostart = true;
+            }
         }
+        let onboarding_step = if onboarding {
+            store.get::<usize>("setup_step")?.min(2)
+        } else {
+            0
+        };
         i18n::set(&config.language);
         let ui_scale = validated_scale(store.get::<f32>("ui_scale")?);
         let mut app = Self {
@@ -418,17 +551,29 @@ impl Settings {
             app_sort: 0,
             app_page: 0,
             notice: None,
+            notice_details: false,
             status: String::new(),
             catalog_warning: String::new(),
             autostart_warning: String::new(),
+            tray_warning: String::new(),
             background_alive: false,
+            background_disabled: false,
             heartbeat: 0,
             last: Instant::now(),
             dirty: onboarding,
             onboarding,
-            onboarding_step: 0,
+            onboarding_step,
             confirm_clear: false,
             confirm_close: false,
+            confirm_setup_close: false,
+            confirm_disable: false,
+            import_open: false,
+            import_paths: String::new(),
+            import_error: String::new(),
+            focus_import: false,
+            focus_search: false,
+            highlighted_apps: HashSet::new(),
+            page_scroll_reset: false,
             allow_close: false,
             close_after_save: false,
             pending_commands: vec![],
@@ -443,6 +588,7 @@ impl Settings {
             events: vec![],
             events_error: String::new(),
             capture: None,
+            capture_view: None,
             capture_scroll_bottom: false,
             capture_at: Instant::now() + Duration::from_secs(1),
             capture_pending: false,
@@ -452,6 +598,7 @@ impl Settings {
         Ok(app)
     }
     fn inform(&mut self, text: impl Into<String>, kind: NoticeKind) {
+        self.notice_details = false;
         self.notice = Some(Notice {
             text: text.into(),
             kind,
@@ -466,6 +613,14 @@ impl Settings {
             || self.active_commands > 0
             || (self.find_after_layout && self.layout_receiver.is_some())
     }
+    fn modal_open(&self) -> bool {
+        self.confirm_clear
+            || self.confirm_close
+            || self.confirm_setup_close
+            || self.confirm_disable
+            || self.import_open
+            || self.notice_details
+    }
     fn refresh_dirty(&mut self) {
         self.dirty = self.onboarding || !config_equal(&self.config, &self.edit_base);
     }
@@ -475,12 +630,18 @@ impl Settings {
         let state: State = self.store.get("state")?;
         let learning = self.store.get("learning")?;
         let saved_config = self.store.get("config")?;
-        let ranking = rank(&apps, &self.store.days()?, &saved_config, now());
+        let preview = engine::preview(&self.store, !state.initialized);
+        let ranking = match &preview {
+            Ok(preview) => preview.ranking.clone(),
+            Err(_) => rank(&apps, &self.store.days()?, &saved_config, now()),
+        };
         let status = self.store.get("status")?;
         let catalog_warning = self.store.get("catalog_warning")?;
         let autostart_warning = self.store.get("autostart_warning")?;
+        let tray_warning = self.store.get("tray_warning")?;
         let heartbeat = self.store.get("heartbeat")?;
         let background_alive = native::is_running("background", &self.store.home)?;
+        let background_disabled = self.store.get("background_disabled")?;
         let (can_undo, interrupted): (bool, bool) = self.store.db.query_row(
             "SELECT EXISTS(SELECT 1 FROM transactions WHERE status IN ('prepared','committed','rolling_back')), EXISTS(SELECT 1 FROM transactions WHERE status IN ('prepared','rolling_back'))",
             [], |r| Ok((r.get(0)?, r.get(1)?))
@@ -518,8 +679,10 @@ impl Settings {
         self.status = status;
         self.catalog_warning = catalog_warning;
         self.autostart_warning = autostart_warning;
+        self.tray_warning = tray_warning;
         self.heartbeat = heartbeat;
         self.background_alive = background_alive;
+        self.background_disabled = background_disabled;
         self.can_undo = can_undo;
         self.interrupted = interrupted;
         self.active_commands = active_commands;
@@ -535,7 +698,7 @@ impl Settings {
             self.edit_base = saved_config.clone();
         }
         self.saved_config = saved_config;
-        self.preview = match engine::preview(&self.store, !self.state.initialized) {
+        self.preview = match preview {
             Ok(value) => {
                 self.preview_error.clear();
                 Some(value)
@@ -577,7 +740,11 @@ impl Settings {
             let result = work().map_err(|e| format!("{e:#}"));
             let _ = sender.send(result);
         });
-        self.job = Some(Job { label, receiver });
+        self.job = Some(Job {
+            label,
+            started: Instant::now(),
+            receiver,
+        });
         self.notice = None;
     }
     fn queue(&mut self, command: &str) {
@@ -601,6 +768,19 @@ impl Settings {
             Ok(JobResult::Started)
         });
     }
+    fn prepare_background(&mut self) {
+        let home = self.store.home.clone();
+        self.start_job("Opening Desktop Pilot…", move || {
+            setup::prepare_settings(&home)?;
+            Ok(JobResult::Prepared)
+        });
+    }
+    fn disable_background(&mut self) {
+        let home = self.store.home.clone();
+        self.start_job("Stopping background work…", move || {
+            Ok(JobResult::Disabled(setup::disable_background(&home)?))
+        });
+    }
     fn save(&mut self) {
         if self.busy() || !self.dirty || self.onboarding {
             return;
@@ -610,6 +790,8 @@ impl Settings {
         let base = self.edit_base.clone();
         self.start_job("Saving settings…", move || {
             let store = Store::open(&home)?;
+            let restart =
+                should_resume_background(store.get::<bool>("background_disabled")?, &base, &config);
             let mut native_applied = false;
             let result = store.transaction(|| {
                 let latest = store.get("config")?;
@@ -636,7 +818,14 @@ impl Settings {
                     return Err(error);
                 }
             };
-            Ok(JobResult::Saved(merged))
+            let warning = if restart {
+                setup::start_background(&home).err().map(|error| {
+                    format!("Settings were saved, but background work could not start: {error:#}")
+                })
+            } else {
+                None
+            };
+            Ok(JobResult::Saved(merged, warning))
         });
     }
     fn discard(&mut self) {
@@ -658,32 +847,49 @@ impl Settings {
             let _com = native::Com::new()?;
             let store = Store::open(&home)?;
             setup::finish(&store, &config)?;
+            store.set("setup_draft", &Option::<Config>::None)?;
+            store.set("setup_step", &0usize)?;
             Ok(JobResult::Setup(config))
         });
     }
-    fn add_shortcut(&mut self, path: PathBuf) {
+    fn add_shortcuts(&mut self, paths: Vec<PathBuf>) {
         let home = self.store.home.clone();
-        self.start_job("Adding the shortcut…", move || {
+        self.start_job("Adding shortcuts…", move || {
             let _com = native::Com::new()?;
-            let mut app = native::read_link(&path)?;
+            let mut apps = Vec::new();
+            let mut result = ImportResult {
+                added: Vec::new(),
+                failed: Vec::new(),
+            };
+            for path in paths {
+                match native::read_link(&path) {
+                    Ok(app) => apps.push(app),
+                    Err(error) => result.failed.push((path, format!("{error:#}"))),
+                }
+            }
             let store = Store::open(&home)?;
             store.transaction(|| {
-                if let Some(existing) = store.apps()?.into_iter().find(|a| a.id == app.id) {
-                    app.policy = existing.policy;
-                    app.seed = existing.seed;
-                    app.seed_at = existing.seed_at;
-                    app.pinned = existing.pinned;
-                    app.observed_roots = existing.observed_roots;
-                    if app.note.is_empty() {
-                        app.note = existing.note;
+                let mut existing: HashMap<_, _> = store
+                    .apps()?
+                    .into_iter()
+                    .map(|app| (app.id.clone(), app))
+                    .collect();
+                for mut app in apps {
+                    if let Err(error) = prepare_imported_app(&mut app, &existing) {
+                        result
+                            .failed
+                            .push((PathBuf::from(&app.source), format!("{error:#}")));
+                        continue;
                     }
-                    app.category = existing.category;
-                } else {
-                    app.category = "Manual".into();
+                    store.put_app(&app)?;
+                    existing.insert(app.id.clone(), app.clone());
+                    result.added.push((app.id, app.name));
                 }
-                store.put_app(&app)
+                let mut seen = HashSet::new();
+                result.added.retain(|(id, _)| seen.insert(id.clone()));
+                Ok(())
             })?;
-            Ok(JobResult::Added)
+            Ok(JobResult::Added(result))
         });
     }
     fn refresh_layout(&mut self, find: bool) {
@@ -730,7 +936,7 @@ impl Settings {
                 Ok(result) => {
                     self.job = None;
                     match result {
-                        Ok(JobResult::Setup(config)) | Ok(JobResult::Saved(config)) => {
+                        Ok(JobResult::Setup(config)) | Ok(JobResult::Saved(config, None)) => {
                             let was_onboarding = self.onboarding;
                             self.config = config.clone();
                             self.saved_config = config.clone();
@@ -746,6 +952,14 @@ impl Settings {
                             }
                             self.close_after_save = false;
                         }
+                        Ok(JobResult::Saved(config, Some(warning))) => {
+                            self.config = config.clone();
+                            self.saved_config = config.clone();
+                            self.edit_base = config;
+                            self.dirty = false;
+                            self.close_after_save = false;
+                            self.fail(warning);
+                        }
                         Ok(JobResult::Queued(id, action)) => {
                             self.pending_commands.push(PendingCommand {
                                 id,
@@ -756,10 +970,42 @@ impl Settings {
                         Ok(JobResult::Started) => {
                             self.inform("Background work started.", NoticeKind::Success)
                         }
-                        Ok(JobResult::Added) => self.inform(
-                            "Shortcut added. Existing rules and history were kept.",
-                            NoticeKind::Success,
-                        ),
+                        Ok(JobResult::Prepared) => {}
+                        Ok(JobResult::Disabled(config)) => {
+                            self.config = config.clone();
+                            self.saved_config = config.clone();
+                            self.edit_base = config;
+                            self.dirty = false;
+                            self.inform("Desktop Pilot is turned off. Your shortcuts and local data are kept. Choose a mode in Settings to use it again.", NoticeKind::Success);
+                        }
+                        Ok(JobResult::Added(result)) => {
+                            if !result.added.is_empty() {
+                                self.highlighted_apps =
+                                    result.added.iter().map(|(id, _)| id.clone()).collect();
+                                self.filter.clear();
+                                self.app_filter = 5;
+                                self.app_page = 0;
+                                self.tab = 1;
+                                self.page_scroll_reset = true;
+                                self.inform(format!("Shortcuts added: {}. Existing rules and history were kept.", result.added.len()), NoticeKind::Success);
+                            }
+                            self.import_paths = result
+                                .failed
+                                .iter()
+                                .map(|(path, _)| path.display().to_string())
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            self.import_error = result
+                                .failed
+                                .iter()
+                                .map(|(path, error)| format!("{}\n{error}", path.display()))
+                                .collect::<Vec<_>>()
+                                .join("\n\n");
+                            self.import_open = !result.failed.is_empty();
+                            if self.import_open {
+                                self.fail("Some shortcuts could not be added. Check the paths in the dialog and try again.");
+                            }
+                        }
                         Err(e) => {
                             self.close_after_save = false;
                             if self.onboarding
@@ -826,6 +1072,17 @@ impl Settings {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
     }
+    fn open_import(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
+        for path in paths {
+            if !self.import_paths.is_empty() {
+                self.import_paths.push('\n');
+            }
+            self.import_paths.push_str(&path.display().to_string());
+        }
+        self.import_open = true;
+        self.import_error.clear();
+        self.focus_import = true;
+    }
     fn language_and_scale(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let mut language = self.config.language.clone();
         egui::ComboBox::from_id_salt("language")
@@ -888,6 +1145,17 @@ impl Settings {
             t("Настройки", "Settings"),
             t("История", "History"),
         ];
+        if !vertical && ui.available_width() < 620.0 {
+            egui::ComboBox::from_id_salt("main-navigation")
+                .selected_text(labels[self.tab.min(labels.len() - 1)])
+                .width(ui.available_width().min(360.0))
+                .show_ui(ui, |ui| {
+                    for (index, label) in labels.iter().enumerate() {
+                        ui.selectable_value(&mut self.tab, index, *label);
+                    }
+                });
+            return;
+        }
         for (index, label) in labels.iter().enumerate() {
             let selected = self.tab == index;
             let width = if vertical { ui.available_width() } else { 0.0 };
@@ -1343,10 +1611,39 @@ impl Settings {
                 self.config.zone_row = row;
                 self.refresh_dirty();
             }
+            response.request_focus();
+        }
+        if response.has_focus() {
+            let mut col = self.config.zone_col;
+            let mut row = self.config.zone_row;
+            ui.input_mut(|input| {
+                for (key, dc, dr) in [
+                    (egui::Key::ArrowLeft, -1, 0),
+                    (egui::Key::ArrowRight, 1, 0),
+                    (egui::Key::ArrowUp, 0, -1),
+                    (egui::Key::ArrowDown, 0, 1),
+                ] {
+                    if input.consume_key(egui::Modifiers::NONE, key) {
+                        col = (col + dc).clamp(0, 40);
+                        row = (row + dr).clamp(0, 40);
+                    }
+                }
+            });
+            if col != self.config.zone_col || row != self.config.zone_row {
+                self.config.zone_col = col;
+                self.config.zone_row = row;
+                self.refresh_dirty();
+            }
+            painter.rect_stroke(
+                rect.shrink(1.0),
+                8.0,
+                egui::Stroke::new(2.0, ACCENT),
+                egui::StrokeKind::Inside,
+            );
         }
         response.on_hover_text(t(
-            "Нажмите свободную ячейку, чтобы выбрать начало области",
-            "Click a free cell to choose the start of the area",
+            "Нажмите свободную ячейку, чтобы выбрать начало области. Сфокусировав схему клавишей Tab, меняйте положение стрелками.",
+            "Click a free cell to choose the start of the area. Focus the layout with Tab, then use the arrow keys to move it.",
         ));
         ui.horizontal_wrapped(|ui| {
             ui.colored_label(
@@ -1427,7 +1724,11 @@ impl Settings {
                         "Installation location",
                     ))
                     .show(ui, |ui| {
-                        ui.label(self.store.home.display().to_string());
+                        ui.add(
+                            egui::Label::new(self.store.home.display().to_string())
+                                .wrap()
+                                .selectable(true),
+                        );
                     });
                 });
             }
@@ -1442,7 +1743,7 @@ impl Settings {
             &self.saved_config,
             &self.learning,
         );
-        if !self.autostart_warning.is_empty()
+        if (!self.autostart_warning.is_empty() || !self.tray_warning.is_empty())
             && self.background_alive
             && !matches!(value, Health::Starting | Health::Unresponsive)
         {
@@ -1495,10 +1796,12 @@ impl Settings {
     }
     fn overview(&mut self, ui: &mut egui::Ui) {
         ui.heading(RichText::new(t("Ваш рабочий стол", "Your desktop")).size(28.0));
-        ui.label(t(
-            "Нужные приложения рядом. Привычный порядок сохранён.",
-            "Keep useful apps close and your familiar layout intact.",
-        ));
+        if ui.available_width() >= 700.0 {
+            ui.label(t(
+                "Нужные приложения рядом. Привычный порядок сохранён.",
+                "Keep useful apps close and your familiar layout intact.",
+            ));
+        }
         ui.add_space(12.0);
         card(ui, |ui| {
             let current = self.current_health();
@@ -1508,18 +1811,33 @@ impl Settings {
             );
             match current {
                 Health::Offline => {
-                    ui.label(t(
+                    ui.label(if self.background_disabled {
+                        t("Сбор статистики, автоматические изменения и автозапуск отключены. Ярлыки и данные сохранены. Можно запустить ручное управление или выбрать другой режим в настройках.",
+                          "Statistics, automatic changes and startup are turned off. Your shortcuts and data are kept. Start manual control or choose another mode in Settings.")
+                    } else { t(
                         "Наблюдение и автоматические изменения сейчас не выполняются. Настройки и накопленные данные сохранены.",
                         "Observation and automatic changes are stopped. Your settings and usage history are kept."
-                    ));
+                    )});
                     if primary(
                         ui,
                         self.job.is_none(),
-                        t("Возобновить работу", "Resume background work"),
+                        if self.background_disabled {
+                            t("Запустить ручное управление", "Start manual control")
+                        } else {
+                            t("Возобновить работу", "Resume background work")
+                        },
                     )
                     .clicked()
                     {
                         self.restart_background();
+                    }
+                    if self.background_disabled
+                        && ui
+                            .button(t("Выбрать режим в настройках", "Choose a mode in Settings"))
+                            .clicked()
+                    {
+                        self.tab = 2;
+                        self.settings_section = 0;
                     }
                 }
                 Health::Unresponsive => {
@@ -1540,6 +1858,9 @@ impl Settings {
                     {
                         ui.label(i18n::runtime(&self.autostart_warning));
                     }
+                    if !self.tray_warning.is_empty() && !self.status.contains(&self.tray_warning) {
+                        ui.label(i18n::runtime(&self.tray_warning));
+                    }
                     if ui.button(t("Посмотреть историю", "View history")).clicked()
                     {
                         self.tab = 3;
@@ -1556,14 +1877,13 @@ impl Settings {
                         self.tab = 2;
                     }
                 }
+                Health::Suggestions => {
+                    ui.label(t("Наблюдение продолжается. Состав ярлыков меняется по кнопке «Применить сейчас».",
+                        "Observation continues. Choose Apply now to update your shortcuts."));
+                }
                 Health::Manual => {
-                    ui.label(if self.saved_config.collect {
-                        t("Наблюдение продолжается. Состав ярлыков меняется по кнопке «Применить сейчас».",
-                          "Observation continues. Choose Apply now to update your shortcuts.")
-                    } else {
-                        t("Новая статистика не собирается. Вы выбираете состав и момент применения.",
-                          "No new usage statistics are collected. You choose the apps and when to apply changes.")
-                    });
+                    ui.label(t("Новая статистика не собирается. Вы выбираете состав и момент применения.",
+                        "No new usage statistics are collected. You choose the apps and when to apply changes."));
                 }
                 Health::Automatic => {
                     ui.label(format!(
@@ -1734,32 +2054,55 @@ impl Settings {
     fn applications(&mut self, ui: &mut egui::Ui) {
         let previous_filter = (self.filter.clone(), self.app_filter, self.app_sort);
         ui.heading(RichText::new(t("Приложения", "Apps")).size(28.0));
-        ui.label(t(
-            "Выберите, что всегда должно быть под рукой, а что не нужно добавлять.",
-            "Choose what should always be nearby and what to leave out.",
-        ));
+        if ui.available_width() >= 700.0 {
+            ui.label(t(
+                "Выберите, что всегда должно быть под рукой, а что не нужно добавлять.",
+                "Choose what should always be nearby and what to leave out.",
+            ));
+        }
         ui.add_space(10.0);
         card(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.add(
+                let search = ui.add(
                     egui::TextEdit::singleline(&mut self.filter)
+                        .id_salt("app-search")
                         .hint_text(t(
                             "Поиск по имени, папке или пути…",
                             "Search by name, folder or path…",
                         ))
                         .desired_width(ui.available_width().min(430.0)),
                 );
-                if !self.filter.is_empty() && ui.button(t("Сбросить", "Clear")).clicked() {
+                if self.focus_search {
+                    search.request_focus();
+                    search.scroll_to_me(Some(egui::Align::TOP));
+                    self.focus_search = false;
+                }
+                if search.has_focus()
+                    && ui.input_mut(|input| {
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                    })
+                {
                     self.filter.clear();
                 }
+                if !self.filter.is_empty() && ui.button(t("Сбросить", "Clear")).clicked() {
+                    self.filter.clear();
+                    search.request_focus();
+                }
             });
-            ui.horizontal_wrapped(|ui| {
+            let filters_layout = if ui.available_width() < 540.0 {
+                egui::Layout::top_down(egui::Align::Min)
+            } else {
+                egui::Layout::left_to_right(egui::Align::Center)
+            };
+            ui.with_layout(filters_layout, |ui| {
                 egui::ComboBox::from_id_salt("app-filter")
+                    .width(ui.available_width().min(250.0))
                     .selected_text(match self.app_filter {
                         1 => t("Подходят для размещения", "Eligible for placement"),
                         2 => t("Всегда на столе", "Always on desktop"),
                         3 => t("Не добавлять", "Never add"),
                         4 => t("Недоступные", "Unavailable"),
+                        5 => t("Последние добавленные", "Recently added"),
                         _ => t("Все приложения", "All apps"),
                     })
                     .show_ui(ui, |ui| {
@@ -1772,8 +2115,16 @@ impl Settings {
                         ] {
                             ui.selectable_value(&mut self.app_filter, value, label);
                         }
+                        if !self.highlighted_apps.is_empty() {
+                            ui.selectable_value(
+                                &mut self.app_filter,
+                                5,
+                                t("Последние добавленные", "Recently added"),
+                            );
+                        }
                     });
                 egui::ComboBox::from_id_salt("app-sort")
+                    .width(ui.available_width().min(250.0))
                     .selected_text(match self.app_sort {
                         1 => t("По рейтингу", "By ranking"),
                         2 => t("По времени использования", "By usage time"),
@@ -1794,12 +2145,11 @@ impl Settings {
                     });
             });
             ui.horizontal_wrapped(|ui| {
-                if primary(ui, !self.busy(), t("Добавить ярлык…", "Add shortcut…")).clicked()
-                    && let Some(path) = rfd::FileDialog::new()
-                        .add_filter(t("Ярлыки", "Shortcuts"), &["lnk", "url"])
-                        .pick_file()
+                if primary(ui, !self.busy(), t("Добавить ярлыки…", "Add shortcuts…"))
+                    .on_hover_text("Ctrl+O")
+                    .clicked()
                 {
-                    self.add_shortcut(path);
+                    self.open_import([]);
                 }
                 if ui
                     .add_enabled(
@@ -1814,9 +2164,44 @@ impl Settings {
                     self.queue("rescan");
                 }
             });
+            ui.small(t(
+                "Можно перетащить ярлыки в окно. Поиск: Ctrl+F.",
+                "You can also drag shortcuts into this window. Search: Ctrl+F.",
+            ));
         });
         if previous_filter != (self.filter.clone(), self.app_filter, self.app_sort) {
             self.app_page = 0;
+            self.page_scroll_reset = true;
+        }
+        let always_count = self
+            .apps
+            .iter()
+            .filter(|app| app.valid && app.policy == Policy::Always)
+            .count();
+        if always_count > self.saved_config.slots {
+            card(ui, |ui| {
+                ui.colored_label(
+                    WARNING,
+                    format!(
+                        "{}: {} · {}: {}",
+                        t("Всегда на столе", "Always on desktop"),
+                        always_count,
+                        t("Доступно мест", "Available slots"),
+                        self.saved_config.slots
+                    ),
+                );
+                ui.label(t(
+                    "Для всех закреплённых приложений не хватает мест. Увеличьте число ярлыков или измените правило у части приложений; затем можно применить состав.",
+                    "There are not enough slots for all pinned apps. Add more slots or change some app rules before applying the selection.",
+                ));
+                if ui
+                    .button(t("Изменить число мест", "Change slot count"))
+                    .clicked()
+                {
+                    self.tab = 2;
+                    self.settings_section = 1;
+                }
+            });
         }
         if !self.catalog_warning.is_empty() {
             card(ui, |ui| {
@@ -1854,6 +2239,7 @@ impl Settings {
                     2 => app.policy == Policy::Always,
                     3 => app.policy == Policy::Never,
                     4 => !app.valid,
+                    5 => self.highlighted_apps.contains(&app.id),
                     _ => true,
                 }
             })
@@ -1904,6 +2290,7 @@ impl Settings {
             return;
         }
         let mut selected_command = None;
+        let mut action_error = None;
         let busy = self.busy();
         for index in indices.into_iter().skip(self.app_page * 24).take(24) {
             let app = &self.apps[index];
@@ -1932,6 +2319,9 @@ impl Settings {
                     };
                     if !category.is_empty() {
                         ui.small(category);
+                    }
+                    if self.highlighted_apps.contains(&app.id) {
+                        ui.colored_label(ACCENT, t("Добавлен в список", "Added to the list"));
                     }
                     ui.add_enabled_ui(!busy, |ui| {
                         let mut policy = app.policy.clone();
@@ -1974,9 +2364,21 @@ impl Settings {
                             ));
                             ui.label(t("Исходный ярлык", "Original shortcut"));
                             ui.add(egui::Label::new(&app.source).wrap().selectable(true));
-                            if ui.button(t("Скопировать путь", "Copy path")).clicked()
-                            {
-                                ui.ctx().copy_text(app.source.clone());
+                            ui.horizontal_wrapped(|ui| {
+                                if ui.button(t("Показать в папке", "Show in folder")).clicked()
+                                    && let Err(error) =
+                                        native::show_in_folder(Path::new(&app.source))
+                                {
+                                    action_error = Some(format!("{error:#}"));
+                                }
+                                if ui.button(t("Скопировать путь", "Copy path")).clicked()
+                                {
+                                    ui.ctx().copy_text(app.source.clone());
+                                }
+                            });
+                            if !app.target.is_empty() {
+                                ui.small(t("Куда ведёт ярлык", "Shortcut target"));
+                                ui.add(egui::Label::new(&app.target).wrap().selectable(true));
                             }
                             if !app.note.is_empty() {
                                 ui.label(i18n::runtime(&app.note));
@@ -1989,6 +2391,9 @@ impl Settings {
         page_controls(ui, &mut self.app_page, match_count);
         if let Some(command) = selected_command {
             self.queue(&command);
+        }
+        if let Some(error) = action_error {
+            self.fail(error);
         }
     }
     fn preferences(&mut self, ui: &mut egui::Ui) {
@@ -2313,6 +2718,31 @@ impl Settings {
                     }
                 });
                 card(ui, |ui| {
+                    ui.heading(t("Отключить программу", "Turn off Desktop Pilot"));
+                    ui.label(t(
+                        "Остановить фоновую работу и убрать автозапуск. Сбор статистики и автоматические изменения отключатся. Текущие ярлыки и данные сохранятся.",
+                        "Stop background work and turn off startup, statistics and automatic changes. Your current shortcuts and data will be kept.",
+                    ));
+                    if ui
+                        .add_enabled(
+                            self.job.is_none() && !self.dirty,
+                            egui::Button::new(t(
+                                "Отключить Desktop Pilot…",
+                                "Disable Desktop Pilot…",
+                            )),
+                        )
+                        .clicked()
+                    {
+                        self.confirm_disable = true;
+                    }
+                    if self.dirty {
+                        ui.small(t(
+                            "Сначала сохраните или отмените текущие правки.",
+                            "Save or discard your current edits first.",
+                        ));
+                    }
+                });
+                card(ui, |ui| {
                     ui.heading("Desktop Pilot");
                     ui.label(format!(
                         "{} {}",
@@ -2471,6 +2901,10 @@ impl Settings {
                 ui.spinner();
                 ui.label(i18n::runtime(job.label));
             });
+            if job.started.elapsed() > Duration::from_secs(15) {
+                ui.small(t("Операция ещё выполняется. Настройки и данные сохраняются; дождитесь результата.",
+                    "The operation is still running. Your settings and data are kept; please wait for the result."));
+            }
         } else if !self.pending_commands.is_empty() || self.active_commands > 0 {
             ui.horizontal_wrapped(|ui| {
                 ui.spinner();
@@ -2504,44 +2938,37 @@ impl Settings {
                 NoticeKind::Error => ERROR,
             };
             let message = i18n::runtime(&notice.text);
+            let limit = if ctx.screen_rect().width() < 700.0 {
+                55
+            } else {
+                120
+            };
+            let first_line = message.lines().next().unwrap_or_default();
+            let shortened = message.contains('\n') || first_line.chars().count() > limit;
+            let summary = if shortened {
+                format!("{}…", first_line.chars().take(limit).collect::<String>())
+            } else {
+                first_line.to_owned()
+            };
             let mut dismiss = false;
             ui.horizontal_wrapped(|ui| {
                 if ui
-                    .small_button("×")
+                    .add(egui::Button::new("×").min_size(egui::vec2(38.0, 38.0)))
                     .on_hover_text(t("Закрыть сообщение", "Dismiss message"))
                     .clicked()
                 {
                     dismiss = true;
                 }
-                if notice.kind == NoticeKind::Error {
-                    ui.colored_label(
-                        color,
-                        t(
-                            "Не удалось завершить действие",
-                            "The action could not be completed",
-                        ),
-                    );
-                    if ui.small_button(t("Копировать", "Copy")).clicked() {
-                        ctx.copy_text(message.clone());
-                    }
-                } else if message.chars().count() <= 180 {
-                    ui.colored_label(color, &message);
+                if (notice.kind == NoticeKind::Error || shortened)
+                    && ui.button(t("Подробнее", "Details")).clicked()
+                {
+                    self.notice_details = true;
                 }
+                ui.colored_label(color, &summary);
             });
-            if notice.kind == NoticeKind::Error || message.chars().count() > 180 {
-                egui::ScrollArea::vertical()
-                    .id_salt("notice-details")
-                    .max_height(86.0)
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::Label::new(RichText::new(&message).color(color))
-                                .wrap()
-                                .selectable(true),
-                        );
-                    });
-            }
             if dismiss {
                 self.notice = None;
+                self.notice_details = false;
             }
         }
         if self.job.is_none()
@@ -2556,81 +2983,312 @@ impl Settings {
         }
         ui.add_space(4.0);
     }
-    fn confirmations(&mut self, ctx: &egui::Context) {
-        if self.confirm_clear {
-            egui::Window::new(t("Очистить статистику использования?", "Clear usage statistics?"))
-                .id(egui::Id::new("clear-confirmation"))
-                .collapsible(false).resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .max_width(480.0)
-                .show(ctx, |ui| {
-                    ui.label(t(
-                        "Рейтинг начнёт накапливаться заново. Если наблюдение ещё не завершено, его прогресс сбросится. Ваши правила и ярлыки сохранятся.",
-                        "The ranking will start building up again. Unfinished observation will reset. Your rules and shortcuts will be kept."
+    fn import_dialog(&mut self, ctx: &egui::Context) {
+        let response = dialog(
+            ctx,
+            "import-shortcuts",
+            560.0,
+            t("Добавить ярлыки", "Add shortcuts"),
+            |ui| {
+                ui.label(t(
+                    "Выберите ярлыки .lnk или .url. Полные пути можно вставить по одному в строке.",
+                    "Choose .lnk or .url shortcuts. You can paste full paths, one per line.",
+                ));
+                ui.add_enabled_ui(self.job.is_none(), |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for (from_start, label) in [
+                        (false, t("Выбрать файлы…", "Browse files…")),
+                        (true, t("Из меню «Пуск»…", "From Start menu…")),
+                    ] {
+                        if ui.button(label).clicked() {
+                            let mut picker = rfd::FileDialog::new()
+                                .set_title(t("Выберите один или несколько ярлыков", "Choose one or more shortcuts"))
+                                .add_filter(t("Ярлыки", "Shortcuts"), &["lnk", "url"]);
+                            if let Ok(directory) = if from_start { native::programs() } else { native::desktop() } {
+                                picker = picker.set_directory(directory);
+                            }
+                            if let Some(paths) = picker.pick_files() {
+                                self.open_import(paths);
+                            }
+                        }
+                    }
+                });
+                ui.label(t("Полные пути к ярлыкам", "Full shortcut paths"));
+                let editor = ui.add(egui::TextEdit::multiline(&mut self.import_paths)
+                    .id_salt("import-paths")
+                    .hint_text(r"C:\Users\…\Desktop\App.lnk")
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(2));
+                if self.focus_import {
+                    editor.request_focus();
+                    self.focus_import = false;
+                }
+                if editor.changed() {
+                    self.import_error.clear();
+                }
+                ui.horizontal_wrapped(|ui| {
+                    if primary(ui, !self.busy() && !self.import_paths.trim().is_empty(), t("Добавить в список", "Add to the list")).clicked() {
+                        match shortcut_paths(&self.import_paths) {
+                            Ok(paths) => {
+                                self.import_error.clear();
+                                self.add_shortcuts(paths);
+                            }
+                            Err(error) => self.import_error = format!("{error:#}"),
+                        }
+                    }
+                    if ui.button(t("Отмена", "Cancel")).clicked() {
+                        self.import_open = false;
+                    }
+                });
+                egui::CollapsingHeader::new(t("Какие файлы можно добавить?", "Which files can I add?")).show(ui, |ui| {
+                    ui.small(t(
+                        "Если у программы нет ярлыка, создайте его в Windows и выберите здесь. Можно выбрать несколько файлов или перетащить их в окно. Добавление не запускает приложение и не перемещает исходный файл.",
+                        "If an app has no shortcut, create one in Windows and choose it here. You can choose several files or drag them into the window. Adding does not launch the app or move the original file.",
                     ));
-                    ui.colored_label(WARNING, t("Очистку нельзя отменить.", "Clearing cannot be undone."));
-                    ui.add_space(10.0);
+                });
+            });
+                if self.job.is_some() {
                     ui.horizontal_wrapped(|ui| {
-                        if ui.button(t("Сохранить статистику", "Keep statistics")).clicked() {
+                        ui.spinner();
+                        ui.label(t(
+                            "Проверяем и добавляем ярлыки…",
+                            "Checking and adding shortcuts…",
+                        ));
+                    });
+                }
+                if !self.import_error.is_empty() {
+                    ui.colored_label(
+                        WARNING,
+                        t("Проверьте выбранные файлы", "Check the selected files"),
+                    );
+                    ui.add(
+                        egui::Label::new(i18n::runtime(&self.import_error))
+                            .wrap()
+                            .selectable(true),
+                    );
+                }
+            },
+        );
+        if response.should_close() && self.job.is_none() {
+            self.import_open = false;
+        }
+    }
+    fn close_setup(&mut self, ctx: &egui::Context, keep: bool) {
+        let result = self.store.transaction(|| {
+            self.store
+                .set("setup_draft", &keep.then_some(&self.config))?;
+            self.store
+                .set("setup_step", &if keep { self.onboarding_step } else { 0 })
+        });
+        match result {
+            Ok(()) => {
+                self.confirm_setup_close = false;
+                self.allow_close = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Err(error) => self.fail(format!("{error:#}")),
+        }
+    }
+    fn confirmations(&mut self, ctx: &egui::Context) {
+        if self.notice_details {
+            let message = self
+                .notice
+                .as_ref()
+                .map(|notice| i18n::runtime(&notice.text))
+                .unwrap_or_default();
+            let response = dialog(
+                ctx,
+                "notice-details",
+                560.0,
+                t("Сообщение программы", "App message"),
+                |ui| {
+                    ui.add(egui::Label::new(&message).wrap().selectable(true));
+                    ui.horizontal_wrapped(|ui| {
+                        if ui
+                            .button(t("Скопировать сообщение", "Copy message"))
+                            .clicked()
+                        {
+                            ctx.copy_text(message.clone());
+                        }
+                        if primary(ui, true, t("Закрыть", "Close")).clicked() {
+                            self.notice_details = false;
+                        }
+                    });
+                },
+            );
+            if response.should_close() {
+                self.notice_details = false;
+            }
+        }
+        if self.confirm_clear {
+            let response = dialog(
+                ctx,
+                "clear-confirmation",
+                480.0,
+                t(
+                    "Очистить статистику использования?",
+                    "Clear usage statistics?",
+                ),
+                |ui| {
+                    ui.label(t(
+                    "Рейтинг начнёт накапливаться заново. Если наблюдение ещё не завершено, его прогресс сбросится. Ваши правила и ярлыки сохранятся.",
+                    "The ranking will start building up again. Unfinished observation will reset. Your rules and shortcuts will be kept."
+                ));
+                    ui.colored_label(
+                        WARNING,
+                        t("Очистку нельзя отменить.", "Clearing cannot be undone."),
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        if ui
+                            .button(t("Сохранить статистику", "Keep statistics"))
+                            .clicked()
+                        {
                             self.confirm_clear = false;
                         }
-                        if ui.add_enabled(!self.busy(), egui::Button::new(t("Очистить", "Clear"))
-                            .fill(Color32::from_rgb(112, 43, 52)).min_size(egui::vec2(0.0, 42.0))).clicked() {
+                        if ui
+                            .add_enabled(
+                                !self.busy(),
+                                egui::Button::new(t("Очистить", "Clear"))
+                                    .fill(Color32::from_rgb(112, 43, 52))
+                                    .min_size(egui::vec2(0.0, 42.0)),
+                            )
+                            .clicked()
+                        {
                             self.confirm_clear = false;
                             self.queue("clear_stats");
                         }
                     });
-                });
+                },
+            );
+            if response.should_close() {
+                self.confirm_clear = false;
+            }
         }
         if self.confirm_close {
-            egui::Window::new(t(
-                "Сохранить изменения перед закрытием?",
-                "Save changes before closing?",
-            ))
-            .id(egui::Id::new("close-confirmation"))
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .max_width(520.0)
-            .show(ctx, |ui| {
-                ui.label(t(
-                    "В настройках есть несохранённые правки.",
-                    "Your settings contain unsaved edits.",
+            let response = dialog(
+                ctx,
+                "close-confirmation",
+                520.0,
+                t(
+                    "Сохранить изменения перед закрытием?",
+                    "Save changes before closing?",
+                ),
+                |ui| {
+                    ui.label(t(
+                        "В настройках есть несохранённые правки.",
+                        "Your settings contain unsaved edits.",
+                    ));
+                    ui.horizontal_wrapped(|ui| {
+                        if primary(ui, !self.busy(), t("Сохранить и закрыть", "Save and close"))
+                            .clicked()
+                        {
+                            self.confirm_close = false;
+                            self.close_after_save = true;
+                            self.save();
+                        }
+                        if ui
+                            .add_enabled(
+                                self.job.is_none(),
+                                egui::Button::new(t(
+                                    "Закрыть без сохранения",
+                                    "Close without saving",
+                                )),
+                            )
+                            .clicked()
+                        {
+                            self.confirm_close = false;
+                            self.allow_close = true;
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        if ui
+                            .button(t("Продолжить настройку", "Keep editing"))
+                            .clicked()
+                        {
+                            self.confirm_close = false;
+                        }
+                    });
+                },
+            );
+            if response.should_close() {
+                self.confirm_close = false;
+            }
+        }
+        if self.confirm_setup_close {
+            let response = dialog(
+                ctx,
+                "setup-close-confirmation",
+                500.0,
+                t("Продолжить настройку позже?", "Continue setup later?"),
+                |ui| {
+                    ui.label(t(
+                    "Можно сохранить выбранные параметры и вернуться к этому шагу при следующем запуске. Пока настройка не завершена, программа не работает в фоне и не меняет ярлыки.",
+                    "Save your choices and return to this step next time. Until setup is complete, the app does not run in the background or change shortcuts.",
                 ));
-                ui.add_space(10.0);
-                ui.horizontal_wrapped(|ui| {
-                    if primary(ui, !self.busy(), t("Сохранить и закрыть", "Save and close"))
-                        .clicked()
-                    {
-                        self.confirm_close = false;
-                        self.close_after_save = true;
-                        self.save();
-                    }
-                    if ui
-                        .add_enabled(
+                    ui.horizontal_wrapped(|ui| {
+                        if primary(
+                            ui,
                             self.job.is_none(),
-                            egui::Button::new(t("Закрыть без сохранения", "Close without saving")),
+                            t("Сохранить и выйти", "Save and exit"),
                         )
                         .clicked()
-                    {
-                        self.confirm_close = false;
-                        self.allow_close = true;
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                    if ui
-                        .button(t("Продолжить настройку", "Keep editing"))
-                        .clicked()
-                    {
-                        self.confirm_close = false;
-                    }
-                });
-            });
+                        {
+                            self.close_setup(ctx, true);
+                        }
+                        if ui
+                            .button(t("Продолжить настройку", "Keep setting up"))
+                            .clicked()
+                        {
+                            self.confirm_setup_close = false;
+                        }
+                        if ui
+                            .button(t("Выйти без сохранения", "Exit without saving"))
+                            .clicked()
+                        {
+                            self.close_setup(ctx, false);
+                        }
+                    });
+                },
+            );
+            if response.should_close() {
+                self.confirm_setup_close = false;
+            }
         }
-        if (self.confirm_clear || self.confirm_close)
-            && ctx.input(|i| i.key_pressed(egui::Key::Escape))
-        {
-            self.confirm_clear = false;
-            self.confirm_close = false;
+        if self.confirm_disable {
+            let response = dialog(
+                ctx,
+                "disable-confirmation",
+                500.0,
+                t("Отключить Desktop Pilot?", "Turn off Desktop Pilot?"),
+                |ui| {
+                    ui.label(t(
+                    "Фоновая работа остановится. Сбор статистики, автоматические изменения и автозапуск будут отключены. Текущие ярлыки, правила и накопленные данные сохранятся.",
+                    "Background work will stop. Statistics, automatic changes and startup will be turned off. Your current shortcuts, rules and usage history will be kept.",
+                ));
+                    ui.label(t(
+                        "Вернуться к работе можно, открыв Desktop Pilot и выбрав нужный режим.",
+                        "To use it again, open Desktop Pilot and choose the mode you want.",
+                    ));
+                    ui.horizontal_wrapped(|ui| {
+                        if ui
+                            .button(t("Оставить включённым", "Keep running"))
+                            .clicked()
+                        {
+                            self.confirm_disable = false;
+                        }
+                        if primary(ui, self.job.is_none(), t("Отключить", "Turn off")).clicked()
+                        {
+                            self.confirm_disable = false;
+                            self.disable_background();
+                        }
+                    });
+                },
+            );
+            if response.should_close() {
+                self.confirm_disable = false;
+            }
+        }
+        if self.import_open {
+            self.import_dialog(ctx);
         }
     }
     fn screenshots(&mut self, ctx: &egui::Context) {
@@ -2638,7 +3296,9 @@ impl Settings {
             for event in ctx.input(|i| i.events.clone()) {
                 if let egui::Event::Screenshot { image, .. } = event {
                     let bytes: Vec<u8> = image.pixels.iter().flat_map(|p| p.to_array()).collect();
-                    let name = if self.onboarding {
+                    let name = if let Some(view) = &self.capture_view {
+                        format!("dialog-{view}.png")
+                    } else if self.onboarding {
                         format!("setup-{}.png", self.onboarding_step)
                     } else if self.tab == 2 {
                         format!("settings-2-{}.png", self.settings_section)
@@ -2658,7 +3318,8 @@ impl Settings {
                         });
                     }
                     self.capture_pending = false;
-                    if (self.onboarding && self.onboarding_step == 2)
+                    if self.capture_view.is_some()
+                        || (self.onboarding && self.onboarding_step == 2)
                         || (!self.onboarding && self.tab == 3)
                     {
                         self.capture_pending = true;
@@ -2705,19 +3366,56 @@ impl eframe::App for Settings {
                     "Please wait for the current operation to finish before closing.",
                     NoticeKind::Info,
                 );
-            } else if self.dirty && !self.onboarding {
+            } else if self.onboarding {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.confirm_setup_close = true;
+            } else if self.dirty {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.confirm_close = true;
+                self.confirm_clear = false;
+                self.confirm_disable = false;
+                self.import_open = false;
+                self.notice_details = false;
             }
         }
-        if !self.confirm_clear
-            && !self.confirm_close
+        if !self.modal_open()
             && !self.onboarding
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S))
         {
             self.save();
         }
-        let interactive = !self.confirm_clear && !self.confirm_close && self.job.is_none();
+        if !self.modal_open() && !self.onboarding && self.job.is_none() {
+            if ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
+                self.tab = 1;
+                self.focus_search = true;
+                self.page_scroll_reset = true;
+            }
+            if !self.busy()
+                && ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::O))
+            {
+                self.open_import([]);
+            }
+        }
+        let dropped: Vec<_> = ctx.input(|input| {
+            input
+                .raw
+                .dropped_files
+                .iter()
+                .filter_map(|file| file.path.clone())
+                .collect()
+        });
+        if !dropped.is_empty() {
+            if !self.onboarding && !self.busy() && (!self.modal_open() || self.import_open) {
+                self.open_import(dropped);
+            } else {
+                self.inform(
+                    "Finish the current step or operation, then drop the shortcuts again.",
+                    NoticeKind::Info,
+                );
+            }
+        }
+        let interactive = !self.modal_open() && self.job.is_none();
+        let navigation_enabled = !self.modal_open();
         egui::TopBottomPanel::top("header")
             .frame(
                 egui::Frame::new()
@@ -2731,18 +3429,32 @@ impl eframe::App for Settings {
                     ui.add_enabled_ui(interactive, |ui| self.language_and_scale(ui, ctx));
                 });
             });
-        egui::TopBottomPanel::bottom("footer")
-            .frame(
-                egui::Frame::new()
-                    .fill(Color32::from_rgb(19, 28, 39))
-                    .inner_margin(egui::Margin::symmetric(18, 8)),
-            )
-            .show(ctx, |ui| {
-                // Progress and error details stay readable while an operation is running.
-                ui.add_enabled_ui(!self.confirm_clear && !self.confirm_close, |ui| {
-                    self.footer(ui, ctx)
+        let show_footer = self.onboarding
+            || self.dirty
+            || self.job.is_some()
+            || !self.pending_commands.is_empty()
+            || self.active_commands > 0
+            || self.notice.is_some()
+            || ctx.screen_rect().height() >= 600.0;
+        if show_footer {
+            egui::TopBottomPanel::bottom("footer")
+                .frame(
+                    egui::Frame::new()
+                        .fill(Color32::from_rgb(19, 28, 39))
+                        .inner_margin(egui::Margin::symmetric(18, 8)),
+                )
+                .show(ctx, |ui| {
+                    // Progress and error details stay readable while an operation is running.
+                    ui.add_enabled_ui(!self.modal_open(), |ui| {
+                        let height = (ctx.screen_rect().height() * 0.32).clamp(90.0, 210.0);
+                        ui.set_max_height(height);
+                        egui::ScrollArea::vertical()
+                            .id_salt("footer-scroll")
+                            .max_height(height)
+                            .show(ui, |ui| self.footer(ui, ctx));
+                    });
                 });
-            });
+        }
         let wide = ctx.screen_rect().width() >= 920.0;
         if !self.onboarding && wide {
             egui::SidePanel::left("navigation")
@@ -2755,7 +3467,7 @@ impl eframe::App for Settings {
                 )
                 .show(ctx, |ui| {
                     ui.add_space(12.0);
-                    ui.add_enabled_ui(interactive, |ui| self.navigation(ui, true));
+                    ui.add_enabled_ui(navigation_enabled, |ui| self.navigation(ui, true));
                     ui.add_space(24.0);
                     ui.small(t("СЕЙЧАС", "CURRENTLY"));
                     let current = self.current_health();
@@ -2772,7 +3484,7 @@ impl eframe::App for Settings {
             )
             .show(ctx, |ui| {
                 if !self.onboarding && !wide {
-                    ui.add_enabled_ui(interactive, |ui| {
+                    ui.add_enabled_ui(navigation_enabled, |ui| {
                         ui.horizontal_wrapped(|ui| self.navigation(ui, false));
                     });
                     ui.separator();
@@ -2788,26 +3500,29 @@ impl eframe::App for Settings {
                 };
                 ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
                 ui.spacing_mut().scroll.bar_width = 10.0;
-                egui::ScrollArea::vertical()
+                let mut scroll = egui::ScrollArea::vertical()
                     .id_salt(("page-scroll", self.onboarding, self.tab, section))
                     .auto_shrink([false, false])
-                    .stick_to_bottom(self.capture_scroll_bottom)
-                    .show(ui, |ui| {
-                        constrain_page_width(ui);
-                        ui.add_enabled_ui(interactive, |ui| {
-                            if self.onboarding {
-                                self.welcome(ui);
-                            } else {
-                                match self.tab {
-                                    0 => self.overview(ui),
-                                    1 => self.applications(ui),
-                                    2 => self.preferences(ui),
-                                    _ => self.history(ui),
-                                }
+                    .stick_to_bottom(self.capture_scroll_bottom);
+                if std::mem::take(&mut self.page_scroll_reset) {
+                    scroll = scroll.vertical_scroll_offset(0.0);
+                }
+                scroll.show(ui, |ui| {
+                    constrain_page_width(ui);
+                    ui.add_enabled_ui(interactive, |ui| {
+                        if self.onboarding {
+                            self.welcome(ui);
+                        } else {
+                            match self.tab {
+                                0 => self.overview(ui),
+                                1 => self.applications(ui),
+                                2 => self.preferences(ui),
+                                _ => self.history(ui),
                             }
-                        });
-                        ui.add_space(14.0);
+                        }
                     });
+                    ui.add_space(14.0);
+                });
             });
         self.confirmations(ctx);
     }
@@ -2821,6 +3536,36 @@ pub fn run(home: PathBuf, capture: Option<PathBuf>) -> Result<()> {
     app.capture = capture;
     if app.capture.is_some() {
         app.capture_scroll_bottom = app.store.get::<bool>("test_scroll_bottom")?;
+        let view = app.store.get::<String>("test_view")?;
+        match view.as_str() {
+            "import" => {
+                app.tab = 1;
+                app.import_open = true;
+                app.import_paths = app.store.get("test_import_paths")?;
+            }
+            "disable" => app.confirm_disable = true,
+            "close" => app.confirm_close = true,
+            "setup-close" => app.confirm_setup_close = true,
+            "clear" => app.confirm_clear = true,
+            "notice" => {
+                app.fail(app.store.get::<String>("test_notice")?);
+                app.notice_details = true;
+            }
+            "feedback" => {
+                app.fail(app.store.get::<String>("test_notice")?);
+                app.config.slots = if app.config.slots == 8 {
+                    7
+                } else {
+                    app.config.slots + 1
+                };
+                app.config.max_changes = app.config.max_changes.min(app.config.slots);
+                app.tab = 2;
+            }
+            _ => {}
+        }
+        if app.modal_open() || view == "feedback" {
+            app.capture_view = Some(view);
+        }
     }
     if app.capture.is_some()
         && !app.store.get::<String>("test_desktop")?.is_empty()
@@ -2835,7 +3580,7 @@ pub fn run(home: PathBuf, capture: Option<PathBuf>) -> Result<()> {
     // The running worker may belong to the previous release. The installer
     // checks the executable first and leaves a matching worker untouched.
     if app.capture.is_none() && !app.onboarding {
-        app.restart_background();
+        app.prepare_background();
     }
     let scale = app.ui_scale;
     let test_viewport = if app.capture.is_some() {
@@ -2966,6 +3711,11 @@ mod tests {
         config.automatic = false;
         assert_eq!(
             health(true, 100, 101, "", &config, &progress),
+            Health::Suggestions
+        );
+        config.collect = false;
+        assert_eq!(
+            health(true, 100, 101, "", &config, &progress),
             Health::Manual
         );
     }
@@ -3094,5 +3844,255 @@ mod tests {
             assert_eq!(validated_scale(scale), 1.0);
         }
         assert_eq!(validated_scale(1.5), 1.5);
+    }
+
+    #[test]
+    fn pasted_shortcut_paths_accept_windows_quotes_unc_and_duplicates() {
+        let paths = shortcut_paths("  \"C:\\Мои приложения\\Editor.LNK\"\r\n\\\\server\\Share\\Site.url\nC:\\МОИ ПРИЛОЖЕНИЯ\\editor.lnk\n").unwrap();
+        assert_eq!(paths.len(), 2);
+        assert_eq!(paths[0], PathBuf::from(r"C:\Мои приложения\Editor.LNK"));
+        assert_eq!(paths[1], PathBuf::from(r"\\server\Share\Site.url"));
+        for invalid in [
+            "",
+            "app.lnk",
+            r"C:relative.lnk",
+            r"C:\App.exe",
+            r"C:\App.lnk\nC:\document.txt",
+        ] {
+            assert!(
+                shortcut_paths(invalid).is_err(),
+                "unexpected import: {invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn importing_again_keeps_rules_and_history_but_refreshes_the_target() {
+        let existing = App {
+            id: "app".into(),
+            name: "Old name".into(),
+            target: "old.exe".into(),
+            policy: Policy::Never,
+            seed: 42.0,
+            seed_at: 1234,
+            pinned: true,
+            observed_roots: vec!["root".into()],
+            category: "Work".into(),
+            note: "User note".into(),
+            ..App::default()
+        };
+        let mut fresh = App {
+            id: existing.id.clone(),
+            name: "New name".into(),
+            target: "new.exe".into(),
+            valid: true,
+            ..App::default()
+        };
+        preserve_app_preferences(&mut fresh, Some(&existing));
+        assert_eq!(fresh.policy, Policy::Never);
+        assert_eq!((fresh.seed, fresh.seed_at), (42.0, 1234));
+        assert!(fresh.pinned && fresh.valid);
+        assert_eq!(fresh.observed_roots, ["root"]);
+        assert_eq!(fresh.category, "Work");
+        assert_eq!(fresh.note, "User note");
+        assert_eq!(
+            (fresh.name.as_str(), fresh.target.as_str()),
+            ("New name", "new.exe")
+        );
+    }
+
+    #[test]
+    fn importing_legacy_url_ids_keeps_one_catalog_entry_and_its_usage_history() {
+        let home = std::env::temp_dir().join(format!(
+            "test-ui-legacy-import-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        {
+            let store = Store::open(&home).unwrap();
+            for (id, target) in [
+                ("legacy-http", "HTTPS://Example.COM/CaseSensitive"),
+                (
+                    "legacy-protocol",
+                    "OBSIDIAN://open?vault=Research&file=Topic",
+                ),
+            ] {
+                let app = App {
+                    id: id.into(),
+                    name: id.into(),
+                    target: target.into(),
+                    source: r"C:\Old\Original.url".into(),
+                    policy: Policy::Never,
+                    seed: 23.0,
+                    valid: true,
+                    ..App::default()
+                };
+                store.put_app(&app).unwrap();
+                store.observe(id, 90, true, true).unwrap();
+            }
+            let existing: HashMap<_, _> = store
+                .apps()
+                .unwrap()
+                .into_iter()
+                .map(|app| (app.id.clone(), app))
+                .collect();
+            for (id, target) in [
+                ("legacy-http", "https://example.com/CaseSensitive"),
+                (
+                    "legacy-protocol",
+                    "obsidian://open?vault=Research&file=Topic",
+                ),
+            ] {
+                let mut imported = App {
+                    name: "Updated shortcut".into(),
+                    target: target.into(),
+                    source: r"C:\New\Original.url".into(),
+                    valid: true,
+                    ..App::default()
+                };
+                imported.assign_id();
+                assert_ne!(imported.id, id);
+                prepare_imported_app(&mut imported, &existing).unwrap();
+                store.put_app(&imported).unwrap();
+                assert_eq!(imported.id, id);
+                assert_eq!(imported.policy, Policy::Never);
+                assert_eq!(imported.seed, 23.0);
+            }
+            assert_eq!(store.apps().unwrap().len(), 2);
+            let days = store.days().unwrap();
+            assert_eq!(days.len(), 2);
+            assert!(days.iter().all(|day| {
+                existing.contains_key(&day.app) && day.seconds == 90 && day.sessions == 1
+            }));
+
+            let mut ambiguous = existing.clone();
+            let mut duplicate = existing["legacy-http"].clone();
+            duplicate.id = "another-legacy-id".into();
+            ambiguous.insert(duplicate.id.clone(), duplicate);
+            let mut imported = existing["legacy-http"].clone();
+            imported.assign_id();
+            assert!(prepare_imported_app(&mut imported, &ambiguous).is_err());
+        }
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn explicit_startup_or_tracking_changes_resume_a_disabled_profile() {
+        let base = Config {
+            collect: false,
+            automatic: false,
+            autostart: false,
+            ..Config::default()
+        };
+        assert!(!should_resume_background(true, &base, &base));
+        let mut draft = base.clone();
+        draft.slots = 7;
+        assert!(!should_resume_background(true, &base, &draft));
+        for (collect, automatic, autostart) in [
+            (true, false, false),
+            (false, true, false),
+            (false, false, true),
+        ] {
+            let draft = Config {
+                collect,
+                automatic,
+                autostart,
+                ..base.clone()
+            };
+            assert!(should_resume_background(true, &base, &draft));
+            assert!(!should_resume_background(false, &base, &draft));
+        }
+    }
+
+    #[test]
+    fn long_dialogs_fit_a_minimum_window_at_large_text_scale() {
+        let ctx = egui::Context::default();
+        configure_style(&ctx);
+        for _ in 0..3 {
+            let _ = ctx.run(egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480.0, 360.0))),
+                ..Default::default()
+            }, |ctx| {
+                let modal = dialog(ctx, "small-dialog", 560.0, "Сохранить изменения перед закрытием?", |ui| {
+                    ui.add(egui::Label::new("Подробное сообщение с длинным путём: C:\\Users\\Пользователь\\Документы\\DesktopPilot\\usage.sqlite\n".repeat(12)).wrap());
+                    let _ = ui.button("Продолжить настройку");
+                });
+                assert!(modal.response.rect.width() <= 480.0);
+                assert!(modal.response.rect.height() <= 360.0);
+            });
+        }
+    }
+
+    #[test]
+    fn unfinished_setup_can_resume_or_discard_its_saved_choices() {
+        let home = std::env::temp_dir().join(format!(
+            "test-ui-setup-draft-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        let ctx = egui::Context::default();
+        {
+            let mut app = Settings::new(home.clone()).unwrap();
+            apply_mode(&mut app.config, OperatingMode::Manual);
+            app.config.slots = 7;
+            app.config.zone_col = 9;
+            app.onboarding_step = 2;
+            app.close_setup(&ctx, true);
+            assert!(app.allow_close);
+            assert!(!engine::setup_complete(&app.store).unwrap());
+        }
+        {
+            let mut resumed = Settings::new(home.clone()).unwrap();
+            assert_eq!(operating_mode(&resumed.config), OperatingMode::Manual);
+            assert_eq!(
+                (
+                    resumed.config.slots,
+                    resumed.config.zone_col,
+                    resumed.onboarding_step
+                ),
+                (7, 9, 2)
+            );
+            resumed.close_setup(&ctx, false);
+            assert!(resumed.allow_close);
+        }
+        {
+            let fresh = Settings::new(home.clone()).unwrap();
+            assert_eq!(operating_mode(&fresh.config), OperatingMode::Adaptive);
+            assert_eq!(fresh.onboarding_step, 0);
+            assert_eq!(fresh.config.slots, Config::default().slots);
+        }
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_dialog_can_grow_after_shorter_content_without_hiding_its_actions() {
+        let ctx = egui::Context::default();
+        configure_style(&ctx);
+        for rows in [0, 4, 4] {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(480.0, 360.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    let mut action = egui::Rect::NOTHING;
+                    let response =
+                        dialog(ctx, "growing-dialog", 420.0, "Настройки", |ui| {
+                            for _ in 0..rows {
+                                ui.label("Сохранённые параметры доступны.");
+                            }
+                            action = ui.button("Продолжить настройку").rect;
+                        });
+                    assert!(
+                        action.bottom() <= response.response.rect.bottom(),
+                        "dialog clipped its action after growing: {action:?} / {:?}",
+                        response.response.rect
+                    );
+                },
+            );
+        }
     }
 }

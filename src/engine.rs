@@ -454,18 +454,22 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
         Ok(())
     }
     let desktop = root(store)?;
-    let mut roots = vec![desktop.clone()];
+    let mut roots = vec![(desktop.clone(), "Desktop")];
     if real {
-        for optional in [native::programs(), native::common_programs()] {
+        for (optional, category) in [
+            (native::common_desktop(), "Desktop"),
+            (native::programs(), "Start menu"),
+            (native::common_programs(), "Start menu"),
+        ] {
             match optional {
-                Ok(path) if path.is_dir() => roots.push(path),
+                Ok(path) if path.is_dir() => roots.push((path, category)),
                 Ok(_) => {}
-                Err(e) => warnings.push(format!("Start menu could not be scanned: {e:#}")),
+                Err(e) => warnings.push(format!("{category} could not be scanned: {e:#}")),
             }
         }
     }
     let mut paths = Vec::new();
-    for (index, root) in roots.iter().enumerate() {
+    for (index, (root, _)) in roots.iter().enumerate() {
         if let Err(e) = visit(root, 0, &mut paths, &mut warnings) {
             if index == 0 {
                 return Err(e);
@@ -505,18 +509,15 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
                 app.observed_roots = previous.observed_roots.clone();
                 app.note = previous.note.clone();
             }
-            let catalog_root = roots.iter().find(|root| path.starts_with(root));
+            let catalog_root = roots.iter().find(|(root, _)| path.starts_with(root));
             app.category = catalog_root
-                .and_then(|root| path.parent()?.strip_prefix(root).ok())
+                .and_then(|(root, _)| path.parent()?.strip_prefix(root).ok())
                 .filter(|relative| !relative.as_os_str().is_empty())
                 .map(|relative| relative.to_string_lossy().into_owned())
                 .unwrap_or_else(|| {
-                    if path.starts_with(&desktop) {
-                        "Desktop"
-                    } else {
-                        "Start menu"
-                    }
-                    .into()
+                    catalog_root
+                        .map_or("Desktop", |(_, category)| *category)
+                        .into()
                 });
             if let Some(pins) = &pins {
                 app.pinned = real && config.respect_taskbar_pins && native::is_pinned(&app, pins);
@@ -1114,7 +1115,7 @@ pub fn rollback(store: &Store) -> Result<String> {
     let mut seen = HashSet::new();
     let mut foreign_adds = HashSet::new();
     // Validate the complete undo before changing even one user-visible file.
-    for change in &tx.changes {
+    for change in &mut tx.changes {
         ensure!(
             matches!(change.kind.as_str(), "add" | "remove"),
             "Invalid transaction operation"
@@ -1151,6 +1152,20 @@ pub fn rollback(store: &Store) -> Result<String> {
         }
         if path.try_exists()? {
             let actual_id = file_identity(path)?;
+            if let Some(current) = current_state.owned.iter().find(|owned| {
+                owned.app == change.file.app
+                    && norm(&owned.path) == key
+                    && owned.sha == change.file.sha
+                    && owned.since == change.file.since
+                    && owned.file_id.is_some()
+                    && owned.file_id == actual_id
+            }) {
+                // An earlier Undo may have restored this same managed copy with
+                // a new filesystem identity. Trust only the currently recorded
+                // ownership and verify its exact ID; identical user replacements
+                // still fail. Persist this identity with the undo intent below.
+                change.file.file_id = current.file_id.clone();
+            }
             let same_original = change
                 .file
                 .file_id
@@ -1483,6 +1498,9 @@ fn observe_app_id(apps: &[App], id: &str) -> Option<String> {
 }
 
 pub fn automatic_review(store: &Store, quiet: bool) -> Result<bool> {
+    if store.get::<bool>("shutdown")? {
+        return Ok(false);
+    }
     let config: Config = store.get("config")?;
     config.validate()?;
     let state: State = store.get("state")?;
@@ -1561,9 +1579,14 @@ pub fn monitor(home: PathBuf) -> Result<()> {
             return Ok(());
         }
         for (id, action) in store.pending()? {
+            if store.get::<bool>("shutdown")? {
+                store.set("shutdown", &false)?;
+                return Ok(());
+            }
             if !store.claim_command(id)? {
                 continue;
             }
+            store.set("heartbeat", &now())?;
             let result = command(&store, &action);
             store.finish(id, &result)?;
             apps = store.apps()?;
@@ -1573,6 +1596,10 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                 session_times.clear();
             }
             maintenance = None;
+        }
+        if store.get::<bool>("shutdown")? {
+            store.set("shutdown", &false)?;
+            return Ok(());
         }
         let config: Config = store.get("config")?;
         config.validate()?;
@@ -1683,9 +1710,11 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                 Ok(()) => "Учёт использования приостановлен".into(),
                 Err(e) => format!("Изменения приостановлены: {e:#}"),
             };
-            let warning: String = store.get("autostart_warning")?;
-            if !warning.is_empty() {
-                status.push_str(&format!("\n{warning}"));
+            for key in ["autostart_warning", "tray_warning"] {
+                let warning: String = store.get(key)?;
+                if !warning.is_empty() {
+                    status.push_str(&format!("\n{warning}"));
+                }
             }
             store.set("status", &status)?;
         }
@@ -1989,6 +2018,52 @@ mod tests {
         });
     }
     #[test]
+    fn consecutive_undo_can_remove_a_copy_restored_by_the_previous_undo() {
+        with_store(|store| {
+            let first = add_test_app(store, "First", "steam://rungameid/601");
+            apply(store, true).unwrap();
+            let initial: State = store.get("state").unwrap();
+            let path = initial.owned[0].path.clone();
+            // Keep the old inode/file record alive so a filesystem cannot reuse
+            // its identifier for the newly restored file and hide the regression.
+            std::fs::hard_link(&path, store.home.join("old-copy-identity")).unwrap();
+            store.policy(&first.id, Policy::Never).unwrap();
+            add_test_app(store, "Second", "steam://rungameid/602");
+            apply(store, false).unwrap();
+            rollback(store).unwrap();
+            assert!(Path::new(&path).is_file());
+            assert_ne!(
+                file_identity(Path::new(&path)).unwrap(),
+                initial.owned[0].file_id
+            );
+            rollback(store).unwrap();
+            assert!(!Path::new(&path).exists());
+            assert!(store.get::<State>("state").unwrap().owned.is_empty());
+            assert!(Path::new(&first.source).is_file());
+        });
+    }
+    #[test]
+    fn consecutive_undo_still_preserves_a_user_replacement_of_a_restored_copy() {
+        with_store(|store| {
+            let first = add_test_app(store, "First", "steam://rungameid/603");
+            apply(store, true).unwrap();
+            let initial: State = store.get("state").unwrap();
+            let path = Path::new(&initial.owned[0].path);
+            std::fs::hard_link(path, store.home.join("old-copy-identity")).unwrap();
+            store.policy(&first.id, Policy::Never).unwrap();
+            add_test_app(store, "Second", "steam://rungameid/604");
+            apply(store, false).unwrap();
+            rollback(store).unwrap();
+            let restored_id = file_identity(path).unwrap();
+            let bytes = std::fs::read(path).unwrap();
+            replace_with_identical_file(path);
+            assert_ne!(file_identity(path).unwrap(), restored_id);
+            assert!(rollback(store).is_err());
+            assert_eq!(std::fs::read(path).unwrap(), bytes);
+            assert!(Path::new(&first.source).is_file());
+        });
+    }
+    #[test]
     fn atomic_copy_refuses_to_overwrite_existing_files() {
         with_store(|store| {
             let source = store.home.join("source");
@@ -2074,6 +2149,38 @@ mod tests {
             refresh_apps(store).unwrap();
             assert_eq!(store.apps().unwrap().len(), 2);
             assert_eq!(store.app(&app.id).unwrap().seed, 20.0);
+        });
+    }
+    #[test]
+    fn protocol_catalog_refresh_preserves_legacy_rules_without_merging_other_parameters() {
+        with_store(|store| {
+            let source = root(store).unwrap().join("Research.url");
+            std::fs::write(
+                &source,
+                b"[InternetShortcut]\r\nURL=obsidian://open?vault=Research&file=Topic\r\n",
+            )
+            .unwrap();
+            let mut app = native::read_link(&source).unwrap();
+            app.id = hash(format!("{}\n\n", norm(&app.target)).as_bytes())[..20].to_owned();
+            app.policy = Policy::Never;
+            store.put_app(&app).unwrap();
+            std::fs::write(
+                root(store).unwrap().join("Other vault.url"),
+                b"[InternetShortcut]\r\nURL=obsidian://open?vault=research&file=topic\r\n",
+            )
+            .unwrap();
+            refresh_apps(store).unwrap();
+            assert_eq!(store.apps().unwrap().len(), 2);
+            let legacy = store.app(&app.id).unwrap();
+            assert_eq!(legacy.policy, Policy::Never);
+            assert_eq!(legacy.target, app.target);
+            assert!(
+                store
+                    .apps()
+                    .unwrap()
+                    .iter()
+                    .any(|other| other.id != app.id && other.policy == Policy::Auto)
+            );
         });
     }
     #[test]

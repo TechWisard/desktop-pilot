@@ -81,7 +81,19 @@ impl Progress {
         let active = self.day_seconds.entry(day.into()).or_default();
         *active = active.saturating_add(seconds).min(86400);
         while self.day_seconds.len() > 90 {
-            self.day_seconds.pop_first();
+            // The learning goal is cumulative. Brief visits must not push an
+            // already qualified day out of progress and make a 90-day goal
+            // impossible to finish. Keep the same bounded amount of local data.
+            let incomplete = self
+                .day_seconds
+                .iter()
+                .find(|(_, seconds)| **seconds < QUALIFY_SECONDS)
+                .map(|(day, _)| day.clone());
+            if let Some(day) = incomplete {
+                self.day_seconds.remove(&day);
+            } else {
+                self.day_seconds.pop_first();
+            }
         }
     }
     pub fn finish_if_ready(&mut self, cfg: &Config, time: i64) {
@@ -199,5 +211,30 @@ mod tests {
         progress.observe(10002, "2026-02-30", 2);
         assert_eq!(progress.started_at, 0);
         assert!(progress.day_seconds.is_empty());
+    }
+    #[test]
+    fn short_days_cannot_erase_qualified_progress_towards_ninety_days() {
+        let config = Config {
+            learning_mode: Mode::Days,
+            learning_days: 90,
+            ..Default::default()
+        };
+        let mut progress = Progress::default();
+        let first_day = chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+        for index in 0..180 {
+            let day = first_day + chrono::Duration::days(index);
+            let time = 10000 + index * 86400;
+            activity(
+                &mut progress,
+                time,
+                &day.to_string(),
+                if index % 2 == 0 { 2 } else { 300 },
+            );
+            assert!(progress.day_seconds.len() <= 90);
+        }
+        assert_eq!(progress.active_days(), 90);
+        assert!(progress.ready(&config));
+        progress.finish_if_ready(&config, 20000000);
+        assert_eq!(progress.completed_at, 20000000);
     }
 }

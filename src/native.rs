@@ -2,6 +2,7 @@ use crate::model::{App, Point, hash, norm};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{
+    io::Read,
     mem::size_of,
     path::{Path, PathBuf},
     ptr::null_mut,
@@ -11,6 +12,9 @@ use windows::{
         Foundation::*,
         Globalization::{CP_ACP, MULTI_BYTE_TO_WIDE_CHAR_FLAGS, MultiByteToWideChar},
         Graphics::Gdi::*,
+        Storage::FileSystem::{
+            GetFileVersionInfoSizeW, GetFileVersionInfoW, VS_FIXEDFILEINFO, VerQueryValueW,
+        },
         System::{Com::*, Registry::*, SystemInformation::GetTickCount, Threading::*},
         UI::{HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
@@ -46,6 +50,9 @@ pub fn dpi() {
 }
 pub fn desktop() -> Result<PathBuf> {
     known_folder(&FOLDERID_Desktop)
+}
+pub fn common_desktop() -> Result<PathBuf> {
+    known_folder(&FOLDERID_PublicDesktop)
 }
 pub fn programs() -> Result<PathBuf> {
     known_folder(&FOLDERID_Programs)
@@ -179,8 +186,12 @@ pub fn read_link(path: &Path) -> Result<App> {
             std::fs::metadata(path)?.len() <= 1024 * 1024,
             "Internet shortcut is too large"
         );
-        (a.target, a.icon, a.icon_index) =
-            internet_shortcut_fields(&shortcut_text(&std::fs::read(path)?)?)?;
+        let mut bytes = Vec::new();
+        // Bound the actual read too: the file may grow after the metadata check.
+        std::fs::File::open(path)?
+            .take(1024 * 1024 + 1)
+            .read_to_end(&mut bytes)?;
+        (a.target, a.icon, a.icon_index) = internet_shortcut_fields(&shortcut_text(&bytes)?)?;
     } else {
         unsafe {
             let l: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
@@ -290,6 +301,79 @@ pub fn open_file(path: &Path) -> Result<()> {
     }
 }
 
+pub fn show_in_folder(path: &Path) -> Result<()> {
+    let path = crate::profile::ordinary_path(std::fs::canonicalize(path)?);
+    let path = wide(&path.to_string_lossy());
+    unsafe {
+        let mut pidl = null_mut();
+        SHParseDisplayName(PCWSTR(path.as_ptr()), None, &mut pidl, 0, None)?;
+        ensure!(
+            !pidl.is_null(),
+            "Cannot locate the shortcut in Windows Explorer"
+        );
+        // With an empty selection array the absolute PIDL identifies the item,
+        // so Explorer opens its parent and selects it without launching it.
+        let result = SHOpenFolderAndSelectItems(pidl, None, 0);
+        CoTaskMemFree(Some(pidl.cast()));
+        result.context("Cannot show the shortcut in Windows Explorer")
+    }
+}
+
+pub fn executable_version(path: &Path) -> Result<Option<[u16; 4]>> {
+    let path = wide(&path.to_string_lossy());
+    unsafe {
+        SetLastError(ERROR_SUCCESS);
+        let size = GetFileVersionInfoSizeW(PCWSTR(path.as_ptr()), None);
+        if size == 0 {
+            let error = GetLastError();
+            if matches!(
+                error,
+                ERROR_SUCCESS
+                    | ERROR_RESOURCE_DATA_NOT_FOUND
+                    | ERROR_RESOURCE_TYPE_NOT_FOUND
+                    | ERROR_RESOURCE_NAME_NOT_FOUND
+                    | ERROR_RESOURCE_LANG_NOT_FOUND
+                    | ERROR_BAD_EXE_FORMAT
+            ) {
+                return Ok(None);
+            }
+            return Err(windows::core::Error::from_win32().into());
+        }
+        ensure!(
+            size <= 16 * 1024 * 1024,
+            "Executable version resource is too large"
+        );
+        let mut bytes = vec![0u8; size as usize];
+        GetFileVersionInfoW(PCWSTR(path.as_ptr()), 0, size, bytes.as_mut_ptr().cast())?;
+        let mut pointer = null_mut();
+        let mut length = 0;
+        ensure!(
+            VerQueryValueW(bytes.as_ptr().cast(), w!("\\"), &mut pointer, &mut length).as_bool()
+                && !pointer.is_null()
+                && length as usize >= size_of::<VS_FIXEDFILEINFO>(),
+            "Executable version resource is invalid"
+        );
+        let start = pointer as usize;
+        let buffer = bytes.as_ptr() as usize;
+        ensure!(
+            start >= buffer
+                && start.saturating_add(size_of::<VS_FIXEDFILEINFO>()) <= buffer + bytes.len(),
+            "Executable version resource is outside its buffer"
+        );
+        let version = pointer.cast::<VS_FIXEDFILEINFO>().read_unaligned();
+        ensure!(
+            version.dwSignature == 0xfeef04bd,
+            "Executable version signature is invalid"
+        );
+        Ok(Some([
+            (version.dwProductVersionMS >> 16) as u16,
+            version.dwProductVersionMS as u16,
+            (version.dwProductVersionLS >> 16) as u16,
+            version.dwProductVersionLS as u16,
+        ]))
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Item {
     pub path: String,
@@ -391,7 +475,7 @@ unsafe fn shell_item_name(item: &IShellItem, kind: SIGDN) -> Result<String> {
     }
 }
 
-fn monitor_topology() -> Result<Vec<[i32; 9]>> {
+fn monitor_topology() -> Result<Vec<[i32; 10]>> {
     unsafe extern "system" fn visit(monitor: HMONITOR, _: HDC, _: *mut RECT, data: LPARAM) -> BOOL {
         unsafe {
             let mut info = MONITORINFO {
@@ -401,7 +485,10 @@ fn monitor_topology() -> Result<Vec<[i32; 9]>> {
             if !GetMonitorInfoW(monitor, &mut info).as_bool() {
                 return BOOL(0);
             }
-            let values = &mut *(data.0 as *mut Vec<[i32; 9]>);
+            let values = &mut *(data.0 as *mut Vec<[i32; 10]>);
+            let Ok(scale) = GetScaleFactorForMonitor(monitor) else {
+                return BOOL(0);
+            };
             values.push([
                 info.rcMonitor.left,
                 info.rcMonitor.top,
@@ -412,18 +499,19 @@ fn monitor_topology() -> Result<Vec<[i32; 9]>> {
                 info.rcWork.right,
                 info.rcWork.bottom,
                 info.dwFlags as i32,
+                scale.0,
             ]);
             BOOL(1)
         }
     }
-    let mut values: Vec<[i32; 9]> = Vec::new();
+    let mut values: Vec<[i32; 10]> = Vec::new();
     ensure!(
         unsafe {
             EnumDisplayMonitors(
                 None,
                 None,
                 Some(visit),
-                LPARAM((&mut values as *mut Vec<[i32; 9]>) as isize),
+                LPARAM((&mut values as *mut Vec<[i32; 10]>) as isize),
             )
         }
         .as_bool(),
@@ -1109,6 +1197,18 @@ pub fn activate_process_window(pid: u32) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn executable_version_reads_the_fixed_product_version_resource() {
+        let mut expected = [0u16; 4];
+        for (index, value) in env!("CARGO_PKG_VERSION").split('.').enumerate() {
+            expected[index] = value.parse().unwrap();
+        }
+        assert_eq!(
+            executable_version(&std::env::current_exe().unwrap()).unwrap(),
+            Some(expected)
+        );
+    }
+
     #[test]
     fn malformed_pidls_rejected() {
         for b in [&[][..], &[0], &[1, 0], &[4, 0, 0, 0], &[0, 0, 4]] {

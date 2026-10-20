@@ -81,14 +81,17 @@ fn ordinary_file(path: &Path) -> Result<bool> {
     }
 }
 
-fn stop_background(store: &Store) -> Result<()> {
-    if !native::is_running("background", &store.home)? {
-        return Ok(());
+fn stop_for_change(store: &Store) -> Result<native::Lock> {
+    if let Some(stopped) = native::try_exclusive("background", &store.home)? {
+        return Ok(stopped);
     }
     store.set("shutdown", &true)?;
     crate::tray::request_close(&store.home)?;
     let until = Instant::now() + Duration::from_secs(12);
-    while native::is_running("background", &store.home)? {
+    loop {
+        if let Some(stopped) = native::try_exclusive("background", &store.home)? {
+            return Ok(stopped);
+        }
         ensure!(
             Instant::now() < until,
             "Background work is still finishing. Wait for it to stop, then open the new version again."
@@ -96,11 +99,29 @@ fn stop_background(store: &Store) -> Result<()> {
         std::thread::sleep(Duration::from_millis(100));
         crate::tray::request_close(&store.home)?;
     }
-    Ok(())
+}
+
+pub fn stop_background(home: &Path) -> Result<()> {
+    let _starting = native::exclusive("startup", home)?;
+    let store = Store::open(home)?;
+    let _stopped = stop_for_change(&store)?;
+    store.set("shutdown", &true)
 }
 
 fn install_current(store: &Store) -> Result<PathBuf> {
     install_from(store, &std::env::current_exe()?)
+}
+
+fn check_upgrade_version(source: Option<[u16; 4]>, installed: Option<[u16; 4]>) -> Result<()> {
+    if let Some(installed) = installed {
+        let source =
+            source.context("The downloaded executable has no valid version information")?;
+        ensure!(
+            source >= installed,
+            "A newer Desktop Pilot version is already installed. Open the installed version from the Start menu."
+        );
+    }
+    Ok(())
 }
 
 fn install_from(store: &Store, source: &Path) -> Result<PathBuf> {
@@ -110,6 +131,7 @@ fn install_from(store: &Store, source: &Path) -> Result<PathBuf> {
     let exists = ordinary_file(&installed)?;
     if norm(&current.to_string_lossy()) == norm(&installed.to_string_lossy()) {
         ensure!(exists, "The installed executable is missing");
+        store.set("installed_version", &env!("CARGO_PKG_VERSION"))?;
         return Ok(installed);
     }
     let expected = hash(&std::fs::read(&current)?);
@@ -119,12 +141,19 @@ fn install_from(store: &Store, source: &Path) -> Result<PathBuf> {
         None
     };
     if previous.as_deref() == Some(&expected) {
+        store.set("installed_version", &env!("CARGO_PKG_VERSION"))?;
         return Ok(installed);
     }
     ensure!(
         !exists || engine::setup_complete(store)?,
         "A different desktop-pilot.exe already exists in the selected folder. Choose an empty profile folder."
     );
+    if exists {
+        check_upgrade_version(
+            native::executable_version(&current)?,
+            native::executable_version(&installed)?,
+        )?;
+    }
     let stage_path = store.home.join(format!(
         ".desktop-pilot-update-{}-{}.exe",
         std::process::id(),
@@ -138,11 +167,11 @@ fn install_from(store: &Store, source: &Path) -> Result<PathBuf> {
         hash(&std::fs::read(&stage.0)?) == expected,
         "The staged update failed verification"
     );
-    stop_background(store)?;
-    let _stopped = native::exclusive("background", &store.home)?;
-    if let Some(previous) = previous {
+    // Check and flush the backup before stopping a healthy worker. A collision,
+    // full disk or unreadable backup must not unnecessarily interrupt tracking.
+    let backup = if let Some(previous) = previous.as_ref() {
         ensure!(
-            ordinary_file(&installed)? && hash(&std::fs::read(&installed)?) == previous,
+            ordinary_file(&installed)? && hash(&std::fs::read(&installed)?) == *previous,
             "The installed executable changed during the update"
         );
         let backup = store
@@ -150,37 +179,69 @@ fn install_from(store: &Store, source: &Path) -> Result<PathBuf> {
             .join(format!("desktop-pilot.previous-{}.exe", &previous[..16]));
         if ordinary_file(&backup)? {
             ensure!(
-                hash(&std::fs::read(&backup)?) == previous,
+                hash(&std::fs::read(&backup)?) == *previous,
                 "A different file already occupies the executable backup path"
             );
         } else {
             copy_fresh(&installed, &backup)?;
             ensure!(
-                hash(&std::fs::read(&backup)?) == previous,
+                hash(&std::fs::read(&backup)?) == *previous,
                 "The executable backup failed verification"
             );
         }
-        // Same-volume atomic replacement, after the previous executable has
-        // been copied and flushed. No database, history or desktop files move.
-        move_file(&stage.0, &installed, true).context(
+        Some(backup)
+    } else {
+        None
+    };
+    let was_running = native::is_running("background", &store.home)?;
+    let result = (|| -> Result<()> {
+        let _stopped = stop_for_change(store)?;
+        if let Some(previous) = previous.as_ref() {
+            ensure!(
+                ordinary_file(&installed)? && hash(&std::fs::read(&installed)?) == *previous,
+                "The installed executable changed during the update"
+            );
+        }
+        // Same-volume atomic replacement after the backup has been flushed.
+        // No database, history or desktop files move.
+        move_file(&stage.0, &installed, exists).context(
             "Cannot replace the installed executable. Close the previous version and try again.",
         )?;
-        let _ = store.event(
-            "update",
-            &format!(
-                "Installed Desktop Pilot {}; previous executable: {}",
-                env!("CARGO_PKG_VERSION"),
-                backup.display()
-            ),
+        ensure!(
+            hash(&std::fs::read(&installed)?) == expected,
+            "The installed executable failed verification"
         );
-    } else {
-        move_file(&stage.0, &installed, false)?;
+        store.set("installed_version", &env!("CARGO_PKG_VERSION"))?;
+        if let Some(backup) = backup.as_ref() {
+            let _ = store.event(
+                "update",
+                &format!(
+                    "Installed Desktop Pilot {}; previous executable: {}",
+                    env!("CARGO_PKG_VERSION"),
+                    backup.display()
+                ),
+            );
+        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        if was_running {
+            let recovery = (|| -> Result<()> {
+                let actual = hash(&std::fs::read(&installed)?);
+                ensure!(
+                    actual == expected || previous.as_ref() == Some(&actual),
+                    "The executable changed; automatic restart was skipped"
+                );
+                start_installed(store, &installed)
+            })();
+            if let Err(recovery) = recovery {
+                return Err(error.context(format!(
+                    "Background work could not be restored after the failed update: {recovery:#}"
+                )));
+            }
+        }
+        return Err(error);
     }
-    ensure!(
-        hash(&std::fs::read(&installed)?) == expected,
-        "The installed executable failed verification"
-    );
-    store.set("installed_version", &env!("CARGO_PKG_VERSION"))?;
     Ok(installed)
 }
 
@@ -191,7 +252,17 @@ pub fn start_background(home: &Path) -> Result<()> {
         engine::setup_complete(&store)?,
         "Complete initial setup before starting background tracking"
     );
-    let exe = install_current(&store)?;
+    start_background_locked(&store)
+}
+
+fn start_background_locked(store: &Store) -> Result<()> {
+    let exe = install_current(store)?;
+    start_installed(store, &exe)?;
+    store.set("background_disabled", &false)
+}
+
+fn start_installed(store: &Store, exe: &Path) -> Result<()> {
+    let home = &store.home;
     if native::is_running("background", home)? {
         return Ok(());
     }
@@ -222,6 +293,72 @@ pub fn start_background(home: &Path) -> Result<()> {
         );
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+pub fn prepare_settings(home: &Path) -> Result<()> {
+    let _starting = native::exclusive("startup", home)?;
+    let store = Store::open(home)?;
+    ensure!(
+        engine::setup_complete(&store)?,
+        "Complete initial setup before starting background tracking"
+    );
+    if store.get::<bool>("background_disabled")? {
+        install_current(&store)?;
+        Ok(())
+    } else {
+        start_background_locked(&store)
+    }
+}
+
+fn restore_autostart(store: &Store, error: anyhow::Error) -> anyhow::Error {
+    // A failed outer transaction can roll back after save_config succeeded.
+    // Synchronize the registry with the committed config while holding SQLite's
+    // writer reservation, so another settings save cannot be overwritten.
+    let rollback = store.transaction(|| {
+        if !test_profile(store)? {
+            let persisted: Config = store.get("config")?;
+            native::autostart(
+                &installed_exe(&store.home),
+                &store.home,
+                persisted.autostart,
+            )?;
+        }
+        Ok(())
+    });
+    if let Err(rollback) = rollback {
+        error.context(format!("Startup rollback also failed: {rollback:#}"))
+    } else {
+        error
+    }
+}
+
+pub fn disable_background(home: &Path) -> Result<Config> {
+    let _starting = native::exclusive("startup", home)?;
+    let store = Store::open(home)?;
+    let _stopped = stop_for_change(&store)?;
+    let _changes = native::exclusive("changes", home)?;
+    store
+        .transaction(|| {
+            let mut config: Config = store.get("config")?;
+            config.automatic = false;
+            config.collect = false;
+            config.autostart = false;
+            config.learning_enabled = false;
+            save_config(&store, &config)?;
+            let message = "Command cancelled because background work was disabled.";
+            let cancelled = store.db.execute(
+                "UPDATE commands SET status='error',message=?1 WHERE status IN ('pending','running')",
+                [message],
+            )?;
+            if cancelled > 0 {
+                store.event("settings", message)?;
+            }
+            store.set("background_disabled", &true)?;
+            store.set("shutdown", &true)?;
+            store.event("settings", "Background work and Windows startup disabled")?;
+            Ok(config)
+        })
+        .map_err(|error| restore_autostart(&store, error))
 }
 
 pub fn save_config(store: &Store, config: &Config) -> Result<()> {
@@ -297,6 +434,7 @@ fn make_settings_shortcut(store: &Store, installed: &Path) -> Result<()> {
 }
 
 pub fn finish(store: &Store, config: &Config) -> Result<()> {
+    let _starting = native::exclusive("startup", &store.home)?;
     config.validate()?;
     if !test_profile(store)? && config.automatic {
         let layout = native::layout()?;
@@ -308,7 +446,6 @@ pub fn finish(store: &Store, config: &Config) -> Result<()> {
     }
     let installed = install_current(store)?;
     make_settings_shortcut(store, &installed)?;
-    let previous: Config = store.get("config")?;
     let prepared = store.transaction(|| {
         save_config(store, config)?;
         if store
@@ -326,21 +463,232 @@ pub fn finish(store: &Store, config: &Config) -> Result<()> {
         }
         engine::refresh_apps(store)?;
         store.set("setup_complete", &true)?;
+        store.set("background_disabled", &false)?;
         store.event("setup", "Initial setup completed")?;
         Ok(())
     });
     if let Err(error) = prepared {
-        if !test_profile(store)? {
-            let _ = native::autostart(&installed, &store.home, previous.autostart);
-        }
-        return Err(error);
+        return Err(restore_autostart(store, error));
     }
-    start_background(&store.home)
+    start_installed(store, &installed)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_home(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "test-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn updates_reject_downgrades_and_unknown_versions_over_versioned_installs() {
+        assert!(check_upgrade_version(Some([0, 2, 1, 0]), Some([0, 3, 0, 0])).is_err());
+        assert!(check_upgrade_version(None, Some([0, 3, 0, 0])).is_err());
+        assert!(check_upgrade_version(Some([0, 10, 0, 0]), Some([0, 9, 9, 0])).is_ok());
+        assert!(check_upgrade_version(Some([1, 0, 0, 0]), Some([1, 0, 0, 0])).is_ok());
+        assert!(check_upgrade_version(Some([1, 0, 0, 0]), None).is_ok());
+    }
+
+    #[test]
+    fn backup_collision_does_not_stop_an_existing_worker() {
+        let root = test_home("backup-preflight");
+        let store = Store::open(&root).unwrap();
+        store.set("setup_complete", &true).unwrap();
+        store.set("shutdown", &false).unwrap();
+        let installed = installed_exe(&root);
+        let source = root.join("downloaded.exe");
+        std::fs::write(&installed, b"old executable").unwrap();
+        std::fs::write(&source, b"new executable").unwrap();
+        let backup = root.join(format!(
+            "desktop-pilot.previous-{}.exe",
+            &hash(b"old executable")[..16]
+        ));
+        std::fs::write(&backup, b"an unrelated file").unwrap();
+        let worker = native::exclusive("background", &root).unwrap();
+        let error = install_from(&store, &source).unwrap_err();
+        assert!(format!("{error:#}").contains("backup path"), "{error:#}");
+        assert!(!store.get::<bool>("shutdown").unwrap());
+        assert!(native::is_running("background", &root).unwrap());
+        assert_eq!(std::fs::read(installed).unwrap(), b"old executable");
+        assert_eq!(std::fs::read(backup).unwrap(), b"an unrelated file");
+        drop(worker);
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn disabling_a_profile_preserves_history_and_does_not_touch_another_profile() {
+        let root = test_home("disable");
+        let other_home = test_home("other-profile");
+        let store = Store::open(&root).unwrap();
+        let other = Store::open(&other_home).unwrap();
+        let config = Config {
+            collect: true,
+            automatic: true,
+            autostart: true,
+            ..Default::default()
+        };
+        store.set("config", &config).unwrap();
+        other.set("config", &config).unwrap();
+        store.set("custom-history", &"keep history").unwrap();
+        let original = root.join("original-user-file.txt");
+        std::fs::write(&original, b"keep file").unwrap();
+        let other_worker = native::exclusive("background", &other_home).unwrap();
+        let disabled = disable_background(&root).unwrap();
+        assert!(
+            !disabled.collect
+                && !disabled.automatic
+                && !disabled.autostart
+                && !disabled.learning_enabled
+        );
+        assert_eq!(store.get::<Config>("config").unwrap(), disabled);
+        assert!(store.get::<bool>("background_disabled").unwrap());
+        assert!(store.get::<bool>("shutdown").unwrap());
+        assert_eq!(
+            store.get::<String>("custom-history").unwrap(),
+            "keep history"
+        );
+        assert_eq!(std::fs::read(original).unwrap(), b"keep file");
+        assert_eq!(other.get::<Config>("config").unwrap(), config);
+        assert!(!other.get::<bool>("background_disabled").unwrap());
+        assert!(!other.get::<bool>("shutdown").unwrap());
+        assert!(native::is_running("background", &other_home).unwrap());
+        drop(other_worker);
+        drop(other);
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(other_home).unwrap();
+    }
+
+    #[test]
+    fn disable_cancels_unfinished_commands_and_allows_manual_control() {
+        let root = test_home("disable-commands");
+        let store = Store::open(&root).unwrap();
+        let config = Config {
+            learning_enabled: true,
+            ..Default::default()
+        };
+        store.set("config", &config).unwrap();
+        store.command("apply").unwrap();
+        store.command("rollback").unwrap();
+        store.command("rescan").unwrap();
+        let commands = store.pending().unwrap();
+        assert!(store.claim_command(commands[1].0).unwrap());
+        store
+            .finish(commands[2].0, &Ok("Completed earlier".into()))
+            .unwrap();
+        let disabled = disable_background(&root).unwrap();
+        assert!(!disabled.learning_enabled);
+        assert!(store.pending().unwrap().is_empty());
+        let mut query = store
+            .db
+            .prepare("SELECT status,message FROM commands ORDER BY id")
+            .unwrap();
+        let states: Vec<(String, String)> = query
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(states[0].0, "error");
+        assert_eq!(states[1].0, "error");
+        assert!(states[0].1.contains("background work was disabled"));
+        assert_eq!(states[1].1, states[0].1);
+        assert_eq!(states[2], ("done".into(), "Completed earlier".into()));
+        drop(query);
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_disable_rolls_back_configuration_and_persistent_disabled_flag() {
+        let root = test_home("disable-rollback");
+        let store = Store::open(&root).unwrap();
+        let config = Config {
+            collect: true,
+            automatic: true,
+            autostart: true,
+            ..Default::default()
+        };
+        store.set("config", &config).unwrap();
+        store.command("apply").unwrap();
+        store.command("rollback").unwrap();
+        let commands = store.pending().unwrap();
+        assert!(store.claim_command(commands[1].0).unwrap());
+        store.set("background_disabled", &false).unwrap();
+        store.db.execute_batch("CREATE TRIGGER refuse_disabled BEFORE INSERT ON kv WHEN NEW.k='background_disabled' BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").unwrap();
+        assert!(disable_background(&root).is_err());
+        assert_eq!(store.get::<Config>("config").unwrap(), config);
+        assert!(!store.get::<bool>("background_disabled").unwrap());
+        assert!(!store.get::<bool>("shutdown").unwrap());
+        assert_eq!(store.pending().unwrap(), vec![commands[0].clone()]);
+        let running: String = store
+            .db
+            .query_row(
+                "SELECT status FROM commands WHERE id=?1",
+                [commands[1].0],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(running, "running");
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn opening_a_disabled_profile_updates_the_executable_without_starting_it() {
+        let root = test_home("disabled-update-кириллица");
+        let store = Store::open(&root).unwrap();
+        store.set("setup_complete", &true).unwrap();
+        store.set("background_disabled", &true).unwrap();
+        store.set("custom-history", &"keep history").unwrap();
+        let installed = installed_exe(&root);
+        std::fs::write(&installed, b"old executable").unwrap();
+        prepare_settings(&root).unwrap();
+        assert!(!native::is_running("background", &root).unwrap());
+        assert!(store.get::<bool>("background_disabled").unwrap());
+        assert_eq!(
+            store.get::<String>("custom-history").unwrap(),
+            "keep history"
+        );
+        assert_eq!(
+            hash(&std::fs::read(installed).unwrap()),
+            hash(&std::fs::read(std::env::current_exe().unwrap()).unwrap())
+        );
+        assert_eq!(
+            std::fs::read(root.join(format!(
+                "desktop-pilot.previous-{}.exe",
+                &hash(b"old executable")[..16]
+            )))
+            .unwrap(),
+            b"old executable"
+        );
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn startup_serializes_stop_disable_and_settings_preparation() {
+        let root = test_home("startup-serialization");
+        let store = Store::open(&root).unwrap();
+        let startup = native::exclusive("startup", &root).unwrap();
+        assert!(stop_background(&root).is_err());
+        assert!(disable_background(&root).is_err());
+        assert!(prepare_settings(&root).is_err());
+        assert!(start_background(&root).is_err());
+        assert!(!store.get::<bool>("shutdown").unwrap());
+        assert!(!store.get::<bool>("background_disabled").unwrap());
+        drop(startup);
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn staged_copies_never_overwrite_existing_files() {
         let root =

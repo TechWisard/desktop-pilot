@@ -27,6 +27,65 @@ impl Drop for NestedTransaction<'_> {
     }
 }
 
+fn verify_profile_schema(db: &Connection) -> Result<()> {
+    let objects: i64 = db.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'",
+        [],
+        |row| row.get(0),
+    )?;
+    if objects == 0 {
+        // A failed first creation can leave a valid SQLite header after its
+        // schema transaction rolled back. It contains no user tables or data.
+        let application_id: i64 =
+            db.pragma_query_value(None, "application_id", |row| row.get(0))?;
+        let user_version: i64 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        ensure!(
+            application_id == 0 && user_version == 0,
+            "This folder contains a database that is not a Desktop Pilot profile; it was not changed"
+        );
+        return Ok(());
+    }
+    for (table, required) in [
+        ("kv", &["k", "v"][..]),
+        ("apps", &["id", "data"][..]),
+        (
+            "days",
+            &["app", "date", "sessions", "launches", "seconds"][..],
+        ),
+        ("events", &["id", "at", "kind", "message"][..]),
+        ("commands", &["id", "action", "status", "message"][..]),
+        ("transactions", &["id", "at", "status", "data"][..]),
+    ] {
+        let is_table: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+            [table],
+            |row| row.get(0),
+        )?;
+        let columns: Vec<String> = db
+            .prepare(&format!("PRAGMA table_info({table})"))?
+            .query_map([], |row| row.get(1))?
+            .collect::<rusqlite::Result<_>>()?;
+        ensure!(
+            is_table
+                && required
+                    .iter()
+                    .all(|name| columns.iter().any(|column| column == name)),
+            "This folder contains a database that is not a Desktop Pilot profile; it was not changed"
+        );
+    }
+    Ok(())
+}
+
+fn initialize_schema(db: &Connection) -> Result<()> {
+    let transaction = Transaction::new_unchecked(db, TransactionBehavior::Immediate)?;
+    // Verify again while holding the writer: another process could have created
+    // the selected database between the read-only preflight and this connection.
+    verify_profile_schema(db)?;
+    db.execute_batch("CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY,v TEXT NOT NULL); CREATE TABLE IF NOT EXISTS apps(id TEXT PRIMARY KEY,data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS days(app TEXT,date INTEGER,sessions INTEGER DEFAULT 0,launches INTEGER DEFAULT 0,seconds INTEGER DEFAULT 0,PRIMARY KEY(app,date)); CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,at INTEGER NOT NULL,kind TEXT NOT NULL,message TEXT NOT NULL); CREATE TABLE IF NOT EXISTS commands(id INTEGER PRIMARY KEY AUTOINCREMENT,action TEXT,status TEXT DEFAULT 'pending',message TEXT DEFAULT ''); CREATE TABLE IF NOT EXISTS transactions(id TEXT PRIMARY KEY,at INTEGER,status TEXT,data TEXT);")?;
+    transaction.commit()?;
+    Ok(())
+}
+
 impl Store {
     pub fn open(home: &Path) -> Result<Self> {
         std::fs::create_dir_all(home)?;
@@ -36,38 +95,12 @@ impl Store {
             // an accidental --home path. Inspect without enabling WAL or writing.
             let existing = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
             existing.busy_timeout(Duration::from_secs(5))?;
-            for (table, required) in [
-                ("kv", &["k", "v"][..]),
-                ("apps", &["id", "data"][..]),
-                (
-                    "days",
-                    &["app", "date", "sessions", "launches", "seconds"][..],
-                ),
-                ("events", &["id", "at", "kind", "message"][..]),
-                ("commands", &["id", "action", "status", "message"][..]),
-                ("transactions", &["id", "at", "status", "data"][..]),
-            ] {
-                let is_table: bool = existing.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
-                    [table],
-                    |row| row.get(0),
-                )?;
-                let columns: Vec<String> = existing
-                    .prepare(&format!("PRAGMA table_info({table})"))?
-                    .query_map([], |row| row.get(1))?
-                    .collect::<rusqlite::Result<_>>()?;
-                ensure!(
-                    is_table
-                        && required
-                            .iter()
-                            .all(|name| columns.iter().any(|column| column == name)),
-                    "This folder contains a database that is not a Desktop Pilot profile; it was not changed"
-                );
-            }
+            verify_profile_schema(&existing)?;
         }
         let db = Connection::open(path)?;
         db.busy_timeout(Duration::from_secs(5))?;
-        db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY,v TEXT NOT NULL); CREATE TABLE IF NOT EXISTS apps(id TEXT PRIMARY KEY,data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS days(app TEXT,date INTEGER,sessions INTEGER DEFAULT 0,launches INTEGER DEFAULT 0,seconds INTEGER DEFAULT 0,PRIMARY KEY(app,date)); CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,at INTEGER NOT NULL,kind TEXT NOT NULL,message TEXT NOT NULL); CREATE TABLE IF NOT EXISTS commands(id INTEGER PRIMARY KEY AUTOINCREMENT,action TEXT,status TEXT DEFAULT 'pending',message TEXT DEFAULT ''); CREATE TABLE IF NOT EXISTS transactions(id TEXT PRIMARY KEY,at INTEGER,status TEXT,data TEXT);")?;
+        initialize_schema(&db)?;
+        db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
         Ok(Self {
             db,
             home: home.into(),
@@ -219,15 +252,20 @@ impl Store {
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
     pub fn claim_command(&self, id: i64) -> Result<bool> {
-        Ok(self.db.execute(
-            "UPDATE commands SET status='running' WHERE id=?1 AND status='pending'",
-            [id],
-        )? == 1)
+        self.transaction(|| {
+            if self.get::<bool>("shutdown")? {
+                return Ok(false);
+            }
+            Ok(self.db.execute(
+                "UPDATE commands SET status='running' WHERE id=?1 AND status='pending'",
+                [id],
+            )? == 1)
+        })
     }
     pub fn recover_commands(&self) -> Result<()> {
         self.transaction(|| {
-            let message = "Команда прервана при завершении приложения. Проверьте текущее состояние и при необходимости повторите действие.";
-            let count = self.db.execute("UPDATE commands SET status='error',message=?1 WHERE status='running'", [message])?;
+            let message = "Команда отменена после завершения предыдущего фонового процесса. Проверьте текущее состояние и при необходимости повторите действие.";
+            let count = self.db.execute("UPDATE commands SET status='error',message=?1 WHERE status IN ('pending','running')", [message])?;
             if count > 0 {
                 self.event("error", message)?;
             }
@@ -323,6 +361,59 @@ mod tests {
         std::fs::remove_dir_all(home).unwrap();
     }
     #[test]
+    fn failed_first_creation_rolls_back_the_schema_and_can_be_retried() {
+        with_store(|store| {
+            let home = store.home.join("first-creation");
+            std::fs::create_dir_all(&home).unwrap();
+            let db = Connection::open(home.join("usage.sqlite")).unwrap();
+            // Two tables fit, but the rest of the real schema exhausts the
+            // artificial disk allowance. This fails during initialization.
+            db.pragma_update(None, "max_page_count", 5).unwrap();
+            assert!(initialize_schema(&db).is_err());
+            let tables: i64 = db
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(tables, 0);
+            db.pragma_update(None, "max_page_count", 1000).unwrap();
+            drop(db);
+            let reopened = Store::open(&home).unwrap();
+            reopened.set("config", &Config::default()).unwrap();
+            assert_eq!(reopened.get::<Config>("config").unwrap(), Config::default());
+        });
+    }
+    #[test]
+    fn concurrent_first_open_preserves_a_complete_profile() {
+        with_store(|store| {
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+            let home = store.home.join("concurrent-creation");
+            let workers: Vec<_> = (0..4)
+                .map(|index| {
+                    let home = home.clone();
+                    let barrier = barrier.clone();
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        let store = Store::open(&home).unwrap();
+                        store.set(&format!("writer-{index}"), &index).unwrap();
+                    })
+                })
+                .collect();
+            for worker in workers {
+                worker.join().unwrap();
+            }
+            let reopened = Store::open(&home).unwrap();
+            for index in 0..4 {
+                assert_eq!(
+                    reopened.get::<i32>(&format!("writer-{index}")).unwrap(),
+                    index
+                );
+            }
+        });
+    }
+    #[test]
     fn multi_record_failure_rolls_back_all_database_changes() {
         with_store(|store| {
             store.set("counter", &1u32).unwrap();
@@ -369,19 +460,36 @@ mod tests {
         with_store(|store| {
             store.command("rollback").unwrap();
             let first = store.db.last_insert_rowid();
-            store.command("rescan").unwrap();
+            store.command("apply").unwrap();
             let second = store.db.last_insert_rowid();
             assert!(store.claim_command(first).unwrap());
             assert!(!store.claim_command(first).unwrap());
             store.recover_commands().unwrap();
-            assert_eq!(store.pending().unwrap(), vec![(second, "rescan".into())]);
-            let status: String = store
-                .db
-                .query_row("SELECT status FROM commands WHERE id=?1", [first], |row| {
-                    row.get(0)
-                })
-                .unwrap();
-            assert_eq!(status, "error");
+            assert!(store.pending().unwrap().is_empty());
+            for id in [first, second] {
+                let status: String = store
+                    .db
+                    .query_row("SELECT status FROM commands WHERE id=?1", [id], |row| {
+                        row.get(0)
+                    })
+                    .unwrap();
+                assert_eq!(status, "error");
+            }
+            store.command("rescan").unwrap();
+            let current = store.db.last_insert_rowid();
+            assert!(store.claim_command(current).unwrap());
+        });
+    }
+    #[test]
+    fn shutdown_prevents_the_next_command_from_starting() {
+        with_store(|store| {
+            store.command("apply").unwrap();
+            let id = store.db.last_insert_rowid();
+            store.set("shutdown", &true).unwrap();
+            assert!(!store.claim_command(id).unwrap());
+            assert_eq!(store.pending().unwrap(), vec![(id, "apply".into())]);
+            store.recover_commands().unwrap();
+            assert!(store.pending().unwrap().is_empty());
         });
     }
     #[test]

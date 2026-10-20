@@ -102,12 +102,12 @@ Usage: desktop-pilot.exe [COMMAND] [--home DIRECTORY] [--out FILE]
 
   --settings                 Open settings (default)
   --background               Start the background process
-  --stop                     Stop the background process
+  --stop                     Stop the background process and wait for completion
   --inspect                  Export current settings, status and selection
   --apply                    Apply the current shortcut selection
   --apply-initial            Create the initial shortcut selection
   --rollback                 Undo the most recent placement
-  --disable                  Disable collection, automation and startup
+  --disable                  Stop work and disable collection, automation and startup
   --launch ID                Open a legacy managed shortcut
   --validate-launch ID       Inspect a shortcut without launching it
   --layout                   Export desktop geometry
@@ -121,7 +121,8 @@ Usage: desktop-pilot.exe [COMMAND] [--home DIRECTORY] [--out FILE]
   --version, -V              Show the version
 
 --home explicitly selects the profile. --out writes JSON for report commands.
-Close the background process before direct apply, rollback or disable commands.
+Close the background process before direct apply or rollback commands.
+--disable stops it automatically and stays disabled until explicitly resumed.
 ";
 
 #[cfg(test)]

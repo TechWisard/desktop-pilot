@@ -26,6 +26,120 @@ fn translate(value: &str, russian: bool) -> String {
     };
     let translations = [
         (
+            "Команда отменена, поскольку фоновая работа отключена.",
+            "Command cancelled because background work was disabled.",
+        ),
+        (
+            "Этому приложению соответствуют несколько сохранённых ярлыков. Обновите список перед повторным добавлением.",
+            "Several saved shortcuts match this app. Refresh the list before importing it again.",
+        ),
+        (
+            "Файл отчёта доступен только для чтения. Выберите место, где разрешена запись",
+            "The report file is read-only; choose a writable destination",
+        ),
+        (
+            "Действие выполнено, но отчёт сохранить не удалось. Не повторяйте действие только ради экспорта отчёта.",
+            "The action completed, but its report could not be saved. Do not repeat the action just to export a report.",
+        ),
+        ("Укажите полный путь к ярлыку:", "Use a full shortcut path:"),
+        (
+            "Выберите ярлык .lnk или .url:",
+            "Choose a .lnk or .url shortcut:",
+        ),
+        (
+            "Выберите ярлык или вставьте его полный путь.",
+            "Choose a shortcut or paste its full path.",
+        ),
+        ("Добавляем ярлыки…", "Adding shortcuts…"),
+        ("Открываем Desktop Pilot…", "Opening Desktop Pilot…"),
+        ("Останавливаем фоновую работу…", "Stopping background work…"),
+        ("Добавлено ярлыков:", "Shortcuts added:"),
+        (
+            "Прежние правила и история сохранены.",
+            "Existing rules and history were kept.",
+        ),
+        (
+            "Некоторые ярлыки не удалось добавить. Проверьте пути в диалоге и попробуйте ещё раз.",
+            "Some shortcuts could not be added. Check the paths in the dialog and try again.",
+        ),
+        (
+            "Desktop Pilot отключён. Ярлыки и локальные данные сохранены. Чтобы вернуться к работе, выберите режим в настройках.",
+            "Desktop Pilot is turned off. Your shortcuts and local data are kept. Choose a mode in Settings to use it again.",
+        ),
+        (
+            "Настройки сохранены, но фоновая работа не запустилась:",
+            "Settings were saved, but background work could not start:",
+        ),
+        (
+            "Завершите текущий шаг или операцию, затем перетащите ярлыки ещё раз.",
+            "Finish the current step or operation, then drop the shortcuts again.",
+        ),
+        (
+            "Значок в области уведомлений временно недоступен. Фоновый учёт продолжается; настройки можно открыть через меню «Пуск».",
+            "The tray icon is temporarily unavailable. Background tracking continues; you can open Settings from the Start menu.",
+        ),
+        (
+            "Установлена более новая версия Desktop Pilot. Откройте её через меню «Пуск».",
+            "A newer Desktop Pilot version is already installed. Open the installed version from the Start menu.",
+        ),
+        (
+            "В загруженном файле нет корректной информации о версии",
+            "The downloaded executable has no valid version information",
+        ),
+        (
+            "Не удалось показать ярлык в Проводнике Windows",
+            "Cannot show the shortcut in Windows Explorer",
+        ),
+        (
+            "Не удалось найти ярлык в Проводнике Windows",
+            "Cannot locate the shortcut in Windows Explorer",
+        ),
+        (
+            "После неудачного обновления не удалось восстановить фоновую работу:",
+            "Background work could not be restored after the failed update:",
+        ),
+        (
+            "Фоновая работа и автозапуск в Windows отключены",
+            "Background work and Windows startup disabled",
+        ),
+        (
+            "Команда отменена после завершения предыдущего фонового процесса. Проверьте текущее состояние и при необходимости повторите действие.",
+            "The command was cancelled after the previous background process ended. Check the current state and repeat the action if needed.",
+        ),
+        (
+            "Открыто окно настроек другой версии. Закройте его и снова откройте эту версию для обновления.",
+            "Another version of Settings is open. Close that window, then open this version again to update.",
+        ),
+        (
+            "Настройки уже открываются. Повторите попытку через несколько секунд.",
+            "Settings is already opening. Try again in a moment.",
+        ),
+        (
+            "Фоновая работа запускается или останавливается. Немного подождите и повторите попытку.",
+            "Background work is starting or stopping. Wait a moment and try again.",
+        ),
+        (
+            "Фоновый процесс неожиданно завершился",
+            "Background process ended unexpectedly",
+        ),
+        (
+            "Выберите файл для отчёта JSON",
+            "Choose a file for the JSON report",
+        ),
+        (
+            "Выберите отдельный файл отчёта JSON: файлы программы и базы данных нельзя перезаписывать",
+            "Choose a separate JSON report file; application files and databases cannot be overwritten",
+        ),
+        (
+            "Для отчёта нужен обычный файл, а не папка или файловая ссылка",
+            "The report destination must be an ordinary file, not a folder or filesystem link",
+        ),
+        ("Недопустимая папка отчёта", "Invalid report directory"),
+        (
+            "Не удалось создать временный файл отчёта",
+            "Cannot reserve a temporary report file",
+        ),
+        (
             "Есть незавершённая операция. Сначала нажмите «Отменить последнее изменение».",
             "An operation was interrupted. Choose Undo last change first.",
         ),

@@ -7,6 +7,7 @@ mod learning;
 mod model;
 mod native;
 mod profile;
+mod report;
 mod setup;
 mod store;
 mod tray;
@@ -22,9 +23,26 @@ fn home(args: &[String]) -> Result<PathBuf> {
 fn emit(args: &[String], value: &impl serde::Serialize) -> Result<()> {
     let text = serde_json::to_string_pretty(value)?;
     if let Some(i) = args.iter().position(|s| s == "--out") {
-        std::fs::write(args.get(i + 1).context("Нет пути --out")?, text)?;
+        let written = report::write(
+            Path::new(args.get(i + 1).context("Нет пути --out")?),
+            text.as_bytes(),
+        );
+        if matches!(
+            args[0].as_str(),
+            "--init" | "--apply-initial" | "--apply" | "--rollback" | "--disable" | "--self-test"
+        ) {
+            written.context("The action completed, but its report could not be saved. Do not repeat the action just to export a report.")?;
+        } else {
+            written?;
+        }
     } else {
         println!("{text}");
+    }
+    Ok(())
+}
+fn prepare_report(args: &[String]) -> Result<()> {
+    if let Some(index) = args.iter().position(|argument| argument == "--out") {
+        report::preflight(Path::new(&args[index + 1]))?;
     }
     Ok(())
 }
@@ -33,6 +51,9 @@ fn background_running(home: &Path) -> Result<bool> {
 }
 fn run() -> Result<()> {
     let args = cli::parse(&std::env::args().skip(1).collect::<Vec<_>>())?;
+    if let Some(index) = args.iter().position(|argument| argument == "--out") {
+        report::validate(Path::new(&args[index + 1]))?;
+    }
     match args[0].as_str() {
         "--help" => {
             println!("{}", cli::HELP);
@@ -58,6 +79,29 @@ fn run() -> Result<()> {
     }
     native::dpi();
     let _com = native::Com::new()?;
+    match args[0].as_str() {
+        "--layout" => return emit(&args, &native::layout()?),
+        "--pins" => return emit(&args, &native::pin_identities()?),
+        "--catalog" => {
+            let paths: Vec<String> = serde_json::from_slice(&std::fs::read(&args[1])?)?;
+            let desktop = native::desktop()?;
+            let mut apps = Vec::new();
+            for path in paths {
+                let mut app = native::read_link(Path::new(&path))?;
+                app.category = Path::new(&path)
+                    .strip_prefix(&desktop)
+                    .ok()
+                    .and_then(|relative| relative.parent())
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                    .and_then(|parent| parent.components().next())
+                    .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                apps.push(app);
+            }
+            return emit(&args, &apps);
+        }
+        _ => {}
+    }
     let h = home(&args)?;
     if args[0] == "--self-test" {
         return self_test(&h, &args);
@@ -70,6 +114,7 @@ fn run() -> Result<()> {
         );
     }
     let s = Store::open(&h)?;
+    prepare_report(&args)?;
     let h = s.home.clone();
     // Stopping a process must remain possible even when its configuration is damaged.
     if let Ok(config) = s.get::<Config>("config") {
@@ -132,24 +177,6 @@ fn run() -> Result<()> {
             &args,
             &serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"config":s.get::<Config>("config")?,"learning":s.get::<learning::Progress>("learning")?,"state":s.get::<State>("state")?,"preview":engine::preview(&s,!s.get::<State>("state")?.initialized)?,"heartbeat":s.get::<i64>("heartbeat")?,"status":s.get::<String>("status")?,"background":background_running(&h)?}),
         ),
-        "--layout" => emit(&args, &native::layout()?),
-        "--pins" => emit(&args, &native::pin_identities()?),
-        "--catalog" => {
-            let paths: Vec<String> =
-                serde_json::from_slice(&std::fs::read(args.get(1).context("Нет списка путей")?)?)?;
-            let mut apps = Vec::new();
-            for path in paths {
-                let mut a = native::read_link(Path::new(&path))?;
-                a.category = Path::new(&path)
-                    .strip_prefix(native::desktop()?)
-                    .ok()
-                    .and_then(|p| p.components().next())
-                    .map(|p| p.as_os_str().to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                apps.push(a);
-            }
-            emit(&args, &apps)
-        }
         "--apply-initial" => {
             ensure!(
                 !background_running(&h)?,
@@ -254,30 +281,23 @@ fn run() -> Result<()> {
             let _ = s.set("background_pid", &0u32);
             result.and(stopped).and(worker_result)
         }
-        "--stop" => {
-            s.set("shutdown", &true)?;
-            tray::request_close(&h)
-        }
+        "--stop" => setup::stop_background(&h),
         "--command" => {
             ensure!(
                 background_running(&h)?,
                 "Background process is not running. Open Settings first."
             );
             let action = args.get(1).context("Нет команды")?;
-            s.command(action)?;
-            Ok(())
+            s.transaction(|| {
+                ensure!(
+                    s.get::<i64>("heartbeat")? > 0 && !s.get::<bool>("shutdown")?,
+                    "Background work is starting or stopping. Wait a moment and try again."
+                );
+                s.command(action)
+            })
         }
         "--disable" => {
-            ensure!(
-                !background_running(&h)?,
-                "Сначала завершите фоновое приложение"
-            );
-            let mut config: Config = s.get("config")?;
-            config.automatic = false;
-            config.collect = false;
-            config.autostart = false;
-            s.set("config", &config)?;
-            native::autostart(&std::env::current_exe()?, &h, false)?;
+            let config = setup::disable_background(&h)?;
             emit(&args, &serde_json::json!({"disabled":true,"config":config}))
         }
         "--ui-smoke" => ui::run(
@@ -289,21 +309,41 @@ fn run() -> Result<()> {
                 for _ in 0..10 {
                     let pid: u32 = s.get("settings_pid")?;
                     if pid != 0 && native::activate_process_window(pid)? {
+                        ensure!(
+                            s.get::<u32>("settings_version_pid")? == pid
+                                && s.get::<String>("settings_version")?
+                                    == env!("CARGO_PKG_VERSION"),
+                            "Another version of Settings is open. Close that window, then open this version again to update."
+                        );
                         return Ok(());
                     }
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
                 anyhow::bail!("Settings is already opening. Try again in a moment.");
             };
-            s.set("settings_pid", &std::process::id())?;
+            s.transaction(|| {
+                s.set("settings_pid", &std::process::id())?;
+                s.set("settings_version_pid", &std::process::id())?;
+                s.set("settings_version", &env!("CARGO_PKG_VERSION"))
+            })?;
             let result = ui::run(h.clone(), None);
-            let _ = s.set("settings_pid", &0u32);
+            let _ = s.transaction(|| {
+                s.set("settings_pid", &0u32)?;
+                s.set("settings_version_pid", &0u32)?;
+                s.set("settings_version", &"")
+            });
             result
         }
         _ => anyhow::bail!("Неизвестная команда"),
     }
 }
 fn self_test(home: &Path, args: &[String]) -> Result<()> {
+    struct BackgroundCleanup(PathBuf);
+    impl Drop for BackgroundCleanup {
+        fn drop(&mut self) {
+            let _ = setup::stop_background(&self.0);
+        }
+    }
     ensure!(
         home.file_name()
             .is_some_and(|s| s.to_string_lossy().starts_with("test-")),
@@ -314,6 +354,7 @@ fn self_test(home: &Path, args: &[String]) -> Result<()> {
         "Self-test requires a new, empty test-* directory"
     );
     let s = Store::open(home)?;
+    prepare_report(args)?;
     ensure!(s.apps()?.is_empty(), "Каталог проверки не пуст");
     let desktop = home.join("Desktop");
     std::fs::create_dir_all(&desktop)?;
@@ -473,6 +514,7 @@ fn self_test(home: &Path, args: &[String]) -> Result<()> {
         "Ручной файл потерян"
     );
     let fresh = Store::open(&home.join("test-first-run"))?;
+    let _fresh_cleanup = BackgroundCleanup(fresh.home.clone());
     let empty_desktop = fresh.home.join("Desktop");
     std::fs::create_dir_all(&empty_desktop)?;
     fresh.set("test_desktop", &empty_desktop.to_string_lossy())?;
@@ -515,6 +557,156 @@ fn self_test(home: &Path, args: &[String]) -> Result<()> {
         std::fs::read_dir(&empty_desktop)?.next().is_none(),
         "Tracking-only setup created shortcuts"
     );
+    // Unfinished requests from a previous worker must not make delayed changes
+    // when the app is resumed on a different day.
+    fresh.command("apply")?;
+    fresh.command("rollback")?;
+    setup::start_background(&fresh.home)?;
+    let abandoned: i64 = fresh.db.query_row(
+        "SELECT COUNT(*) FROM commands WHERE status='error'",
+        [],
+        |row| row.get(0),
+    )?;
+    ensure!(
+        abandoned == 2 && fresh.pending()?.is_empty(),
+        "Old pending commands were replayed on restart"
+    );
+    let queued = std::process::Command::new(setup::installed_exe(&fresh.home))
+        .args(["--command", "rescan", "--home"])
+        .arg(&fresh.home)
+        .output()?;
+    ensure!(
+        queued.status.success(),
+        "A ready worker rejected a new command"
+    );
+    let completed = (0..100).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        fresh
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM commands WHERE action='rescan' AND status='done'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .is_ok_and(|count| count == 1)
+    });
+    ensure!(
+        completed,
+        "The queued command did not complete exactly once"
+    );
+    fresh.set("disable_sentinel", &"keep profile and rules")?;
+    let disabled_report = fresh.home.join("disabled.json");
+    let disabled = std::process::Command::new(setup::installed_exe(&fresh.home))
+        .args(["--disable", "--home"])
+        .arg(&fresh.home)
+        .arg("--out")
+        .arg(&disabled_report)
+        .output()?;
+    ensure!(
+        disabled.status.success() && !background_running(&fresh.home)?,
+        "Disabling did not stop the running worker"
+    );
+    let disabled_config: Config = fresh.get("config")?;
+    ensure!(
+        !disabled_config.collect
+            && !disabled_config.automatic
+            && !disabled_config.autostart
+            && fresh.get::<bool>("background_disabled")?,
+        "Disabling did not persist all settings"
+    );
+    setup::prepare_settings(&fresh.home)?;
+    ensure!(
+        !background_running(&fresh.home)?
+            && fresh.get::<String>("disable_sentinel")? == "keep profile and rules",
+        "Opening a disabled profile restarted work or lost profile data"
+    );
+    setup::start_background(&fresh.home)?;
+    ensure!(
+        background_running(&fresh.home)? && !fresh.get::<bool>("background_disabled")?,
+        "Explicit resume did not clear the disabled state"
+    );
+    setup::stop_background(&fresh.home)?;
+    let database_before = std::fs::read(fresh.home.join("usage.sqlite"))?;
+    let rejected = std::process::Command::new(setup::installed_exe(&fresh.home))
+        .args(["--inspect", "--home"])
+        .arg(&fresh.home)
+        .arg("--out")
+        .arg(fresh.home.join("usage.sqlite"))
+        .output()?;
+    ensure!(
+        !rejected.status.success()
+            && std::fs::read(fresh.home.join("usage.sqlite"))? == database_before
+            && fresh.get::<String>("disable_sentinel")? == "keep profile and rules",
+        "A report overwrote the profile database"
+    );
+    let catalog_list = home.join("catalog-paths.json");
+    std::fs::write(&catalog_list, serde_json::to_vec(&vec![&original])?)?;
+    let unused_profile = home.join("test-diagnostics-no-profile");
+    let inspected = std::process::Command::new(&exe)
+        .arg("--catalog")
+        .arg(&catalog_list)
+        .arg("--home")
+        .arg(&unused_profile)
+        .arg("--out")
+        .arg(home.join("catalog-report.json"))
+        .output()?;
+    ensure!(
+        inspected.status.success() && !unused_profile.exists(),
+        "Stateless shortcut inspection created a profile"
+    );
+    // Force a real Windows sharing violation after a healthy worker stops.
+    // The installed executable remains runnable and must be restarted intact.
+    let recovery = Store::open(&home.join("test-update-recovery"))?;
+    let _recovery_cleanup = BackgroundCleanup(recovery.home.clone());
+    let recovery_desktop = recovery.home.join("Desktop");
+    std::fs::create_dir_all(&recovery_desktop)?;
+    recovery.set("test_desktop", &recovery_desktop.to_string_lossy())?;
+    recovery.set("setup_complete", &true)?;
+    recovery.set("update_sentinel", &"preserve data after failed update")?;
+    recovery.set(
+        "config",
+        &Config {
+            learning_enabled: false,
+            respect_taskbar_pins: false,
+            ..Default::default()
+        },
+    )?;
+    let recovery_exe = setup::installed_exe(&recovery.home);
+    let mut fixture_bytes = std::fs::read(&exe)?;
+    fixture_bytes.extend_from_slice(b"\nupdate recovery fixture\n");
+    std::fs::write(&recovery_exe, &fixture_bytes)?;
+    let mut previous_worker = std::process::Command::new(&recovery_exe)
+        .args(["--background", "--home"])
+        .arg(&recovery.home)
+        .spawn()?;
+    let recovery_ready = (0..150).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        recovery.get::<i64>("heartbeat").unwrap_or_default() > 0
+    });
+    ensure!(recovery_ready, "Update recovery fixture did not start");
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+        let _held_executable = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0)
+            .open(&recovery_exe)?;
+        ensure!(
+            setup::start_background(&recovery.home).is_err(),
+            "Update ignored an executable sharing conflict"
+        );
+        ensure!(
+            previous_worker.try_wait()?.is_some()
+                && background_running(&recovery.home)?
+                && recovery.get::<i64>("heartbeat")? > 0
+                && std::fs::read(&recovery_exe)? == fixture_bytes
+                && recovery.get::<String>("update_sentinel")?
+                    == "preserve data after failed update",
+            "A failed update did not restore the previous background worker and data"
+        );
+    }
+    setup::stop_background(&recovery.home)?;
+    let _ = previous_worker.wait();
     let protocol = Store::open(&home.join("test-protocol"))?;
     let protocol_desktop = protocol.home.join("Desktop");
     std::fs::create_dir_all(&protocol_desktop)?;
@@ -555,7 +747,7 @@ fn self_test(home: &Path, args: &[String]) -> Result<()> {
     engine::rollback(&protocol)?;
     emit(
         args,
-        &serde_json::json!({"passed":true,"checks":["native shortcut creation","target and launch identity","transactional apply","rollback original bytes","Shell launch of inert fixture","launch without a catalog entry","byte-identical protocol shortcuts","manual edit ownership release","interrupted transaction blocks new changes and rolls back","manual rename pins position","manual deletion prevents return","rollback refuses changed files","clean first-run install and background lifecycle","collection disabled and tracking-only desktop unchanged","passive learning blocks placement","seven qualified sessions unlock initial placement"],"originals_unchanged":true}),
+        &serde_json::json!({"passed":true,"checks":["native shortcut creation","target and launch identity","transactional apply","rollback original bytes","Shell launch of inert fixture","launch without a catalog entry","byte-identical protocol shortcuts","manual edit ownership release","interrupted transaction blocks new changes and rolls back","manual rename pins position","manual deletion prevents return","rollback refuses changed files","clean first-run install and background lifecycle","collection disabled and tracking-only desktop unchanged","passive learning blocks placement","seven qualified sessions unlock initial placement","old pending commands are not replayed on restart","new queued commands complete exactly once","disable stops and persists collection automation and startup choices","opening disabled settings keeps the worker stopped and preserves data","explicit resume restarts the worker","report destination cannot overwrite the profile database","stateless catalog inspection does not create a profile","failed executable replacement restores the previous worker and profile"],"originals_unchanged":true}),
     )
 }
 fn main() {
@@ -565,7 +757,10 @@ fn main() {
         let raw_args: Vec<String> = std::env::args().skip(1).collect();
         let parsed = cli::parse(&raw_args).ok();
         if let Some(args) = &parsed
-            && !matches!(args[0].as_str(), "--help" | "--version" | "--probe")
+            && !matches!(
+                args[0].as_str(),
+                "--help" | "--version" | "--probe" | "--layout" | "--pins" | "--catalog"
+            )
             && let Ok(h) = home(args)
         {
             let _ = std::fs::create_dir_all(&h);
