@@ -733,6 +733,9 @@ mod tests {
     #[test]
     fn an_unavailable_start_menu_is_nonfatal_and_recovers_without_overwriting_shortcuts() {
         let root = test_home("optional-start-menu");
+        std::fs::create_dir_all(&root).unwrap();
+        // Match profile::home, including expansion of an 8.3 TEMP ancestor.
+        let root = crate::profile::ordinary_path(std::fs::canonicalize(root).unwrap());
         let store = Store::open(&root).unwrap();
         let installed = installed_exe(&root);
         std::fs::write(&installed, b"inert executable fixture").unwrap();

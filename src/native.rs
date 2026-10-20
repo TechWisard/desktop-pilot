@@ -1254,6 +1254,9 @@ mod tests {
             std::process::id(),
             crate::model::now()
         ));
+        std::fs::create_dir_all(&root).unwrap();
+        // TEMP can contain an 8.3 alias; Shell parsing names use the full path.
+        let root = crate::profile::ordinary_path(std::fs::canonicalize(root).unwrap());
         for (index, parent) in ["Первый", "Второй"].into_iter().enumerate() {
             let directory = root.join(parent);
             std::fs::create_dir_all(&directory).unwrap();
