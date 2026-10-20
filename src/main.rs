@@ -49,7 +49,7 @@ fn prepare_report(args: &[String]) -> Result<()> {
 fn background_running(home: &Path) -> Result<bool> {
     native::is_running("background", home)
 }
-fn run() -> Result<()> {
+fn run(error_profile: &mut Option<PathBuf>) -> Result<()> {
     let args = cli::parse(&std::env::args().skip(1).collect::<Vec<_>>())?;
     if let Some(index) = args.iter().position(|argument| argument == "--out") {
         report::validate(Path::new(&args[index + 1]))?;
@@ -104,7 +104,7 @@ fn run() -> Result<()> {
     }
     let h = home(&args)?;
     if args[0] == "--self-test" {
-        return self_test(&h, &args);
+        return self_test(&h, &args, error_profile);
     }
     if args[0] == "--ui-smoke" {
         ensure!(
@@ -114,6 +114,9 @@ fn run() -> Result<()> {
         );
     }
     let s = Store::open(&h)?;
+    // A rejected --home folder is not ours. Only write diagnostics after the
+    // profile has been accepted, without creating files in unrelated folders.
+    *error_profile = Some(s.home.clone());
     prepare_report(&args)?;
     let h = s.home.clone();
     // Stopping a process must remain possible even when its configuration is damaged.
@@ -253,10 +256,12 @@ fn run() -> Result<()> {
                 "input_filter",
                 &"non-injected keyboard/buttons/wheel; fresh foreground interaction",
             )?;
-            s.set("shutdown", &false)?;
-            s.set("heartbeat", &0i64)?;
-            s.set("background_pid", &std::process::id())?;
-            s.set("background_version", &env!("CARGO_PKG_VERSION"))?;
+            s.transaction(|| {
+                s.set("shutdown", &false)?;
+                s.set("heartbeat", &0i64)?;
+                s.set("background_pid", &std::process::id())?;
+                s.set("background_version", &env!("CARGO_PKG_VERSION"))
+            })?;
             let worker_home = h.clone();
             let worker = std::thread::spawn(move || {
                 let r = std::panic::catch_unwind(|| engine::monitor(worker_home.clone()))
@@ -337,7 +342,7 @@ fn run() -> Result<()> {
         _ => anyhow::bail!("Неизвестная команда"),
     }
 }
-fn self_test(home: &Path, args: &[String]) -> Result<()> {
+fn self_test(home: &Path, args: &[String], error_profile: &mut Option<PathBuf>) -> Result<()> {
     struct BackgroundCleanup(PathBuf);
     impl Drop for BackgroundCleanup {
         fn drop(&mut self) {
@@ -354,6 +359,7 @@ fn self_test(home: &Path, args: &[String]) -> Result<()> {
         "Self-test requires a new, empty test-* directory"
     );
     let s = Store::open(home)?;
+    *error_profile = Some(s.home.clone());
     prepare_report(args)?;
     ensure!(s.apps()?.is_empty(), "Каталог проверки не пуст");
     let desktop = home.join("Desktop");
@@ -625,6 +631,26 @@ fn self_test(home: &Path, args: &[String]) -> Result<()> {
         background_running(&fresh.home)? && !fresh.get::<bool>("background_disabled")?,
         "Explicit resume did not clear the disabled state"
     );
+    {
+        use std::os::windows::io::{FromRawHandle, OwnedHandle};
+        use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+        let previous_pid: u32 = fresh.get("background_pid")?;
+        // Keep a handle until the assertion so Windows cannot reuse the old PID.
+        let _previous_process = unsafe {
+            OwnedHandle::from_raw_handle(
+                OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, previous_pid)?.0,
+            )
+        };
+        fresh.set("shutdown", &true)?;
+        setup::start_background(&fresh.home)?;
+        ensure!(
+            background_running(&fresh.home)?
+                && fresh.get::<u32>("background_pid")? != previous_pid
+                && fresh.get::<i64>("heartbeat")? > 0
+                && !fresh.get::<bool>("shutdown")?,
+            "Resume returned before replacing a worker that was already stopping"
+        );
+    }
     setup::stop_background(&fresh.home)?;
     let database_before = std::fs::read(fresh.home.join("usage.sqlite"))?;
     let rejected = std::process::Command::new(setup::installed_exe(&fresh.home))
@@ -653,6 +679,67 @@ fn self_test(home: &Path, args: &[String]) -> Result<()> {
     ensure!(
         inspected.status.success() && !unused_profile.exists(),
         "Stateless shortcut inspection created a profile"
+    );
+    // Refusing an unrelated database must leave the entire folder untouched,
+    // including a user file that happens to have our diagnostic log's name.
+    let unrelated = home.join("test-unrelated-database");
+    std::fs::create_dir(&unrelated)?;
+    let unrelated_db = unrelated.join("usage.sqlite");
+    {
+        let database = rusqlite::Connection::open(&unrelated_db)?;
+        database.execute_batch(
+            "CREATE TABLE notes(body TEXT); INSERT INTO notes VALUES('keep original data');",
+        )?;
+    }
+    let unrelated_before = std::fs::read(&unrelated_db)?;
+    let original_log = b"This file belongs to the selected folder's owner.";
+    std::fs::write(unrelated.join("last-error.txt"), original_log)?;
+    let refused = std::process::Command::new(&exe)
+        .args(["--inspect", "--home"])
+        .arg(&unrelated)
+        .output()?;
+    ensure!(
+        !refused.status.success()
+            && std::fs::read(&unrelated_db)? == unrelated_before
+            && std::fs::read(unrelated.join("last-error.txt"))? == original_log
+            && std::fs::read_dir(&unrelated)?.count() == 2,
+        "Rejecting an unrelated database modified files in that folder"
+    );
+    let occupied = home.join("test-nonempty-self-test");
+    std::fs::create_dir(&occupied)?;
+    std::fs::write(occupied.join("keep.txt"), original_log)?;
+    let refused = std::process::Command::new(&exe)
+        .args(["--self-test", "--home"])
+        .arg(&occupied)
+        .output()?;
+    ensure!(
+        !refused.status.success()
+            && std::fs::read(occupied.join("keep.txt"))? == original_log
+            && std::fs::read_dir(&occupied)?.count() == 1,
+        "A refused self-test created files in a nonempty folder"
+    );
+    // Even within an accepted profile, replacing an old diagnostic must not
+    // follow a hard link and overwrite another file's contents.
+    let user_note = fresh.home.join("keep-note.txt");
+    let error_log = fresh.home.join("last-error.txt");
+    std::fs::write(&user_note, original_log)?;
+    if error_log.try_exists()? {
+        std::fs::remove_file(&error_log)?;
+    }
+    std::fs::hard_link(&user_note, &error_log)?;
+    let failed_launch = std::process::Command::new(setup::installed_exe(&fresh.home))
+        .args([
+            "--validate-launch",
+            "missing-diagnostic-fixture-id",
+            "--home",
+        ])
+        .arg(&fresh.home)
+        .output()?;
+    ensure!(
+        !failed_launch.status.success()
+            && std::fs::read(&user_note)? == original_log
+            && std::fs::read(&error_log)? != original_log,
+        "Writing an error log overwrote another file through a hard link"
     );
     // Force a real Windows sharing violation after a healthy worker stops.
     // The installed executable remains runnable and must be restarted intact.
@@ -747,24 +834,53 @@ fn self_test(home: &Path, args: &[String]) -> Result<()> {
     engine::rollback(&protocol)?;
     emit(
         args,
-        &serde_json::json!({"passed":true,"checks":["native shortcut creation","target and launch identity","transactional apply","rollback original bytes","Shell launch of inert fixture","launch without a catalog entry","byte-identical protocol shortcuts","manual edit ownership release","interrupted transaction blocks new changes and rolls back","manual rename pins position","manual deletion prevents return","rollback refuses changed files","clean first-run install and background lifecycle","collection disabled and tracking-only desktop unchanged","passive learning blocks placement","seven qualified sessions unlock initial placement","old pending commands are not replayed on restart","new queued commands complete exactly once","disable stops and persists collection automation and startup choices","opening disabled settings keeps the worker stopped and preserves data","explicit resume restarts the worker","report destination cannot overwrite the profile database","stateless catalog inspection does not create a profile","failed executable replacement restores the previous worker and profile"],"originals_unchanged":true}),
+        &serde_json::json!({
+            "passed": true,
+            "checks": [
+                "native shortcut creation",
+                "target and launch identity",
+                "transactional apply",
+                "rollback original bytes",
+                "Shell launch of inert fixture",
+                "launch without a catalog entry",
+                "byte-identical protocol shortcuts",
+                "manual edit ownership release",
+                "interrupted transaction blocks new changes and rolls back",
+                "manual rename pins position",
+                "manual deletion prevents return",
+                "rollback refuses changed files",
+                "clean first-run install and background lifecycle",
+                "collection disabled and tracking-only desktop unchanged",
+                "passive learning blocks placement",
+                "seven qualified sessions unlock initial placement",
+                "old pending commands are not replayed on restart",
+                "new queued commands complete exactly once",
+                "disable stops and persists collection automation and startup choices",
+                "opening disabled settings keeps the worker stopped and preserves data",
+                "explicit resume restarts the worker",
+                "resume replaces an already stopping worker before reporting success",
+                "report destination cannot overwrite the profile database",
+                "stateless catalog inspection does not create a profile",
+                "rejected foreign databases leave existing files untouched",
+                "refused self-tests leave nonempty folders untouched",
+                "error logs preserve hard-linked user files",
+                "failed executable replacement restores the previous worker and profile",
+            ],
+            "originals_unchanged": true,
+        }),
     )
 }
 fn main() {
-    if let Err(error) = run() {
+    let mut error_profile = None;
+    if let Err(error) = run(&mut error_profile) {
         let msg = i18n::runtime(&format!("{error:#}"));
         eprintln!("{msg}");
         let raw_args: Vec<String> = std::env::args().skip(1).collect();
         let parsed = cli::parse(&raw_args).ok();
-        if let Some(args) = &parsed
-            && !matches!(
-                args[0].as_str(),
-                "--help" | "--version" | "--probe" | "--layout" | "--pins" | "--catalog"
-            )
-            && let Ok(h) = home(args)
-        {
-            let _ = std::fs::create_dir_all(&h);
-            let _ = std::fs::write(h.join("last-error.txt"), &msg);
+        if let Some(h) = error_profile {
+            // Atomic replacement also prevents a hard-linked old log from
+            // redirecting an error into another file. Reparse points are refused.
+            let _ = report::write(&h.join("last-error.txt"), msg.as_bytes());
         }
         if raw_args.is_empty()
             || parsed

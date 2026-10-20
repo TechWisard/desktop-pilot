@@ -264,7 +264,14 @@ fn start_background_locked(store: &Store) -> Result<()> {
 fn start_installed(store: &Store, exe: &Path) -> Result<()> {
     let home = &store.home;
     if native::is_running("background", home)? {
-        return Ok(());
+        if store.get::<bool>("shutdown")? {
+            // Exit from the tray does not hold the startup lock. Finish that
+            // shutdown before launching a replacement instead of reporting
+            // success for a worker that is already on its way out.
+            drop(stop_for_change(store)?);
+        } else {
+            return wait_for_background(store, None);
+        }
     }
     store.set("shutdown", &false)?;
     store.set("heartbeat", &0i64)?;
@@ -275,17 +282,28 @@ fn start_installed(store: &Store, exe: &Path) -> Result<()> {
         .creation_flags(0x08000000)
         .spawn()
         .context("Cannot start Desktop Pilot background work")?;
+    wait_for_background(store, Some(&mut child))
+}
+
+fn wait_for_background(store: &Store, mut child: Option<&mut std::process::Child>) -> Result<()> {
     let until = Instant::now() + Duration::from_secs(15);
     loop {
-        if let Some(status) = child.try_wait()? {
-            if native::is_running("background", home)? {
-                return Ok(());
-            }
-            let detail = std::fs::read_to_string(home.join("last-error.txt")).unwrap_or_default();
-            bail!("Background work could not start ({status}). {detail}");
-        }
-        if native::is_running("background", home)? && store.get::<i64>("heartbeat")? > 0 {
+        let running = native::is_running("background", &store.home)?;
+        if running && !store.get::<bool>("shutdown")? && store.get::<i64>("heartbeat")? > 0 {
             return Ok(());
+        }
+        let exited = child
+            .as_mut()
+            .map(|child| child.try_wait())
+            .transpose()?
+            .flatten();
+        if !running && (child.is_none() || exited.is_some()) {
+            let detail =
+                std::fs::read_to_string(store.home.join("last-error.txt")).unwrap_or_default();
+            if let Some(status) = exited {
+                bail!("Background work could not start ({status}). {detail}");
+            }
+            bail!("Background work stopped before becoming ready. {detail}");
         }
         ensure!(
             Instant::now() < until,
@@ -302,12 +320,12 @@ pub fn prepare_settings(home: &Path) -> Result<()> {
         engine::setup_complete(&store)?,
         "Complete initial setup before starting background tracking"
     );
-    if store.get::<bool>("background_disabled")? {
-        install_current(&store)?;
-        Ok(())
-    } else {
-        start_background_locked(&store)
+    let installed = install_current(&store)?;
+    record_settings_shortcut_result(&store, make_settings_shortcut(&store, &installed))?;
+    if !store.get::<bool>("background_disabled")? {
+        start_installed(&store, &installed)?;
     }
+    Ok(())
 }
 
 fn restore_autostart(store: &Store, error: anyhow::Error) -> anyhow::Error {
@@ -384,9 +402,12 @@ fn make_settings_shortcut(store: &Store, installed: &Path) -> Result<()> {
     if test_profile(store)? {
         return Ok(());
     }
+    make_settings_shortcut_in(store, installed, &native::programs()?)
+}
+
+fn make_settings_shortcut_in(store: &Store, installed: &Path, directory: &Path) -> Result<()> {
     let _com = native::Com::new()?;
-    let directory = native::programs()?;
-    std::fs::create_dir_all(&directory)?;
+    std::fs::create_dir_all(directory)?;
     let arguments = format!(
         "--settings --home {}",
         native::quote_arg(&store.home.to_string_lossy())
@@ -404,6 +425,7 @@ fn make_settings_shortcut(store: &Store, installed: &Path) -> Result<()> {
                 norm(&link.target) == norm(&installed.to_string_lossy())
                     && link.arguments == arguments
             }) {
+                store.set("settings_shortcut", &shortcut.to_string_lossy())?;
                 return Ok(());
             }
             continue;
@@ -433,6 +455,24 @@ fn make_settings_shortcut(store: &Store, installed: &Path) -> Result<()> {
     bail!("Cannot create a unique Desktop Pilot shortcut in the Start menu")
 }
 
+fn record_settings_shortcut_result(store: &Store, result: Result<()>) -> Result<()> {
+    let warning = match result {
+        Ok(()) => String::new(),
+        Err(error) => format!(
+            "The Start menu shortcut could not be created. Open Settings by launching Desktop Pilot again. {error:#}"
+        ),
+    };
+    store.transaction(|| {
+        if store.get::<String>("settings_shortcut_warning")? != warning {
+            store.set("settings_shortcut_warning", &warning)?;
+            if !warning.is_empty() {
+                store.event("warning", &warning)?;
+            }
+        }
+        Ok(())
+    })
+}
+
 pub fn finish(store: &Store, config: &Config) -> Result<()> {
     let _starting = native::exclusive("startup", &store.home)?;
     config.validate()?;
@@ -445,7 +485,7 @@ pub fn finish(store: &Store, config: &Config) -> Result<()> {
         engine::reserve_positions(&layout, config, &State::default(), &[], config.slots)?;
     }
     let installed = install_current(store)?;
-    make_settings_shortcut(store, &installed)?;
+    record_settings_shortcut_result(store, make_settings_shortcut(store, &installed))?;
     let prepared = store.transaction(|| {
         save_config(store, config)?;
         if store
@@ -689,6 +729,131 @@ mod tests {
         drop(store);
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn an_unavailable_start_menu_is_nonfatal_and_recovers_without_overwriting_shortcuts() {
+        let root = test_home("optional-start-menu");
+        let store = Store::open(&root).unwrap();
+        let installed = installed_exe(&root);
+        std::fs::write(&installed, b"inert executable fixture").unwrap();
+        let directory = root.join("Programs");
+        std::fs::write(&directory, b"existing user file").unwrap();
+        record_settings_shortcut_result(
+            &store,
+            make_settings_shortcut_in(&store, &installed, &directory),
+        )
+        .unwrap();
+        assert!(
+            store
+                .get::<String>("settings_shortcut_warning")
+                .unwrap()
+                .starts_with("The Start menu shortcut could not be created.")
+        );
+        assert_eq!(std::fs::read(&directory).unwrap(), b"existing user file");
+        assert!(store.get::<String>("settings_shortcut").unwrap().is_empty());
+        std::fs::rename(&directory, root.join("original-user-file")).unwrap();
+        std::fs::create_dir(&directory).unwrap();
+        let unrelated = directory.join("Desktop Pilot.lnk");
+        std::fs::write(&unrelated, b"unrelated shortcut").unwrap();
+        for _ in 0..2 {
+            record_settings_shortcut_result(
+                &store,
+                make_settings_shortcut_in(&store, &installed, &directory),
+            )
+            .unwrap();
+            assert!(
+                store
+                    .get::<String>("settings_shortcut_warning")
+                    .unwrap()
+                    .is_empty()
+            );
+            let shortcut = PathBuf::from(store.get::<String>("settings_shortcut").unwrap());
+            assert!(shortcut.is_file() && shortcut != unrelated);
+            let _com = native::Com::new().unwrap();
+            let app = native::read_link(&shortcut).unwrap();
+            assert_eq!(norm(&app.target), norm(&installed.to_string_lossy()));
+            assert!(app.arguments.starts_with("--settings --home "));
+            assert_eq!(std::fs::read(&unrelated).unwrap(), b"unrelated shortcut");
+            assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 2);
+        }
+        assert_eq!(
+            store
+                .events()
+                .unwrap()
+                .iter()
+                .filter(|(_, kind, _)| kind == "warning")
+                .count(),
+            1
+        );
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn starting_waits_for_an_existing_worker_to_be_ready() {
+        let root = test_home("background-ready");
+        let store = Store::open(&root).unwrap();
+        store.set("shutdown", &false).unwrap();
+        store.set("heartbeat", &0i64).unwrap();
+        let worker = native::exclusive("background", &root).unwrap();
+        let worker_home = root.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let starter = std::thread::spawn(move || {
+            let store = Store::open(&worker_home).unwrap();
+            sender
+                .send(start_installed(&store, &worker_home.join("missing.exe")))
+                .unwrap();
+        });
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_millis(150)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        store.set("heartbeat", &now()).unwrap();
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        starter.join().unwrap();
+        drop(worker);
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn starting_during_shutdown_waits_then_launches_a_replacement() {
+        let root = test_home("background-stopping");
+        let store = Store::open(&root).unwrap();
+        store.set("shutdown", &true).unwrap();
+        store.set("heartbeat", &now()).unwrap();
+        let worker = native::exclusive("background", &root).unwrap();
+        let worker_home = root.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let starter = std::thread::spawn(move || {
+            let store = Store::open(&worker_home).unwrap();
+            sender
+                .send(start_installed(&store, &worker_home.join("missing.exe")))
+                .unwrap();
+        });
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_millis(150)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        assert!(store.get::<bool>("shutdown").unwrap());
+        drop(worker);
+        let error = receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap_err();
+        // A missing executable distinguishes a real launch attempt from a
+        // premature success based only on the old worker's mutex.
+        assert!(format!("{error:#}").contains("Cannot start Desktop Pilot background work"));
+        assert!(!native::is_running("background", &root).unwrap());
+        assert_eq!(store.get::<i64>("heartbeat").unwrap(), 0);
+        starter.join().unwrap();
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn staged_copies_never_overwrite_existing_files() {
         let root =

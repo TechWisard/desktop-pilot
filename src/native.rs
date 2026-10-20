@@ -429,33 +429,47 @@ impl Desktop {
                 (0..=10000).contains(&n),
                 "Некорректное число объектов рабочего стола"
             );
+            let folder: IShellFolder = self.view.GetFolder()?;
             let mut out = Vec::new();
             for i in 0..n {
                 let p = self.view.Item(i)?;
                 let result = (|| -> Result<_> {
+                    ensure!(!p.is_null(), "Explorer returned an empty item identifier");
                     let pos = self.view.GetItemPosition(p)?;
-                    // Item() supplies a child PIDL, not an absolute PIDL. Ask
-                    // the folder view for an IShellItem before resolving names.
-                    let item: IShellItem = self.view2.GetItem(i)?;
-                    let name = shell_item_name(&item, SIGDN_NORMALDISPLAY)?;
-                    let path = shell_item_name(&item, SIGDN_DESKTOPABSOLUTEPARSING)?;
+                    // The view can reorder between COM calls. Resolve names
+                    // from the exact child PIDL used for its position, never
+                    // from a second lookup of the now potentially stale index.
+                    let item = child_item(&folder, p, pos)?;
                     let bytes =
                         std::slice::from_raw_parts(p.cast::<u8>(), ILGetSize(Some(p)) as usize)
                             .to_vec();
-                    Ok((
-                        Item {
-                            path,
-                            name,
-                            position: Point { x: pos.x, y: pos.y },
-                        },
-                        bytes,
-                    ))
+                    Ok((item, bytes))
                 })();
                 CoTaskMemFree(Some(p.cast()));
                 out.push(result?);
             }
             Ok(out)
         }
+    }
+}
+unsafe fn child_item(
+    folder: &IShellFolder,
+    pidl: *const Common::ITEMIDLIST,
+    position: POINT,
+) -> Result<Item> {
+    unsafe {
+        ensure!(
+            !pidl.is_null(),
+            "Explorer returned an empty item identifier"
+        );
+        Ok(Item {
+            path: child_name(folder, pidl, SHGDN_FORPARSING)?,
+            name: child_name(folder, pidl, SHGDN_NORMAL)?,
+            position: Point {
+                x: position.x,
+                y: position.y,
+            },
+        })
     }
 }
 unsafe fn pidl_name(p: *const Common::ITEMIDLIST, kind: SIGDN) -> Result<String> {
@@ -466,11 +480,20 @@ unsafe fn pidl_name(p: *const Common::ITEMIDLIST, kind: SIGDN) -> Result<String>
         Ok(value?)
     }
 }
-unsafe fn shell_item_name(item: &IShellItem, kind: SIGDN) -> Result<String> {
+unsafe fn child_name(
+    folder: &IShellFolder,
+    pidl: *const Common::ITEMIDLIST,
+    kind: SHGDNF,
+) -> Result<String> {
     unsafe {
-        let s = item.GetDisplayName(kind)?;
-        let value = s.to_string();
-        CoTaskMemFree(Some(s.0.cast()));
+        let mut returned = Common::STRRET::default();
+        folder.GetDisplayNameOf(pidl, kind, &mut returned)?;
+        let mut name = windows::core::PWSTR::null();
+        // StrRetToStr consumes STRRET's storage; only its returned string needs
+        // freeing. FORPARSING without INFOLDER gives the desktop-absolute name.
+        StrRetToStrW(&mut returned, Some(pidl), &mut name)?;
+        let value = name.to_string();
+        CoTaskMemFree(Some(name.0.cast()));
         Ok(value?)
     }
 }
@@ -1197,6 +1220,80 @@ pub fn activate_process_window(pid: u32) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn desktop_namespace_children_keep_their_absolute_parsing_identity() {
+        let _com = Com::new().unwrap();
+        let expected = "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
+        let item = unsafe {
+            let mut absolute = null_mut();
+            SHParseDisplayName(
+                PCWSTR(wide(expected).as_ptr()),
+                None,
+                &mut absolute,
+                0,
+                None,
+            )
+            .unwrap();
+            let mut child = null_mut();
+            let folder: IShellFolder = SHBindToParent(absolute, Some(&mut child)).unwrap();
+            let item = child_item(&folder, child, POINT { x: -100, y: 42 });
+            CoTaskMemFree(Some(absolute.cast()));
+            item.unwrap()
+        };
+        assert_eq!(norm(&item.path), norm(expected));
+        assert!(!item.name.is_empty());
+        assert_eq!(item.position.x, -100);
+        assert_eq!(item.position.y, 42);
+    }
+
+    #[test]
+    fn child_identifiers_keep_their_parent_and_name_when_folder_contents_change() {
+        let _com = Com::new().unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "test-shell-child-{}-{}",
+            std::process::id(),
+            crate::model::now()
+        ));
+        for (index, parent) in ["Первый", "Второй"].into_iter().enumerate() {
+            let directory = root.join(parent);
+            std::fs::create_dir_all(&directory).unwrap();
+            let path = directory.join("Общий файл.txt");
+            std::fs::write(&path, b"original file").unwrap();
+            let resolved = unsafe {
+                let mut absolute = null_mut();
+                SHParseDisplayName(
+                    PCWSTR(wide(&path.to_string_lossy()).as_ptr()),
+                    None,
+                    &mut absolute,
+                    0,
+                    None,
+                )
+                .unwrap();
+                let mut child = null_mut();
+                let folder: IShellFolder = SHBindToParent(absolute, Some(&mut child)).unwrap();
+                // A newly inserted item can move the original to another view
+                // index; its previously acquired child PIDL must still identify it.
+                std::fs::write(directory.join("000-new-file.txt"), b"new item").unwrap();
+                let item = child_item(
+                    &folder,
+                    child,
+                    POINT {
+                        x: index as i32,
+                        y: 42,
+                    },
+                );
+                CoTaskMemFree(Some(absolute.cast()));
+                item.unwrap()
+            };
+            assert_eq!(norm(&resolved.path), norm(&path.to_string_lossy()));
+            assert!(resolved.name.contains("Общий файл"));
+            assert_eq!(resolved.position.x, index as i32);
+            assert_eq!(resolved.position.y, 42);
+            assert_eq!(std::fs::read(&path).unwrap(), b"original file");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn executable_version_reads_the_fixed_product_version_resource() {
         let mut expected = [0u16; 4];

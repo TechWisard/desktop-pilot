@@ -4,9 +4,11 @@
 
 ## First launch
 
+If the Desktop Pilot Start menu shortcut cannot be created, setup continues with a warning. Reopen the window by launching the executable; it will retry the shortcut and clear the warning after success.
+
 Setup is divided into short steps: choose how the app should work, set shortcut count and observation preferences, then choose an area on the desktop. Opening setup does not start collection or enable startup. **Start using Desktop Pilot** installs the per-user executable and starts the background process. Closing setup offers to save your choices and current step, discard them or continue editing. A saved draft resumes on the next launch and does not enable observation by itself.
 
-The catalog reads personal and shared desktop shortcuts, together with the Start menu, including folders up to five levels deep. Filesystem links, source/dependency folders and shortcut archives are skipped. An inaccessible subfolder does not cancel the entire scan. The scan is limited to 3,000 files; a warning appears if the limit is reached, and existing catalog entries are retained. Add other `.lnk` or `.url` files from Apps: select several files, paste one path per line or drag files into the window. Existing rules and history are preserved. The recently added list opens after import, even if a previous search or filter would have hidden the new entries.
+The catalog reads personal and shared desktop shortcuts, together with the Start menu, including folders up to five levels deep. Filesystem links and folders named `служебное`, `node_modules`, `архив ярлыков`, `.git`, `venv` and `.venv` are skipped. An inaccessible subfolder does not cancel the entire scan. The scan is limited to 3,000 files; a warning appears if the limit is reached, and existing catalog entries are retained. Add other `.lnk` or `.url` files from Apps: select several files, paste one path per line or drag files into the window. Existing rules and history are preserved. The recently added list opens after import, even if a previous search or filter would have hidden the new entries.
 
 Windows Known Folders are used for redirected desktops. An explicit `--home` always selects that profile. A normal launch recognizes a profile beside the installed executable before falling back to `%LOCALAPPDATA%\DesktopPilot`.
 
@@ -23,9 +25,13 @@ Windows Known Folders are used for redirected desktops. An explicit `--home` alw
 | **Settings → Data** | Review local data, clear usage history or completely disable the app with confirmation. |
 | **History** | Review completed operations and errors. |
 
-Language and interface scale are available at the top of the window. English/Russian and 100%/125%/150% scale save immediately. Other settings are drafts until **Save** is selected; **Discard edits** restores the saved values. Closing with unsaved edits offers save, discard or return to the window. Settings changed in the tray while you are editing are preserved, or a conflicting edit is reported.
+Language and interface scale are available at the top of the window. English/Russian and scales from 100% to 200% save immediately. **Ctrl+plus** zooms in, **Ctrl+minus** zooms out and **Ctrl+0** restores 100%; the displayed percentage matches the selected size. This is additional app scaling on top of the Windows display scale. Other settings are drafts until **Save** is selected; **Discard edits** restores the saved values. Closing with unsaved edits offers save, discard or return to the window. Settings changed in the tray while you are editing are preserved, or a conflicting edit is reported.
 
-In **Apps**, **Ctrl+F** focuses search and **F5** refreshes the data. **Show in folder** opens the original shortcut in Explorer. When Always rules exceed available slots, a warning shows the count and provides a link to the slot settings.
+In **Apps**, **Ctrl+F** focuses search and **F5** rescans installed apps. Each row shows the app name, current state and rule; **Details** opens selection reasons, statistics and paths. Saving progress remains beside the affected app until the background process confirms the rule. **Show in folder** opens the original shortcut in Explorer. When Always rules exceed available slots, a warning shows the count and provides a link to the slot settings.
+
+For a large catalog, enter a page number to jump directly to its beginning. In a narrow window, additional filters and sorting options are collapsed so search and import stay near the top. Search matches names, categories and paths; several words can be entered in any order.
+
+![App list with fictional demonstration data](images/apps-en.png)
 
 ### Choose a mode
 
@@ -52,7 +58,7 @@ weight      = 2 ^ (-age in days / half-life in days)
 total       = sum(daily score × weight)
 ```
 
-Foreground observations are sampled every two seconds. A qualifying session needs approximately ten seconds of activity; sessions within twenty minutes are deduplicated. Idle periods and long gaps between observations are not counted as active work. Default idle cutoff: 120 seconds.
+Foreground observations are sampled every two seconds. A qualifying session needs approximately ten seconds of activity; a new session starts after twenty minutes without confirmed use of that app. Brief switches after long work and background-process restarts do not add sessions. Idle periods and long gaps between observations are not counted as active work. Default idle cutoff: 120 seconds.
 
 A process launch, autostart or foreground activation alone gives no score. A new foreground window must receive fresh, non-injected keyboard/button/wheel interaction before the ten-second qualification timer starts. Mouse movement alone is insufficient. New quick shortcuts are byte-identical copies of the originals and launch directly without consulting Desktop Pilot or its database. Legacy launch requests are retained only for compatibility and do not affect ranking or active-day eligibility. Startup apps remain eligible if you actually work in them. Windows-reported injected input is rejected, including ordinary SendInput automation. Virtual input drivers can appear as hardware; the app cannot prove the identity or intention of a person. Controller-only use, passive playback and interactions inaccessible at the current integrity level can be undercounted; use a manual rule for those cases. Two shortcuts using the same executable but different arguments or working directories are distinct identities; ambiguous foreground matches are skipped. Steam games can match a unique installation directory; Windows app shortcuts can match a unique application ID.
 
@@ -68,6 +74,8 @@ Display geometry changes, unexpected taskbar formats, an occupied area or an int
 
 Each transaction records before/after state and backup bytes before changing files. Undo checks hashes before removing or restoring a file. If a user edited a file, it stops instead of overwriting the edit. Undo pauses automatic changes. New quick shortcuts preserve the original file bytes, extension, arguments, working directory, icon and elevation behavior. They remain usable if Desktop Pilot is stopped or its catalog is unavailable.
 
+Undo follows execution order even if the system clock moves backwards. If another process temporarily locks an existing source shortcut or leaves it incomplete during an update, its last verified state and working quick copy are retained with a warning. Creating a new copy still requires a fresh successful read of the original. A missing source or a successfully read different target still updates catalog validity.
+
 ## Disable or remove
 
 To disable the app completely, open **Settings → Data → Disable Desktop Pilot**. This stops the background process, observation, automatic changes and Windows startup. Shortcuts and local data remain. Opening Settings or updating does not undo this choice; resume explicitly from the window.
@@ -80,11 +88,11 @@ powershell -NoProfile -File .\disable.ps1
 
 This stops the background process, disables tracking and startup, and undoes managed changes. `-KeepShortcuts` disables the tracker while retaining quick shortcuts; shortcuts created with 0.1.1 or later launch independently. Older 0.1.0 wrappers still require Desktop Pilot and its profile.
 
-Local data is retained for recovery. After undo completes successfully and no managed shortcuts remain, you can remove `%LOCALAPPDATA%\DesktopPilot` and the `Desktop Pilot` Start menu shortcut. Before removing local data, replace any remaining 0.1.0 wrappers with copies of the originals. If undo reports a conflict, resolve it before removing the application.
+Local data is retained for recovery. After undo completes successfully and no managed shortcuts remain, you can remove the profile folder (by default `%LOCALAPPDATA%\DesktopPilot`) and the `Desktop Pilot` Start menu shortcut. Before removing local data, replace any remaining 0.1.0 wrappers with copies of the originals. If undo reports a conflict, resolve it before removing the application.
 
 ## Update
 
-Close the existing Settings window, extract the new release and run its `desktop-pilot.exe`. The current executable is installed safely, the previous background process is stopped and the new one starts using the same profile. A completely disabled profile stays disabled. If another version of Settings is still open, the app asks you to close it; unsaved edits are not discarded automatically. Settings, usage history, app rules and undo data are retained. The previous executable is kept as a local backup. An unsuccessful atomic file replacement leaves the installed copy intact and restores the previously running background process. The installer checks the installed executable version and refuses to replace a newer version with an older one. Updates are started by you; there is no background downloader.
+Close the existing Settings window, extract the new release and run its `desktop-pilot.exe`. The current executable is installed safely, the previous background process is stopped and the new one starts using the same profile. A completely disabled profile stays disabled. If another version of Settings is still open, the app asks you to close it; unsaved edits are not discarded automatically. Settings, usage history, app rules and undo data are retained. The previous executable is kept as a local backup. An unsuccessful atomic file replacement leaves the installed copy intact. The app attempts to restore the previously running background process and reports any additional recovery failure separately. The installer checks the installed executable version and refuses to replace a newer version with an older one. Updates are started by you; there is no background downloader.
 
 On restart, unfinished commands are cancelled with a history entry. Old placement or undo requests are not replayed without a new request. Diagnostic reports are written atomically; the database, executable and shortcut paths cannot be used as report destinations.
 

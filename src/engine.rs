@@ -385,8 +385,26 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
     };
     let mut known = store.apps()?;
     for app in &mut known {
-        app.valid = native::read_link(Path::new(&app.source))
-            .is_ok_and(|actual| actual.valid && actual.identity() == app.identity());
+        match native::read_link(Path::new(&app.source)) {
+            Ok(actual) => app.valid = actual.valid && actual.identity() == app.identity(),
+            Err(error) => {
+                let missing = match std::fs::metadata(&app.source) {
+                    Ok(metadata) => !metadata.is_file(),
+                    Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+                };
+                if missing {
+                    app.valid = false;
+                } else {
+                    // A sharing violation or an installer/sync client's partial
+                    // write does not prove that the existing quick copy is broken.
+                    // New copies still re-read and verify the original in apply().
+                    warnings.push(format!(
+                        "Source shortcut could not be refreshed; its last verified state was kept: {}: {error:#}",
+                        app.source
+                    ));
+                }
+            }
+        }
         if let Some(pins) = &pins {
             app.pinned = real && config.respect_taskbar_pins && native::is_pinned(app, pins);
         }
@@ -1079,8 +1097,10 @@ fn safe_staging(path: &Path, desktop: &Path) -> Result<()> {
     Ok(())
 }
 pub fn rollback(store: &Store) -> Result<String> {
+    // Wall time may move backwards after a clock correction. Journal insertion
+    // order is the order of changes; unfinished work still takes priority.
     let row = store.db.query_row(
-        "SELECT id,data,status FROM transactions WHERE status IN ('prepared','rolling_back','committed') ORDER BY CASE WHEN status IN ('prepared','rolling_back') THEN 0 ELSE 1 END,at DESC,rowid DESC LIMIT 1",
+        "SELECT id,data,status FROM transactions WHERE status IN ('prepared','rolling_back','committed') ORDER BY CASE WHEN status IN ('prepared','rolling_back') THEN 0 ELSE 1 END,rowid DESC LIMIT 1",
         [], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)));
     let (id, data, status) = match row {
         Ok(r) => r,
@@ -1552,6 +1572,28 @@ impl UsageAccumulator {
         Some((self.id.clone(), delta, first))
     }
 }
+fn record_usage(
+    store: &Store,
+    session_times: &mut HashMap<String, i64>,
+    id: &str,
+    seconds: u32,
+    first: bool,
+    time: i64,
+) -> Result<()> {
+    let session = first
+        && session_times
+            .get(id)
+            .is_none_or(|last| time.saturating_sub(*last) >= 1200);
+    store.transaction(|| {
+        store.observe(id, seconds, session, false)?;
+        // Measure the gap from the last confirmed activity, not the beginning
+        // of a possibly hours-long session. Persist it with the usage counters
+        // so a brief focus switch or worker restart cannot inflate the ranking.
+        session_times.insert(id.into(), time);
+        session_times.retain(|_, last| time.saturating_sub(*last) < 90 * 86400);
+        store.set("app_session_times", session_times)
+    })
+}
 pub fn monitor(home: PathBuf) -> Result<()> {
     let _com = native::Com::new()?;
     let store = Store::open(&home)?;
@@ -1574,13 +1616,13 @@ pub fn monitor(home: PathBuf) -> Result<()> {
     let mut autostart_retry: Option<Instant> = None;
     let mut previous_collect = None;
     loop {
+        // Keep stop intent visible until the process releases its mutex. Only
+        // the next explicit startup may clear it and advertise readiness.
         if store.get::<bool>("shutdown")? {
-            store.set("shutdown", &false)?;
             return Ok(());
         }
         for (id, action) in store.pending()? {
             if store.get::<bool>("shutdown")? {
-                store.set("shutdown", &false)?;
                 return Ok(());
             }
             if !store.claim_command(id)? {
@@ -1598,7 +1640,6 @@ pub fn monitor(home: PathBuf) -> Result<()> {
             maintenance = None;
         }
         if store.get::<bool>("shutdown")? {
-            store.set("shutdown", &false)?;
             return Ok(());
         }
         let config: Config = store.get("config")?;
@@ -1676,20 +1717,7 @@ pub fn monitor(home: PathBuf) -> Result<()> {
             learning_fraction = 0.0;
         }
         if let Some((id, seconds, first)) = usage.sample(active_id.as_deref(), elapsed) {
-            let time = now();
-            let session = first
-                && session_times
-                    .get(&id)
-                    .is_none_or(|last| time.saturating_sub(*last) >= 1200);
-            store.transaction(|| {
-                store.observe(&id, seconds, session, false)?;
-                if session {
-                    session_times.insert(id.clone(), time);
-                    session_times.retain(|_, last| time.saturating_sub(*last) < 90 * 86400);
-                    store.set("app_session_times", &session_times)?;
-                }
-                Ok(())
-            })?;
+            record_usage(&store, &mut session_times, &id, seconds, first, now())?;
         }
         store.set("heartbeat", &now())?;
         if maintenance.is_none_or(|at| at.elapsed() >= Duration::from_secs(60)) {
@@ -1710,7 +1738,11 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                 Ok(()) => "Учёт использования приостановлен".into(),
                 Err(e) => format!("Изменения приостановлены: {e:#}"),
             };
-            for key in ["autostart_warning", "tray_warning"] {
+            for key in [
+                "autostart_warning",
+                "tray_warning",
+                "settings_shortcut_warning",
+            ] {
                 let warning: String = store.get(key)?;
                 if !warning.is_empty() {
                     status.push_str(&format!("\n{warning}"));
@@ -1953,6 +1985,141 @@ mod tests {
         });
     }
     #[test]
+    fn an_unreadable_original_does_not_remove_its_working_quick_copy() {
+        with_store(|store| {
+            let app = add_test_app(store, "Temporary update", "steam://rungameid/703");
+            apply(store, true).unwrap();
+            let before: State = store.get("state").unwrap();
+            let source = std::fs::read(&app.source).unwrap();
+            // An installer or sync client can temporarily leave an incomplete
+            // shortcut while replacing it. The published copy is still intact.
+            std::fs::write(&app.source, b"[InternetShortcut]\r\n").unwrap();
+            assert!(native::read_link(Path::new(&app.source)).is_err());
+            apply(store, false).unwrap();
+            let after: State = store.get("state").unwrap();
+            assert_eq!(after.owned.len(), 1);
+            assert_eq!(after.owned[0].file_id, before.owned[0].file_id);
+            assert_eq!(std::fs::read(&after.owned[0].path).unwrap(), source);
+            assert!(store.app(&app.id).unwrap().valid);
+            assert!(
+                store.events().unwrap().iter().any(|(_, kind, message)| {
+                    kind == "warning" && message.contains(&app.source)
+                })
+            );
+            std::fs::write(&app.source, source).unwrap();
+            refresh_apps(store).unwrap();
+            assert!(store.app(&app.id).unwrap().valid);
+        });
+    }
+    #[cfg(windows)]
+    #[test]
+    fn a_sharing_violation_on_the_original_keeps_the_managed_copy() {
+        with_store(|store| {
+            let app = add_test_app(store, "Locked original", "steam://rungameid/704");
+            apply(store, true).unwrap();
+            let before: State = store.get("state").unwrap();
+            let locked = std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&app.source)
+                .unwrap();
+            assert!(native::read_link(Path::new(&app.source)).is_err());
+            apply(store, false).unwrap();
+            let after: State = store.get("state").unwrap();
+            assert_eq!(after.owned.len(), 1);
+            assert_eq!(after.owned[0].file_id, before.owned[0].file_id);
+            assert!(store.app(&app.id).unwrap().valid);
+            assert!(!store.get::<String>("catalog_warning").unwrap().is_empty());
+            drop(locked);
+            refresh_apps(store).unwrap();
+            assert!(store.get::<String>("catalog_warning").unwrap().is_empty());
+        });
+    }
+    #[test]
+    fn a_new_copy_requires_a_readable_current_original() {
+        with_store(|store| {
+            let app = add_test_app(store, "Incomplete original", "steam://rungameid/705");
+            std::fs::write(&app.source, b"[InternetShortcut]\r\n").unwrap();
+            assert!(apply(store, true).is_err());
+            assert!(store.get::<State>("state").unwrap().owned.is_empty());
+            assert_eq!(std::fs::read_dir(root(store).unwrap()).unwrap().count(), 0);
+            assert_eq!(
+                store
+                    .db
+                    .query_row("SELECT COUNT(*) FROM transactions", [], |row| row
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+        });
+    }
+    #[test]
+    fn brief_switches_after_long_use_and_restart_do_not_create_new_sessions() {
+        with_store(|store| {
+            let mut times = HashMap::new();
+            let start = 10000;
+            for index in 0..=1800 {
+                record_usage(store, &mut times, "app", 2, index == 0, start + index * 2).unwrap();
+            }
+            assert_eq!(store.days().unwrap()[0].sessions, 1);
+            // An hour of uninterrupted work, a brief Alt-Tab, and a newly
+            // qualified return still belong to the same foreground session.
+            record_usage(store, &mut times, "app", 10, true, start + 3612).unwrap();
+            assert_eq!(store.days().unwrap()[0].sessions, 1);
+            let mut resumed = store.get("app_session_times").unwrap();
+            record_usage(store, &mut resumed, "app", 10, true, start + 4000).unwrap();
+            assert_eq!(store.days().unwrap()[0].sessions, 1);
+            // A full twenty minutes without confirmed app use permits a new one.
+            record_usage(store, &mut resumed, "app", 10, true, start + 5200).unwrap();
+            assert_eq!(store.days().unwrap()[0].sessions, 2);
+            assert_eq!(
+                store
+                    .get::<HashMap<String, i64>>("app_session_times")
+                    .unwrap()["app"],
+                start + 5200
+            );
+        });
+    }
+    #[test]
+    fn a_stopping_monitor_keeps_shutdown_signalled_until_the_process_exits() {
+        with_store(|store| {
+            // The process owns this mutex until after its monitor has joined.
+            // Startup must not mistake the remaining process and old heartbeat
+            // for a worker that is ready to accept new commands.
+            let _process = native::exclusive("background", &store.home).unwrap();
+            store.set("heartbeat", &now()).unwrap();
+            store.set("shutdown", &true).unwrap();
+            monitor(store.home.clone()).unwrap();
+            assert!(store.get::<bool>("shutdown").unwrap());
+        });
+    }
+    #[test]
+    fn missing_and_changed_originals_are_still_invalidated() {
+        with_store(|store| {
+            let missing = add_test_app(store, "Missing", "steam://rungameid/706");
+            let changed = add_test_app(store, "Changed", "steam://rungameid/707");
+            apply(store, true).unwrap();
+            let before: State = store.get("state").unwrap();
+            std::fs::remove_file(&missing.source).unwrap();
+            std::fs::write(
+                &changed.source,
+                b"[InternetShortcut]\r\nURL=steam://rungameid/708\r\n",
+            )
+            .unwrap();
+            apply(store, false).unwrap();
+            assert!(!store.app(&missing.id).unwrap().valid);
+            assert!(!store.app(&changed.id).unwrap().valid);
+            assert!(store.get::<State>("state").unwrap().owned.is_empty());
+            assert!(
+                before
+                    .owned
+                    .iter()
+                    .all(|owned| !Path::new(&owned.path).exists())
+            );
+            assert!(Path::new(&changed.source).is_file());
+        });
+    }
+    #[test]
     fn prepared_create_collision_does_not_delete_an_identical_user_file() {
         with_store(|store| {
             add_test_app(store, "Collision", "steam://rungameid/108");
@@ -2040,6 +2207,36 @@ mod tests {
             assert!(!Path::new(&path).exists());
             assert!(store.get::<State>("state").unwrap().owned.is_empty());
             assert!(Path::new(&first.source).is_file());
+        });
+    }
+    #[test]
+    fn undo_follows_commit_order_after_the_system_clock_moves_backwards() {
+        with_store(|store| {
+            let first = add_test_app(store, "First", "steam://rungameid/701");
+            apply(store, true).unwrap();
+            let first_state: State = store.get("state").unwrap();
+            store.policy(&first.id, Policy::Never).unwrap();
+            add_test_app(store, "Second", "steam://rungameid/702");
+            apply(store, false).unwrap();
+            let second_state: State = store.get("state").unwrap();
+            // Actual insertion order survives clock correction; wall timestamps do not.
+            store
+                .db
+                .execute("UPDATE transactions SET at=10000", [])
+                .unwrap();
+            store.db.execute(
+                "UPDATE transactions SET at=9000 WHERE rowid=(SELECT MAX(rowid) FROM transactions)",
+                [],
+            ).unwrap();
+            rollback(store).unwrap();
+            let restored: State = store.get("state").unwrap();
+            assert_eq!(restored.owned.len(), 1);
+            assert_eq!(restored.owned[0].app, first.id);
+            assert!(Path::new(&first_state.owned[0].path).is_file());
+            assert!(!Path::new(&second_state.owned[0].path).exists());
+            rollback(store).unwrap();
+            assert!(store.get::<State>("state").unwrap().owned.is_empty());
+            assert!(!Path::new(&first_state.owned[0].path).exists());
         });
     }
     #[test]

@@ -20,6 +20,75 @@ const MUTED: Color32 = Color32::from_rgb(163, 177, 193);
 const WARNING: Color32 = Color32::from_rgb(246, 196, 110);
 const ERROR: Color32 = Color32::from_rgb(255, 153, 153);
 const SURFACE: Color32 = Color32::from_rgb(29, 38, 50);
+const UI_SCALES: [f32; 5] = [1.0, 1.25, 1.5, 1.75, 2.0];
+const APPS_PER_PAGE: usize = 24;
+
+#[derive(Default)]
+struct CatalogCache {
+    search: Vec<String>,
+    ranking: HashMap<String, usize>,
+    query: Option<(String, usize, usize)>,
+    indices: Vec<usize>,
+}
+impl CatalogCache {
+    fn rebuild(&mut self, apps: &[App], ranking: &[Ranked]) {
+        self.search = apps.iter().map(search_text).collect();
+        self.ranking = ranking
+            .iter()
+            .enumerate()
+            .map(|(index, ranked)| (ranked.id.clone(), index))
+            .collect();
+        self.query = None;
+    }
+    fn update(
+        &mut self,
+        apps: &[App],
+        ranking: &[Ranked],
+        query: &str,
+        filter: usize,
+        sort: usize,
+        recent: &HashSet<String>,
+    ) {
+        if self.query.as_ref().is_some_and(|previous| {
+            previous.0 == query && previous.1 == filter && previous.2 == sort
+        }) {
+            return;
+        }
+        let query_lower = query.to_lowercase();
+        let words: Vec<_> = query_lower.split_whitespace().collect();
+        let ranked = |app: &App| self.ranking.get(&app.id).and_then(|&i| ranking.get(i));
+        self.indices = apps
+            .iter()
+            .enumerate()
+            .filter(|(index, app)| {
+                words.iter().all(|word| self.search[*index].contains(word))
+                    && match filter {
+                        1 => ranked(app).is_some_and(|ranked| ranked.eligible),
+                        2 => app.policy == Policy::Always,
+                        3 => app.policy == Policy::Never,
+                        4 => !app.valid,
+                        5 => recent.contains(&app.id),
+                        _ => true,
+                    }
+            })
+            .map(|(index, _)| index)
+            .collect();
+        if sort != 0 {
+            self.indices.sort_by(|&a, &b| {
+                let a = ranked(&apps[a]);
+                let b = ranked(&apps[b]);
+                if sort == 1 {
+                    b.map_or(0.0, |ranked| ranked.score)
+                        .total_cmp(&a.map_or(0.0, |ranked| ranked.score))
+                } else {
+                    b.map_or(0, |ranked| ranked.seconds)
+                        .cmp(&a.map_or(0, |ranked| ranked.seconds))
+                }
+            });
+        }
+        self.query = Some((query.into(), filter, sort));
+    }
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum NoticeKind {
@@ -93,12 +162,16 @@ pub struct Settings {
     app_filter: usize,
     app_sort: usize,
     app_page: usize,
+    catalog: CatalogCache,
+    details_app: Option<String>,
+    pending_policy: Option<(String, Policy)>,
     notice: Option<Notice>,
     notice_details: bool,
     status: String,
     catalog_warning: String,
     autostart_warning: String,
     tray_warning: String,
+    settings_shortcut_warning: String,
     background_alive: bool,
     background_disabled: bool,
     heartbeat: i64,
@@ -227,6 +300,23 @@ fn policy_name(policy: &Policy) -> &'static str {
         Policy::Never => t("Не добавлять", "Never add"),
     }
 }
+fn app_filter_name(filter: usize) -> &'static str {
+    match filter {
+        1 => t("Подходят для размещения", "Eligible for placement"),
+        2 => t("Всегда на столе", "Always on desktop"),
+        3 => t("Не добавлять", "Never add"),
+        4 => t("Недоступные", "Unavailable"),
+        5 => t("Последние добавленные", "Recently added"),
+        _ => t("Все приложения", "All apps"),
+    }
+}
+fn app_sort_name(sort: usize) -> &'static str {
+    match sort {
+        1 => t("По рейтингу", "By ranking"),
+        2 => t("По времени использования", "By usage time"),
+        _ => t("По алфавиту", "Alphabetically"),
+    }
+}
 fn operating_mode(config: &Config) -> OperatingMode {
     if config.automatic {
         OperatingMode::Adaptive
@@ -348,31 +438,55 @@ fn merge_config(base: &Config, draft: &Config, latest: &Config) -> Result<Config
     Ok(merged)
 }
 fn validated_scale(scale: f32) -> f32 {
-    if scale.is_finite()
-        && [1.0_f32, 1.25, 1.5]
-            .iter()
-            .any(|v| (scale - v).abs() < 0.01)
-    {
+    if scale.is_finite() && UI_SCALES.iter().any(|v| (scale - v).abs() < 0.01) {
         scale
     } else {
         1.0
     }
 }
-fn matches_search(app: &App, query: &str) -> bool {
-    let haystack = format!(
-        "{} {} {} {}",
-        app.name, app.category, app.source, app.target
-    )
-    .to_lowercase();
-    query
-        .split_whitespace()
-        .all(|word| haystack.contains(&word.to_lowercase()))
+fn requested_scale(ctx: &egui::Context, current: f32) -> Option<f32> {
+    let action = ctx.input_mut(|input| {
+        if input.consume_key(egui::Modifiers::COMMAND, egui::Key::Num0) {
+            Some(0)
+        } else if input.consume_key(egui::Modifiers::COMMAND, egui::Key::Plus)
+            || input.consume_key(egui::Modifiers::COMMAND, egui::Key::Equals)
+        {
+            Some(1)
+        } else if input.consume_key(egui::Modifiers::COMMAND, egui::Key::Minus) {
+            Some(-1)
+        } else {
+            None
+        }
+    })?;
+    let index = UI_SCALES
+        .iter()
+        .position(|scale| (*scale - current).abs() < 0.01)
+        .unwrap_or_default();
+    Some(match action {
+        1 => UI_SCALES[(index + 1).min(UI_SCALES.len() - 1)],
+        -1 => UI_SCALES[index.saturating_sub(1)],
+        _ => 1.0,
+    })
 }
-fn page_controls(ui: &mut egui::Ui, page: &mut usize, count: usize) {
-    let pages = count.div_ceil(24).max(1);
+fn search_text(app: &App) -> String {
+    let category_alias = match app.category.as_str() {
+        "Manual" => "Добавлено вами Added by you",
+        "Desktop" => "Рабочий стол Desktop",
+        "Start menu" => "Меню Пуск Start menu",
+        _ => "",
+    };
+    format!(
+        "{} {} {} {} {}",
+        app.name, app.category, category_alias, app.source, app.target
+    )
+    .to_lowercase()
+}
+fn page_controls(ui: &mut egui::Ui, page: &mut usize, count: usize) -> bool {
+    let previous = *page;
+    let pages = count.div_ceil(APPS_PER_PAGE).max(1);
     *page = (*page).min(pages - 1);
     if pages <= 1 {
-        return;
+        return *page != previous;
     }
     ui.horizontal_wrapped(|ui| {
         if ui
@@ -381,12 +495,24 @@ fn page_controls(ui: &mut egui::Ui, page: &mut usize, count: usize) {
         {
             *page -= 1;
         }
-        ui.label(format!(
-            "{} {} / {}",
-            t("Страница", "Page"),
-            *page + 1,
-            pages
-        ));
+        ui.label(t("Страница", "Page"));
+        let mut requested = *page + 1;
+        if ui
+            .add_sized(
+                [76.0, 38.0],
+                egui::DragValue::new(&mut requested)
+                    .range(1..=pages)
+                    .update_while_editing(false),
+            )
+            .on_hover_text(t(
+                "Нажмите число и введите нужную страницу. Ctrl+Page Up / Page Down — соседние страницы.",
+                "Click the number to enter a page. Ctrl+Page Up / Page Down moves between pages.",
+            ))
+            .changed()
+        {
+            *page = requested.saturating_sub(1).min(pages - 1);
+        }
+        ui.label(format!("/ {pages}"));
         if ui
             .add_enabled(*page + 1 < pages, egui::Button::new(t("Вперёд", "Next")))
             .clicked()
@@ -394,6 +520,7 @@ fn page_controls(ui: &mut egui::Ui, page: &mut usize, count: usize) {
             *page += 1;
         }
     });
+    *page != previous
 }
 fn card(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::group(ui.style())
@@ -401,9 +528,22 @@ fn card(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
         .inner_margin(18.0)
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
+            ui.spacing_mut().slider_width = (ui.available_width() - 120.0).clamp(80.0, 250.0);
             content(ui);
         });
     ui.add_space(8.0);
+}
+fn collapsing_header(ui: &egui::Ui, title: &str) -> egui::CollapsingHeader {
+    // egui headers otherwise extend even when the surrounding page wraps.
+    let width =
+        (ui.available_width() - ui.spacing().indent - ui.spacing().button_padding.x).max(1.0);
+    let text = egui::WidgetText::from(title).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Wrap),
+        width,
+        egui::TextStyle::Button,
+    );
+    egui::CollapsingHeader::new(text).id_salt(title)
 }
 fn constrain_page_width(ui: &mut egui::Ui) {
     // set_max_width can expand a Ui. Keep the original viewport constraint,
@@ -411,6 +551,8 @@ fn constrain_page_width(ui: &mut egui::Ui) {
     ui.set_max_width(ui.available_width().min(1060.0));
 }
 fn configure_style(ctx: &egui::Context) {
+    // Keyboard zoom must use the same persisted values as the visible selector.
+    ctx.options_mut(|options| options.zoom_with_keyboard = false);
     // The panels use a dark palette. Selecting only the active style would
     // let the first Windows light-theme event replace it with egui defaults.
     ctx.set_theme(egui::ThemePreference::Dark);
@@ -448,11 +590,30 @@ fn primary(ui: &mut egui::Ui, enabled: bool, label: &str) -> egui::Response {
 }
 fn dialog(
     ctx: &egui::Context,
-    id: &'static str,
+    id: &str,
     width: f32,
     title: &str,
     content: impl FnOnce(&mut egui::Ui),
 ) -> egui::ModalResponse<()> {
+    dialog_frame(
+        ctx,
+        id,
+        width,
+        |_| {},
+        |ui| {
+            ui.heading(title);
+            ui.add_space(8.0);
+            content(ui);
+        },
+    )
+}
+fn dialog_frame<R>(
+    ctx: &egui::Context,
+    id: &str,
+    width: f32,
+    header: impl FnOnce(&mut egui::Ui) -> R,
+    content: impl FnOnce(&mut egui::Ui),
+) -> egui::ModalResponse<R> {
     egui::Modal::new(egui::Id::new(id))
         .frame(egui::Frame::popup(&ctx.style()).inner_margin(18.0))
         .show(ctx, |ui| {
@@ -462,14 +623,14 @@ fn dialog(
             // instead of making its scroll viewport inherit an old short size.
             ui.set_max_height(height);
             ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+            let start = ui.cursor().min.y;
+            let result = header(ui);
+            let body_height = (height - (ui.cursor().min.y - start)).max(1.0);
             egui::ScrollArea::vertical()
                 .id_salt(id)
-                .max_height(height)
-                .show(ui, |ui| {
-                    ui.heading(title);
-                    ui.add_space(8.0);
-                    content(ui);
-                });
+                .max_height(body_height)
+                .show(ui, content);
+            result
         })
 }
 fn number(ui: &mut egui::Ui, label: &str, value: &mut i64, min: i64, max: i64) -> bool {
@@ -550,12 +711,16 @@ impl Settings {
             app_filter: 0,
             app_sort: 0,
             app_page: 0,
+            catalog: CatalogCache::default(),
+            details_app: None,
+            pending_policy: None,
             notice: None,
             notice_details: false,
             status: String::new(),
             catalog_warning: String::new(),
             autostart_warning: String::new(),
             tray_warning: String::new(),
+            settings_shortcut_warning: String::new(),
             background_alive: false,
             background_disabled: false,
             heartbeat: 0,
@@ -620,11 +785,15 @@ impl Settings {
             || self.confirm_disable
             || self.import_open
             || self.notice_details
+            || self.details_app.is_some()
     }
     fn refresh_dirty(&mut self) {
         self.dirty = self.onboarding || !config_equal(&self.config, &self.edit_base);
     }
     fn reload(&mut self) -> Result<()> {
+        // A command result and the state it changed must come from one snapshot.
+        // A worker may finish between individual SELECTs while Settings is open.
+        let snapshot = self.store.db.unchecked_transaction()?;
         let mut apps = self.store.apps()?;
         apps.sort_by_key(|a| a.name.to_lowercase());
         let state: State = self.store.get("state")?;
@@ -639,6 +808,7 @@ impl Settings {
         let catalog_warning = self.store.get("catalog_warning")?;
         let autostart_warning = self.store.get("autostart_warning")?;
         let tray_warning = self.store.get("tray_warning")?;
+        let settings_shortcut_warning = self.store.get("settings_shortcut_warning")?;
         let heartbeat = self.store.get("heartbeat")?;
         let background_alive = native::is_running("background", &self.store.home)?;
         let background_disabled = self.store.get("background_disabled")?;
@@ -672,14 +842,17 @@ impl Settings {
                 completed.push((pending.id, status, message));
             }
         }
+        snapshot.commit()?;
         self.apps = apps;
         self.state = state;
         self.learning = learning;
         self.ranking = ranking;
+        self.catalog.rebuild(&self.apps, &self.ranking);
         self.status = status;
         self.catalog_warning = catalog_warning;
         self.autostart_warning = autostart_warning;
         self.tray_warning = tray_warning;
+        self.settings_shortcut_warning = settings_shortcut_warning;
         self.heartbeat = heartbeat;
         self.background_alive = background_alive;
         self.background_disabled = background_disabled;
@@ -725,6 +898,9 @@ impl Settings {
                 kind,
             );
         }
+        if self.job.is_none() && self.pending_commands.is_empty() {
+            self.pending_policy = None;
+        }
         Ok(())
     }
     fn start_job(
@@ -760,6 +936,12 @@ impl Settings {
             store.command(&action)?;
             Ok(JobResult::Queued(store.db.last_insert_rowid(), action))
         });
+    }
+    fn change_policy(&mut self, id: String, policy: Policy) {
+        if !self.busy() {
+            self.queue(&format!("policy:{id}:{policy:?}"));
+            self.pending_policy = Some((id, policy));
+        }
     }
     fn restart_background(&mut self) {
         let home = self.store.home.clone();
@@ -1008,6 +1190,7 @@ impl Settings {
                         }
                         Err(e) => {
                             self.close_after_save = false;
+                            self.pending_policy = None;
                             if self.onboarding
                                 && engine::setup_complete(&self.store).unwrap_or(false)
                             {
@@ -1025,6 +1208,7 @@ impl Settings {
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.job = None;
+                    self.pending_policy = None;
                     self.close_after_save = false;
                     self.fail("The operation stopped unexpectedly. Your saved settings are available; try again.");
                 }
@@ -1114,28 +1298,33 @@ impl Settings {
                 Err(e) => self.fail(format!("{e:#}")),
             }
         }
-        let before = self.ui_scale;
+        let mut scale = self.ui_scale;
         egui::ComboBox::from_id_salt("ui-scale")
             .selected_text(format!("{:.0}%", self.ui_scale * 100.0))
             .width(88.0)
             .show_ui(ui, |ui| {
-                for (value, label) in [(1.0, "100%"), (1.25, "125%"), (1.5, "150%")] {
-                    ui.selectable_value(&mut self.ui_scale, value, label);
+                for value in UI_SCALES {
+                    ui.selectable_value(&mut scale, value, format!("{:.0}%", value * 100.0));
                 }
             })
             .response
             .on_hover_text(t(
-                "Размер текста и элементов интерфейса",
-                "Text and interface size",
+                "Дополнительный масштаб поверх настроек Windows. Ctrl+плюс / минус — изменить; Ctrl+0 — 100%.",
+                "Additional scale on top of Windows display settings. Ctrl+plus / minus to change; Ctrl+0 for 100%.",
             ));
-        if before != self.ui_scale {
-            match self.store.set("ui_scale", &self.ui_scale) {
-                Ok(()) => ctx.set_zoom_factor(self.ui_scale),
-                Err(e) => {
-                    self.ui_scale = before;
-                    self.fail(format!("{e:#}"));
-                }
+        self.set_scale(ctx, scale);
+    }
+    fn set_scale(&mut self, ctx: &egui::Context, requested: f32) {
+        let scale = validated_scale(requested);
+        if (scale - self.ui_scale).abs() < 0.01 {
+            return;
+        }
+        match self.store.set("ui_scale", &scale) {
+            Ok(()) => {
+                self.ui_scale = scale;
+                ctx.set_zoom_factor(scale);
             }
+            Err(error) => self.fail(format!("{error:#}")),
         }
     }
     fn navigation(&mut self, ui: &mut egui::Ui, vertical: bool) {
@@ -1303,8 +1492,10 @@ impl Settings {
         };
         egui::ComboBox::from_id_salt("learning-mode")
             .width(ui.available_width().min(430.0))
+            .wrap()
             .selected_text(label(before))
             .show_ui(ui, |ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                 for mode in [Mode::Sessions, Mode::Days, Mode::Either, Mode::Both] {
                     ui.selectable_value(&mut self.config.learning_mode, mode, label(mode));
                 }
@@ -1454,7 +1645,7 @@ impl Settings {
         if previous != self.config.zone_columns {
             self.refresh_dirty();
         }
-        egui::CollapsingHeader::new(t("Точное положение", "Exact position")).show(ui, |ui| {
+        collapsing_header(ui, t("Точное положение", "Exact position")).show(ui, |ui| {
             ui.small(t(
                 "Столбцы и строки отсчитываются от нуля.",
                 "Columns and rows are numbered from zero.",
@@ -1719,10 +1910,10 @@ impl Settings {
                         "Данные остаются на этом компьютере. Сохраняются дневные счётчики приложений; текст окон и нажатия клавиш не записываются.",
                         "Data stays on this computer. Daily app-usage totals are stored; window text and keystrokes are not recorded."
                     ));
-                    egui::CollapsingHeader::new(t(
-                        "Куда устанавливается программа",
-                        "Installation location",
-                    ))
+                    collapsing_header(
+                        ui,
+                        t("Куда устанавливается программа", "Installation location"),
+                    )
                     .show(ui, |ui| {
                         ui.add(
                             egui::Label::new(self.store.home.display().to_string())
@@ -1743,7 +1934,9 @@ impl Settings {
             &self.saved_config,
             &self.learning,
         );
-        if (!self.autostart_warning.is_empty() || !self.tray_warning.is_empty())
+        if (!self.autostart_warning.is_empty()
+            || !self.tray_warning.is_empty()
+            || !self.settings_shortcut_warning.is_empty())
             && self.background_alive
             && !matches!(value, Health::Starting | Health::Unresponsive)
         {
@@ -1852,7 +2045,9 @@ impl Settings {
                     ));
                 }
                 Health::Attention => {
-                    ui.label(i18n::runtime(&self.status));
+                    if !self.status.is_empty() {
+                        ui.label(i18n::runtime(&self.status));
+                    }
                     if !self.autostart_warning.is_empty()
                         && !self.status.contains(&self.autostart_warning)
                     {
@@ -1893,6 +2088,11 @@ impl Settings {
                     ));
                 }
                 _ => {}
+            }
+            if !self.settings_shortcut_warning.is_empty()
+                && !self.status.contains(&self.settings_shortcut_warning)
+            {
+                ui.colored_label(WARNING, i18n::runtime(&self.settings_shortcut_warning));
             }
             self.learning_progress(ui);
         });
@@ -2034,7 +2234,7 @@ impl Settings {
                 when(self.state.last_review)
             ));
         });
-        egui::CollapsingHeader::new(t("Почему выбраны эти приложения", "Why these apps were chosen")).show(ui, |ui| {
+        collapsing_header(ui, t("Почему выбраны эти приложения", "Why these apps were chosen")).show(ui, |ui| {
             let contenders: Vec<_> = self.ranking.iter().filter(|r| r.eligible && !self.state.owned.iter().any(|o| o.app == r.id)).take(5).collect();
             if contenders.is_empty() {
                 ui.label(t(
@@ -2053,14 +2253,15 @@ impl Settings {
     }
     fn applications(&mut self, ui: &mut egui::Ui) {
         let previous_filter = (self.filter.clone(), self.app_filter, self.app_sort);
-        ui.heading(RichText::new(t("Приложения", "Apps")).size(28.0));
-        if ui.available_width() >= 700.0 {
+        let compact = ui.available_width() < 700.0;
+        if !compact {
+            ui.heading(RichText::new(t("Приложения", "Apps")).size(28.0));
             ui.label(t(
                 "Выберите, что всегда должно быть под рукой, а что не нужно добавлять.",
                 "Choose what should always be nearby and what to leave out.",
             ));
+            ui.add_space(10.0);
         }
-        ui.add_space(10.0);
         card(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 let search = ui.add(
@@ -2089,64 +2290,14 @@ impl Settings {
                     search.request_focus();
                 }
             });
-            let filters_layout = if ui.available_width() < 540.0 {
-                egui::Layout::top_down(egui::Align::Min)
-            } else {
-                egui::Layout::left_to_right(egui::Align::Center)
-            };
-            ui.with_layout(filters_layout, |ui| {
-                egui::ComboBox::from_id_salt("app-filter")
-                    .width(ui.available_width().min(250.0))
-                    .selected_text(match self.app_filter {
-                        1 => t("Подходят для размещения", "Eligible for placement"),
-                        2 => t("Всегда на столе", "Always on desktop"),
-                        3 => t("Не добавлять", "Never add"),
-                        4 => t("Недоступные", "Unavailable"),
-                        5 => t("Последние добавленные", "Recently added"),
-                        _ => t("Все приложения", "All apps"),
-                    })
-                    .show_ui(ui, |ui| {
-                        for (value, label) in [
-                            (0, t("Все приложения", "All apps")),
-                            (1, t("Подходят для размещения", "Eligible for placement")),
-                            (2, t("Всегда на столе", "Always on desktop")),
-                            (3, t("Не добавлять", "Never add")),
-                            (4, t("Недоступные", "Unavailable")),
-                        ] {
-                            ui.selectable_value(&mut self.app_filter, value, label);
-                        }
-                        if !self.highlighted_apps.is_empty() {
-                            ui.selectable_value(
-                                &mut self.app_filter,
-                                5,
-                                t("Последние добавленные", "Recently added"),
-                            );
-                        }
-                    });
-                egui::ComboBox::from_id_salt("app-sort")
-                    .width(ui.available_width().min(250.0))
-                    .selected_text(match self.app_sort {
-                        1 => t("По рейтингу", "By ranking"),
-                        2 => t("По времени использования", "By usage time"),
-                        _ => t("По алфавиту", "Alphabetically"),
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut self.app_sort,
-                            0,
-                            t("По алфавиту", "Alphabetically"),
-                        );
-                        ui.selectable_value(&mut self.app_sort, 1, t("По рейтингу", "By ranking"));
-                        ui.selectable_value(
-                            &mut self.app_sort,
-                            2,
-                            t("По времени использования", "By usage time"),
-                        );
-                    });
-            });
             ui.horizontal_wrapped(|ui| {
-                if primary(ui, !self.busy(), t("Добавить ярлыки…", "Add shortcuts…"))
-                    .on_hover_text("Ctrl+O")
+                let add_label = if compact {
+                    t("Добавить…", "Add…")
+                } else {
+                    t("Добавить ярлыки…", "Add shortcuts…")
+                };
+                if primary(ui, !self.busy(), add_label)
+                    .on_hover_text(t("Добавить ярлыки · Ctrl+O", "Add shortcuts · Ctrl+O"))
                     .clicked()
                 {
                     self.open_import([]);
@@ -2154,20 +2305,105 @@ impl Settings {
                 if ui
                     .add_enabled(
                         !self.busy(),
-                        egui::Button::new(t(
-                            "Найти установленные приложения",
-                            "Find installed apps",
-                        )),
+                        egui::Button::new(if compact {
+                            t("Обновить", "Refresh")
+                        } else {
+                            t("Найти установленные приложения", "Find installed apps")
+                        }),
                     )
+                    .on_hover_text(t(
+                        "Найти ярлыки на рабочем столе и в меню «Пуск». Ваши правила сохранятся. F5 — обновить список.",
+                        "Find shortcuts on the desktop and in the Start menu. Your rules are kept. F5 refreshes the list.",
+                    ))
                     .clicked()
                 {
                     self.queue("rescan");
                 }
             });
-            ui.small(t(
-                "Можно перетащить ярлыки в окно. Поиск: Ctrl+F.",
-                "You can also drag shortcuts into this window. Search: Ctrl+F.",
-            ));
+            let filters_active = self.app_filter != 0 || self.app_sort != 0;
+            let filter_heading = if self.app_filter != 0 {
+                format!(
+                    "{}: {}",
+                    t("Фильтр", "Filter"),
+                    app_filter_name(self.app_filter)
+                )
+            } else if self.app_sort != 0 {
+                format!(
+                    "{}: {}",
+                    t("Порядок", "Order"),
+                    app_sort_name(self.app_sort)
+                )
+            } else {
+                t("Фильтр и порядок", "Filter and order").into()
+            };
+            let show_filters = |ui: &mut egui::Ui| {
+                let vertical = ui.available_width() < 540.0;
+                let selectors = |ui: &mut egui::Ui| {
+                    egui::ComboBox::from_id_salt("app-filter")
+                        .width(ui.available_width().min(250.0))
+                        .wrap()
+                        .selected_text(app_filter_name(self.app_filter))
+                        .show_ui(ui, |ui| {
+                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                            for (value, label) in [
+                                (0, t("Все приложения", "All apps")),
+                                (1, t("Подходят для размещения", "Eligible for placement")),
+                                (2, t("Всегда на столе", "Always on desktop")),
+                                (3, t("Не добавлять", "Never add")),
+                                (4, t("Недоступные", "Unavailable")),
+                            ] {
+                                ui.selectable_value(&mut self.app_filter, value, label);
+                            }
+                            if !self.highlighted_apps.is_empty() {
+                                ui.selectable_value(
+                                    &mut self.app_filter,
+                                    5,
+                                    t("Последние добавленные", "Recently added"),
+                                );
+                            }
+                        });
+                    egui::ComboBox::from_id_salt("app-sort")
+                        .width(ui.available_width().min(250.0))
+                        .wrap()
+                        .selected_text(app_sort_name(self.app_sort))
+                        .show_ui(ui, |ui| {
+                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                            ui.selectable_value(
+                                &mut self.app_sort,
+                                0,
+                                t("По алфавиту", "Alphabetically"),
+                            );
+                            ui.selectable_value(
+                                &mut self.app_sort,
+                                1,
+                                t("По рейтингу", "By ranking"),
+                            );
+                            ui.selectable_value(
+                                &mut self.app_sort,
+                                2,
+                                t("По времени использования", "By usage time"),
+                            );
+                        });
+                };
+                if vertical {
+                    ui.vertical(selectors);
+                } else {
+                    ui.horizontal(selectors);
+                }
+            };
+            if compact {
+                collapsing_header(ui, &filter_heading)
+                    .id_salt("catalog-filters")
+                    .default_open(filters_active)
+                    .show(ui, show_filters);
+            } else {
+                let mut show_filters = show_filters;
+                show_filters(ui);
+                ui.small(t(
+                    "Можно перетащить ярлыки в окно. Поиск: Ctrl+F.",
+                    "You can also drag shortcuts into this window. Search: Ctrl+F.",
+                ));
+            }
         });
         if previous_filter != (self.filter.clone(), self.app_filter, self.app_sort) {
             self.app_page = 0;
@@ -2214,7 +2450,7 @@ impl Settings {
                 );
                 ui.label(t("Доступные приложения сохранены. Подробности помогут понять, что нужно проверить.",
                     "Available apps have been kept. See the details to find out what needs checking."));
-                egui::CollapsingHeader::new(t("Подробности", "Details")).show(ui, |ui| {
+                collapsing_header(ui, t("Подробности", "Details")).show(ui, |ui| {
                     ui.add(
                         egui::Label::new(i18n::runtime(&self.catalog_warning))
                             .wrap()
@@ -2223,48 +2459,27 @@ impl Settings {
                 });
             });
         }
-        let ranking: HashMap<_, _> = self
-            .ranking
-            .iter()
-            .map(|ranked| (ranked.id.as_str(), ranked))
-            .collect();
-        let mut indices: Vec<usize> = (0..self.apps.len())
-            .filter(|&index| {
-                let app = &self.apps[index];
-                if !matches_search(app, &self.filter) {
-                    return false;
-                }
-                match self.app_filter {
-                    1 => ranking.get(app.id.as_str()).is_some_and(|r| r.eligible),
-                    2 => app.policy == Policy::Always,
-                    3 => app.policy == Policy::Never,
-                    4 => !app.valid,
-                    5 => self.highlighted_apps.contains(&app.id),
-                    _ => true,
-                }
-            })
-            .collect();
-        if self.app_sort != 0 {
-            indices.sort_by(|&a, &b| {
-                let a = ranking.get(self.apps[a].id.as_str());
-                let b = ranking.get(self.apps[b].id.as_str());
-                if self.app_sort == 1 {
-                    b.map_or(0.0, |r| r.score)
-                        .total_cmp(&a.map_or(0.0, |r| r.score))
-                } else {
-                    b.map_or(0, |r| r.seconds).cmp(&a.map_or(0, |r| r.seconds))
-                }
-            });
-        }
+        self.catalog.update(
+            &self.apps,
+            &self.ranking,
+            &self.filter,
+            self.app_filter,
+            self.app_sort,
+            &self.highlighted_apps,
+        );
+        let match_count = self.catalog.indices.len();
         ui.small(format!(
             "{}: {} / {}",
             t("Найдено", "Matches"),
-            indices.len(),
+            match_count,
             self.apps.len()
         ));
-        let match_count = indices.len();
-        page_controls(ui, &mut self.app_page, match_count);
-        if indices.is_empty() {
+        self.page_scroll_reset |= ui
+            .push_id("catalog-pages-top", |ui| {
+                page_controls(ui, &mut self.app_page, match_count)
+            })
+            .inner;
+        if self.catalog.indices.is_empty() {
             card(ui, |ui| {
                 ui.heading(if self.apps.is_empty() {
                     t("Список пока пуст", "No apps yet")
@@ -2289,110 +2504,237 @@ impl Settings {
             });
             return;
         }
-        let mut selected_command = None;
-        let mut action_error = None;
+        let mut selected_policy = None;
+        let mut details = None;
         let busy = self.busy();
-        for index in indices.into_iter().skip(self.app_page * 24).take(24) {
+        for &index in self
+            .catalog
+            .indices
+            .iter()
+            .skip(self.app_page * APPS_PER_PAGE)
+            .take(APPS_PER_PAGE)
+        {
             let app = &self.apps[index];
+            let pending = self.pending_policy.as_ref().filter(|(id, _)| id == &app.id);
             ui.push_id(&app.id, |ui| {
-                card(ui, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.strong(RichText::new(&app.name).size(20.0));
-                        if app.pinned {
-                            ui.small(t("На панели задач", "On the taskbar"));
-                        }
-                        if !app.valid {
-                            ui.colored_label(
-                                WARNING,
-                                t(
-                                    "Ярлык или цель недоступны",
-                                    "Shortcut or target unavailable",
-                                ),
+                egui::Frame::group(ui.style())
+                    .fill(SURFACE)
+                    .inner_margin(14.0)
+                    .show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        let title = |ui: &mut egui::Ui| {
+                            ui.add(
+                                egui::Label::new(RichText::new(&app.name).size(20.0).strong())
+                                    .wrap(),
                             );
-                        }
-                    });
-                    let category = match app.category.as_str() {
-                        "Manual" => t("Добавлено вами", "Added by you"),
-                        "Desktop" => t("Рабочий стол", "Desktop"),
-                        "Start menu" => t("Меню «Пуск»", "Start menu"),
-                        other => other,
-                    };
-                    if !category.is_empty() {
-                        ui.small(category);
-                    }
-                    if self.highlighted_apps.contains(&app.id) {
-                        ui.colored_label(ACCENT, t("Добавлен в список", "Added to the list"));
-                    }
-                    ui.add_enabled_ui(!busy, |ui| {
-                        let mut policy = app.policy.clone();
-                        egui::ComboBox::from_id_salt("policy")
-                            .width(ui.available_width().min(320.0))
-                            .selected_text(policy_name(&policy))
-                            .show_ui(ui, |ui| {
-                                for value in [Policy::Auto, Policy::Always, Policy::Never] {
-                                    let label = policy_name(&value);
-                                    ui.selectable_value(&mut policy, value, label);
-                                }
-                            });
-                        if policy != app.policy {
-                            selected_command = Some(format!("policy:{}:{policy:?}", app.id));
-                        }
-                    });
-                    if let Some(ranked) = ranking.get(app.id.as_str()) {
-                        ui.label(i18n::runtime(&ranked.reason));
-                        egui::CollapsingHeader::new(t(
-                            "Статистика и исходный ярлык",
-                            "Usage and original shortcut",
-                        ))
-                        .show(ui, |ui| {
-                            ui.label(format!(
-                                "{}: {:.1} · {}: {} · {}: {}",
-                                t("Рейтинг", "Score"),
-                                ranked.score,
-                                t("Дней использования", "Active days"),
-                                ranked.days,
-                                t("Активных минут", "Active minutes"),
-                                ranked.seconds / 60
-                            ));
-                            ui.small(format!(
-                                "{}: {}",
-                                t(
-                                    "Запросов запуска через быстрый ярлык",
-                                    "Launches through a quick shortcut"
-                                ),
-                                ranked.launches
-                            ));
-                            ui.label(t("Исходный ярлык", "Original shortcut"));
-                            ui.add(egui::Label::new(&app.source).wrap().selectable(true));
                             ui.horizontal_wrapped(|ui| {
-                                if ui.button(t("Показать в папке", "Show in folder")).clicked()
-                                    && let Err(error) =
-                                        native::show_in_folder(Path::new(&app.source))
-                                {
-                                    action_error = Some(format!("{error:#}"));
+                                if self.state.owned.iter().any(|owned| owned.app == app.id) {
+                                    ui.colored_label(
+                                        ACCENT,
+                                        t("На рабочем столе", "On the desktop"),
+                                    );
                                 }
-                                if ui.button(t("Скопировать путь", "Copy path")).clicked()
-                                {
-                                    ui.ctx().copy_text(app.source.clone());
+                                if !app.valid {
+                                    ui.colored_label(WARNING, t("Недоступно", "Unavailable"));
+                                } else if app.pinned {
+                                    ui.small(t("На панели задач", "On the taskbar"));
+                                } else if self.highlighted_apps.contains(&app.id) {
+                                    ui.colored_label(ACCENT, t("Добавлено", "Added"));
+                                } else {
+                                    let category = match app.category.as_str() {
+                                        "Manual" => t("Добавлено вами", "Added by you"),
+                                        "Desktop" => t("Рабочий стол", "Desktop"),
+                                        "Start menu" => t("Меню «Пуск»", "Start menu"),
+                                        other => other,
+                                    };
+                                    if !category.is_empty() {
+                                        ui.small(category);
+                                    }
                                 }
                             });
-                            if !app.target.is_empty() {
-                                ui.small(t("Куда ведёт ярлык", "Shortcut target"));
-                                ui.add(egui::Label::new(&app.target).wrap().selectable(true));
+                        };
+                        let mut controls = |ui: &mut egui::Ui| {
+                            let mut policy = pending
+                                .map_or_else(|| app.policy.clone(), |(_, policy)| policy.clone());
+                            let before = policy.clone();
+                            ui.add_enabled_ui(!busy, |ui| {
+                                egui::ComboBox::from_id_salt("policy")
+                                    .width(ui.available_width().min(260.0))
+                                    .selected_text(policy_name(&policy))
+                                    .show_ui(ui, |ui| {
+                                        for value in [Policy::Auto, Policy::Always, Policy::Never] {
+                                            let label = policy_name(&value);
+                                            ui.selectable_value(&mut policy, value, label);
+                                        }
+                                    });
+                            });
+                            if policy != before {
+                                selected_policy = Some((app.id.clone(), policy));
                             }
-                            if !app.note.is_empty() {
-                                ui.label(i18n::runtime(&app.note));
+                            if ui.button(t("Подробнее", "Details")).clicked() {
+                                details = Some(app.id.clone());
                             }
-                        });
-                    }
-                });
+                        };
+                        if ui.available_width() >= 720.0 {
+                            ui.horizontal(|ui| {
+                                let title_width = ui.available_width() - 430.0;
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(title_width, 0.0),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| {
+                                        ui.set_min_width(title_width);
+                                        title(ui);
+                                    },
+                                );
+                                controls(ui);
+                            });
+                        } else {
+                            title(ui);
+                            if ui.available_width() >= 410.0 {
+                                ui.horizontal(|ui| controls(ui));
+                            } else {
+                                controls(ui);
+                            }
+                        }
+                        if pending.is_some() {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.colored_label(
+                                    ACCENT,
+                                    t("Сохраняем это правило…", "Saving this rule…"),
+                                );
+                            });
+                        }
+                    });
+                ui.add_space(6.0);
             });
         }
-        page_controls(ui, &mut self.app_page, match_count);
-        if let Some(command) = selected_command {
-            self.queue(&command);
+        self.page_scroll_reset |= ui
+            .push_id("catalog-pages-bottom", |ui| {
+                page_controls(ui, &mut self.app_page, match_count)
+            })
+            .inner;
+        if let Some((id, policy)) = selected_policy {
+            self.change_policy(id, policy);
         }
-        if let Some(error) = action_error {
+        if let Some(id) = details {
+            self.details_app = Some(id);
+        }
+    }
+    fn app_details(&mut self, ctx: &egui::Context) {
+        let Some(id) = self.details_app.clone() else {
+            return;
+        };
+        let Some(app) = self.apps.iter().find(|app| app.id == id).cloned() else {
+            self.details_app = None;
+            return;
+        };
+        let ranked = self.ranking.iter().find(|ranked| ranked.id == id).cloned();
+        let pending = self
+            .pending_policy
+            .as_ref()
+            .filter(|(app_id, _)| app_id == &id);
+        let mut policy = pending.map_or_else(|| app.policy.clone(), |(_, policy)| policy.clone());
+        let before = policy.clone();
+        let busy = self.busy();
+        let mut error = None;
+        let response = dialog_frame(
+            ctx,
+            &format!("app-details-{id}"),
+            640.0,
+            |ui| {
+                let close = ui
+                    .horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            primary(ui, true, t("Закрыть", "Close")).clicked()
+                        })
+                        .inner
+                    })
+                    .inner;
+                ui.separator();
+                close
+            },
+            |ui| {
+                ui.heading(&app.name);
+                ui.add_space(8.0);
+                ui.label(t("Правило размещения", "Placement rule"));
+                ui.add_enabled_ui(!busy, |ui| {
+                    egui::ComboBox::from_id_salt("details-policy")
+                        .width(ui.available_width().min(320.0))
+                        .selected_text(policy_name(&policy))
+                        .show_ui(ui, |ui| {
+                            for value in [Policy::Auto, Policy::Always, Policy::Never] {
+                                let label = policy_name(&value);
+                                ui.selectable_value(&mut policy, value, label);
+                            }
+                        });
+                });
+                if pending.is_some() {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(t("Сохраняем это правило…", "Saving this rule…"));
+                    });
+                }
+                ui.small(t(
+                "Правило сохраняется сразу. Следующий состав ярлыков можно проверить и применить на главной.",
+                "The rule is saved immediately. Review and apply the next shortcut selection on Home.",
+            ));
+                if let Some(ranked) = &ranked {
+                    ui.label(i18n::runtime(&ranked.reason));
+                    ui.separator();
+                    ui.heading(t("Использование", "Usage"));
+                    ui.label(format!(
+                        "{}: {:.1} · {}: {} · {}: {}",
+                        t("Рейтинг", "Score"),
+                        ranked.score,
+                        t("Дней использования", "Active days"),
+                        ranked.days,
+                        t("Активных минут", "Active minutes"),
+                        ranked.seconds / 60
+                    ));
+                    ui.small(format!(
+                        "{}: {}",
+                        t(
+                            "Запросов запуска через быстрый ярлык",
+                            "Launches through a quick shortcut"
+                        ),
+                        ranked.launches
+                    ));
+                }
+                ui.separator();
+                ui.heading(t("Исходный ярлык", "Original shortcut"));
+                ui.add(egui::Label::new(&app.source).wrap().selectable(true));
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button(t("Показать в папке", "Show in folder")).clicked()
+                        && let Err(e) = native::show_in_folder(Path::new(&app.source))
+                    {
+                        error = Some(format!("{e:#}"));
+                    }
+                    if ui.button(t("Скопировать путь", "Copy path")).clicked() {
+                        ctx.copy_text(app.source.clone());
+                    }
+                });
+                if !app.target.is_empty() {
+                    ui.label(t("Куда ведёт ярлык", "Shortcut target"));
+                    ui.add(egui::Label::new(&app.target).wrap().selectable(true));
+                }
+                if !app.note.is_empty() {
+                    ui.label(i18n::runtime(&app.note));
+                }
+                if let Some(notice) = &self.notice
+                    && notice.kind == NoticeKind::Error
+                {
+                    ui.colored_label(ERROR, i18n::runtime(&notice.text));
+                }
+            },
+        );
+        if policy != before {
+            self.change_policy(id, policy);
+        }
+        if response.inner || response.should_close() {
+            self.details_app = None;
+        }
+        if let Some(error) = error {
             self.fail(error);
         }
     }
@@ -2405,8 +2747,11 @@ impl Settings {
             t("Данные", "Data"),
         ];
         if ui.available_width() < 700.0 {
+            let show_title = ui.available_width() >= 520.0;
             ui.horizontal_wrapped(|ui| {
-                ui.heading(RichText::new(t("Настройки", "Settings")).size(28.0));
+                if show_title {
+                    ui.heading(RichText::new(t("Настройки", "Settings")).size(28.0));
+                }
                 egui::ComboBox::from_id_salt("settings-section")
                     .selected_text(sections[self.settings_section.min(sections.len() - 1)])
                     .width(250.0_f32.min(ui.available_width()))
@@ -2469,7 +2814,7 @@ impl Settings {
                         if previous != self.config.interval_days {
                             self.refresh_dirty();
                         }
-                        egui::CollapsingHeader::new(t("Другой интервал", "Custom interval")).show(
+                        collapsing_header(ui, t("Другой интервал", "Custom interval")).show(
                             ui,
                             |ui| {
                                 let mut days = self.config.interval_days;
@@ -3040,7 +3385,7 @@ impl Settings {
                         self.import_open = false;
                     }
                 });
-                egui::CollapsingHeader::new(t("Какие файлы можно добавить?", "Which files can I add?")).show(ui, |ui| {
+                collapsing_header(ui, t("Какие файлы можно добавить?", "Which files can I add?")).show(ui, |ui| {
                     ui.small(t(
                         "Если у программы нет ярлыка, создайте его в Windows и выберите здесь. Можно выбрать несколько файлов или перетащить их в окно. Добавление не запускает приложение и не перемещает исходный файл.",
                         "If an app has no shortcut, create one in Windows and choose it here. You can choose several files or drag them into the window. Adding does not launch the app or move the original file.",
@@ -3090,6 +3435,9 @@ impl Settings {
         }
     }
     fn confirmations(&mut self, ctx: &egui::Context) {
+        if self.details_app.is_some() {
+            self.app_details(ctx);
+        }
         if self.notice_details {
             let message = self
                 .notice
@@ -3349,6 +3697,9 @@ impl Settings {
 impl eframe::App for Settings {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         i18n::set(&self.config.language);
+        if let Some(scale) = requested_scale(ctx, self.ui_scale) {
+            self.set_scale(ctx, scale);
+        }
         self.poll_jobs(ctx);
         self.screenshots(ctx);
         ctx.request_repaint_after(Duration::from_secs(2));
@@ -3376,6 +3727,7 @@ impl eframe::App for Settings {
                 self.confirm_disable = false;
                 self.import_open = false;
                 self.notice_details = false;
+                self.details_app = None;
             }
         }
         if !self.modal_open()
@@ -3394,6 +3746,27 @@ impl eframe::App for Settings {
                 && ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::O))
             {
                 self.open_import([]);
+            }
+            if self.tab == 1 {
+                if !self.busy()
+                    && ctx
+                        .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F5))
+                {
+                    self.queue("rescan");
+                }
+                let previous = self.app_page;
+                let pages = self.catalog.indices.len().div_ceil(APPS_PER_PAGE).max(1);
+                if ctx.input_mut(|input| {
+                    input.consume_key(egui::Modifiers::COMMAND, egui::Key::PageUp)
+                }) {
+                    self.app_page = self.app_page.saturating_sub(1);
+                }
+                if ctx.input_mut(|input| {
+                    input.consume_key(egui::Modifiers::COMMAND, egui::Key::PageDown)
+                }) {
+                    self.app_page = (self.app_page + 1).min(pages - 1);
+                }
+                self.page_scroll_reset |= previous != self.app_page;
             }
         }
         let dropped: Vec<_> = ctx.input(|input| {
@@ -3424,8 +3797,10 @@ impl eframe::App for Settings {
             )
             .show(ctx, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    ui.heading(RichText::new("Desktop Pilot").size(27.0).strong());
-                    ui.add_space(12.0);
+                    if ui.available_width() >= 460.0 {
+                        ui.heading(RichText::new("Desktop Pilot").size(27.0).strong());
+                        ui.add_space(12.0);
+                    }
                     ui.add_enabled_ui(interactive, |ui| self.language_and_scale(ui, ctx));
                 });
             });
@@ -3538,6 +3913,30 @@ pub fn run(home: PathBuf, capture: Option<PathBuf>) -> Result<()> {
         app.capture_scroll_bottom = app.store.get::<bool>("test_scroll_bottom")?;
         let view = app.store.get::<String>("test_view")?;
         match view.as_str() {
+            "apps" | "catalog-last" | "catalog-search" => {
+                app.tab = 1;
+                if view == "catalog-last" {
+                    app.app_page = app.apps.len().saturating_sub(1) / APPS_PER_PAGE;
+                } else if view == "catalog-search" {
+                    app.filter = app.store.get("test_search")?;
+                }
+            }
+            "app-details" | "policy-pending" => {
+                app.tab = 1;
+                let requested: String = app.store.get("test_app_id")?;
+                let id = app
+                    .apps
+                    .iter()
+                    .find(|app| app.id == requested)
+                    .or_else(|| app.apps.first())
+                    .map(|app| app.id.clone());
+                if view == "app-details" {
+                    app.details_app = id;
+                } else if let Some(id) = id {
+                    app.pending_policy = Some((id, Policy::Always));
+                    app.active_commands = 1;
+                }
+            }
             "import" => {
                 app.tab = 1;
                 app.import_open = true;
@@ -3563,7 +3962,12 @@ pub fn run(home: PathBuf, capture: Option<PathBuf>) -> Result<()> {
             }
             _ => {}
         }
-        if app.modal_open() || view == "feedback" {
+        if app.modal_open()
+            || matches!(
+                view.as_str(),
+                "feedback" | "apps" | "catalog-last" | "catalog-search" | "policy-pending"
+            )
+        {
             app.capture_view = Some(view);
         }
     }
@@ -3589,8 +3993,8 @@ pub fn run(home: PathBuf, capture: Option<PathBuf>) -> Result<()> {
             .filter(|size| {
                 size[0].is_finite()
                     && size[1].is_finite()
-                    && (360.0..=2560.0).contains(&size[0])
-                    && (320.0..=1600.0).contains(&size[1])
+                    && (360.0..=3840.0).contains(&size[0])
+                    && (320.0..=2160.0).contains(&size[1])
             })
     } else {
         None
@@ -3833,9 +4237,14 @@ mod tests {
             source: r"C:\Работа\Tools\Editor.lnk".into(),
             ..App::default()
         };
-        assert!(matches_search(&app, "  РЕДАКТОР  tools "));
-        assert!(matches_search(&app, ""));
-        assert!(!matches_search(&app, "редактор unknown"));
+        let apps = vec![app];
+        let mut catalog = CatalogCache::default();
+        catalog.rebuild(&apps, &[]);
+        for (query, expected) in [("  РЕДАКТОР  tools ", 1), ("", 1), ("редактор unknown", 0)]
+        {
+            catalog.update(&apps, &[], query, 0, 0, &HashSet::new());
+            assert_eq!(catalog.indices.len(), expected);
+        }
     }
 
     #[test]
@@ -3844,6 +4253,353 @@ mod tests {
             assert_eq!(validated_scale(scale), 1.0);
         }
         assert_eq!(validated_scale(1.5), 1.5);
+        assert_eq!(validated_scale(1.75), 1.75);
+        assert_eq!(validated_scale(2.0), 2.0);
+    }
+
+    #[test]
+    fn keyboard_zoom_matches_the_selector_and_survives_reopening() {
+        let home = std::env::temp_dir().join(format!(
+            "test-ui-keyboard-scale-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        let ctx = egui::Context::default();
+        configure_style(&ctx);
+        {
+            let mut app = Settings::new(home.clone()).unwrap();
+            for (key, expected) in [
+                (egui::Key::Equals, 1.25),
+                (egui::Key::Plus, 1.5),
+                (egui::Key::Plus, 1.75),
+                (egui::Key::Plus, 2.0),
+                (egui::Key::Plus, 2.0),
+                (egui::Key::Minus, 1.75),
+                (egui::Key::Num0, 1.0),
+                (egui::Key::Minus, 1.0),
+                (egui::Key::Plus, 1.25),
+            ] {
+                let modifiers = egui::Modifiers::COMMAND;
+                let _ = ctx.run(
+                    egui::RawInput {
+                        modifiers,
+                        events: vec![egui::Event::Key {
+                            key,
+                            physical_key: Some(key),
+                            pressed: true,
+                            repeat: false,
+                            modifiers,
+                        }],
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        if let Some(scale) = requested_scale(ctx, app.ui_scale) {
+                            app.set_scale(ctx, scale);
+                        }
+                    },
+                );
+                let _ = ctx.run(egui::RawInput::default(), |_| {});
+                assert_eq!(app.ui_scale, expected);
+                assert_eq!(app.store.get::<f32>("ui_scale").unwrap(), expected);
+                assert_eq!(ctx.zoom_factor(), expected);
+            }
+        }
+        assert_eq!(Settings::new(home.clone()).unwrap().ui_scale, 1.25);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_large_catalog_keeps_every_result_and_rebuilds_changed_filters_and_scores() {
+        let mut apps: Vec<App> = (0..3000)
+            .map(|index| App {
+                id: format!("app-{index:04}"),
+                name: format!("Приложение {index:04}"),
+                category: "Start menu".into(),
+                source: format!(r"C:\Работа\Tools\App{index}.lnk"),
+                target: format!(r"C:\Apps\App{index}.exe"),
+                policy: if index % 3 == 0 {
+                    Policy::Always
+                } else {
+                    Policy::Auto
+                },
+                valid: index % 7 != 0,
+                ..App::default()
+            })
+            .collect();
+        let mut ranking: Vec<Ranked> = apps
+            .iter()
+            .enumerate()
+            .map(|(index, app)| Ranked {
+                id: app.id.clone(),
+                name: app.name.clone(),
+                score: index as f64,
+                days: 1,
+                launches: 0,
+                seconds: (3000 - index) as u32,
+                eligible: app.valid,
+                reason: String::new(),
+            })
+            .collect();
+        let mut cache = CatalogCache::default();
+        cache.rebuild(&apps, &ranking);
+        let recent = HashSet::from(["app-0007".into(), "app-2999".into()]);
+        cache.update(&apps, &ranking, "", 0, 0, &recent);
+        let pages: Vec<_> = cache.indices.chunks(APPS_PER_PAGE).collect();
+        assert_eq!(pages.len(), 125);
+        assert_eq!(pages.last().unwrap().last(), Some(&2999));
+        assert_eq!(
+            pages
+                .iter()
+                .flat_map(|page| page.iter())
+                .copied()
+                .collect::<HashSet<_>>()
+                .len(),
+            3000
+        );
+        cache.update(&apps, &ranking, "ПУСК приложение 2999", 0, 0, &recent);
+        assert_eq!(cache.indices, [2999]);
+        cache.update(&apps, &ranking, "", 5, 0, &recent);
+        assert_eq!(cache.indices, [7, 2999]);
+        cache.update(&apps, &ranking, "", 0, 1, &recent);
+        assert_eq!(cache.indices[0], 2999);
+        ranking[7].score = 9999.0;
+        apps[7].policy = Policy::Never;
+        cache.rebuild(&apps, &ranking);
+        cache.update(&apps, &ranking, "", 0, 1, &recent);
+        assert_eq!(cache.indices[0], 7);
+        cache.update(&apps, &ranking, "", 3, 0, &recent);
+        assert_eq!(cache.indices, [7]);
+        cache.update(&apps, &ranking, "", 0, 2, &recent);
+        assert_eq!(cache.indices[0], 0);
+        cache.update(&apps, &ranking, "", 4, 0, &recent);
+        assert!(cache.indices.iter().all(|&index| !apps[index].valid));
+    }
+
+    #[test]
+    fn a_pending_rule_stays_pending_until_the_database_reports_its_result() {
+        let home = std::env::temp_dir().join(format!(
+            "test-ui-rule-result-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        {
+            let mut app = Settings::new(home.clone()).unwrap();
+            let entry = App {
+                id: "test-app".into(),
+                name: "App".into(),
+                target: r"C:\App.exe".into(),
+                source: r"C:\App.lnk".into(),
+                valid: true,
+                ..App::default()
+            };
+            app.store.put_app(&entry).unwrap();
+            for (requested, succeeded) in [(Policy::Always, true), (Policy::Never, false)] {
+                let action = format!("policy:{}:{requested:?}", entry.id);
+                app.store.command(&action).unwrap();
+                let command_id = app.store.db.last_insert_rowid();
+                app.pending_commands.push(PendingCommand {
+                    id: command_id,
+                    action,
+                    submitted: Instant::now(),
+                });
+                app.pending_policy = Some((entry.id.clone(), requested.clone()));
+                app.store
+                    .db
+                    .execute(
+                        "UPDATE commands SET status='running' WHERE id=?1",
+                        [command_id],
+                    )
+                    .unwrap();
+                app.reload().unwrap();
+                assert_eq!(
+                    app.pending_policy,
+                    Some((entry.id.clone(), requested.clone()))
+                );
+                assert_ne!(app.apps[0].policy, requested);
+                if succeeded {
+                    app.store.policy(&entry.id, requested).unwrap();
+                }
+                app.store
+                    .db
+                    .execute(
+                        "UPDATE commands SET status=?1,message=?2 WHERE id=?3",
+                        rusqlite::params![
+                            if succeeded { "done" } else { "error" },
+                            "Result",
+                            command_id
+                        ],
+                    )
+                    .unwrap();
+                app.reload().unwrap();
+                assert!(app.pending_policy.is_none());
+                assert!(app.pending_commands.is_empty());
+                assert_eq!(app.apps[0].policy, Policy::Always);
+                assert_eq!(
+                    app.notice.as_ref().unwrap().kind == NoticeKind::Success,
+                    succeeded
+                );
+            }
+        }
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_failed_queue_and_failed_reload_do_not_leave_a_rule_looking_pending() {
+        let home = std::env::temp_dir().join(format!(
+            "test-ui-rule-error-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        {
+            let mut app = Settings::new(home.clone()).unwrap();
+            app.pending_policy = Some(("test-app".into(), Policy::Always));
+            let (sender, receiver) = mpsc::channel();
+            sender
+                .send(Err("Background startup failed".into()))
+                .unwrap();
+            app.job = Some(Job {
+                label: "Sending the command…",
+                started: Instant::now(),
+                receiver,
+            });
+            app.store.set("config", &Config::default()).unwrap();
+            app.store
+                .db
+                .execute("UPDATE kv SET v='invalid json' WHERE k='config'", [])
+                .unwrap();
+            app.poll_jobs(&egui::Context::default());
+            assert!(app.job.is_none());
+            assert!(app.pending_policy.is_none());
+            assert!(app.pending_commands.is_empty());
+            assert!(
+                app.store.db.is_autocommit(),
+                "failed read must release its snapshot"
+            );
+            app.store.set("config", &Config::default()).unwrap();
+            app.reload().unwrap();
+            assert!(
+                app.store.db.is_autocommit(),
+                "successful read must release its snapshot"
+            );
+        }
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn settings_controls_remain_reachable_at_200_percent_in_a_small_window() {
+        let home = std::env::temp_dir().join(format!(
+            "test-ui-settings-width-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        {
+            let mut app = Settings::new(home.clone()).unwrap();
+            let ctx = egui::Context::default();
+            configure_style(&ctx);
+            for width in [360.0, 480.0] {
+                for section in 0..8 {
+                    app.settings_section = section.min(4);
+                    app.onboarding_step = section.saturating_sub(5);
+                    for _ in 0..3 {
+                        let _ = ctx.run(egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 800.0))),
+                            ..Default::default()
+                        }, |ctx| {
+                            egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(20)).show(ctx, |ui| {
+                                let right = ui.max_rect().right();
+                                egui::ScrollArea::vertical().show(ui, |ui| {
+                                    if section < 5 {
+                                        app.preferences(ui);
+                                    } else {
+                                        app.welcome(ui);
+                                    }
+                                    assert!(ui.min_rect().right() <= right + 1.0,
+                                        "settings/setup section {section} exceeds {width}-point viewport: {:?}", ui.min_rect());
+                                });
+                            });
+                        });
+                    }
+                }
+            }
+        }
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn catalog_controls_stay_inside_small_and_4k_scaled_viewports() {
+        let home = std::env::temp_dir().join(format!(
+            "test-ui-catalog-width-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        {
+            let mut app = Settings::new(home.clone()).unwrap();
+            app.apps = (0..48)
+                .map(|index| App {
+                    id: format!("app-{index}"),
+                    name: format!("Редактор с длинным названием {index}"),
+                    category: "Start menu".into(),
+                    valid: true,
+                    ..App::default()
+                })
+                .collect();
+            app.catalog.rebuild(&app.apps, &[]);
+            let ctx = egui::Context::default();
+            configure_style(&ctx);
+            for width in [360.0, 480.0, 870.0, 1920.0, 2560.0, 3072.0] {
+                for _ in 0..3 {
+                    let output = ctx.run(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, 800.0),
+                            )),
+                            ..Default::default()
+                        },
+                        |ctx| {
+                            egui::CentralPanel::default()
+                                .frame(egui::Frame::new().inner_margin(20))
+                                .show(ctx, |ui| {
+                                    let right = ui.max_rect().right();
+                                    egui::ScrollArea::vertical().show(ui, |ui| {
+                                        constrain_page_width(ui);
+                                        app.applications(ui);
+                                        assert!(
+                                            ui.min_rect().right() <= right + 1.0,
+                                            "catalog exceeds {width}-point viewport: {:?}",
+                                            ui.min_rect()
+                                        );
+                                    });
+                                });
+                        },
+                    );
+                    if width >= 870.0 {
+                        let text_y = |labels: &[&str]| {
+                            output.shapes.iter().find_map(|shape| {
+                                if let egui::epaint::Shape::Text(text) = &shape.shape
+                                    && labels.contains(&text.galley.job.text.as_str())
+                                {
+                                    Some(text.pos.y)
+                                } else {
+                                    None
+                                }
+                            })
+                        };
+                        assert!(
+                            text_y(&["All apps", "Все приложения"]).unwrap() < 300.0,
+                            "filter toolbar consumed the remaining viewport height"
+                        );
+                        let title = text_y(&["Редактор с длинным названием 0"]).unwrap();
+                        let category = text_y(&["Start menu", "Меню «Пуск»"]).unwrap();
+                        assert!(
+                            category >= title + 24.0,
+                            "secondary app information must be below its title"
+                        );
+                    }
+                }
+            }
+        }
+        std::fs::remove_dir_all(home).unwrap();
     }
 
     #[test]
@@ -4002,6 +4758,78 @@ mod tests {
             assert!(should_resume_background(true, &base, &draft));
             assert!(!should_resume_background(false, &base, &draft));
         }
+    }
+
+    #[test]
+    fn app_details_can_be_closed_with_the_mouse_without_scrolling() {
+        let home = std::env::temp_dir().join(format!(
+            "test-ui-details-close-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        {
+            let mut app = Settings::new(home.clone()).unwrap();
+            app.apps = vec![App {
+                id: "long-details".into(),
+                name: "A shortcut with a long application name".into(),
+                source: format!(r"C:\{}\Original.lnk", "Very long folder name\\".repeat(30)),
+                note: "More shortcut information. ".repeat(100),
+                valid: true,
+                ..App::default()
+            }];
+            let ctx = egui::Context::default();
+            configure_style(&ctx);
+            for size in [egui::vec2(360.0, 270.0), egui::vec2(2560.0, 1440.0)] {
+                let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+                app.details_app = Some("long-details".into());
+                let mut close = None;
+                for _ in 0..3 {
+                    let output = ctx.run(
+                        egui::RawInput {
+                            screen_rect: Some(screen),
+                            ..Default::default()
+                        },
+                        |ctx| app.app_details(ctx),
+                    );
+                    close = output.shapes.iter().find_map(|shape| {
+                        if let egui::epaint::Shape::Text(text) = &shape.shape
+                            && ["Close", "Закрыть"].contains(&text.galley.text())
+                        {
+                            let bounds = egui::Rect::from_min_size(text.pos, text.galley.size());
+                            assert!(screen.contains_rect(bounds));
+                            assert!(shape.clip_rect.contains_rect(bounds));
+                            Some(bounds.center())
+                        } else {
+                            None
+                        }
+                    });
+                }
+                let close = close.expect("Close must be visible above the long scrollable content");
+                for pressed in [true, false] {
+                    let _ = ctx.run(
+                        egui::RawInput {
+                            screen_rect: Some(screen),
+                            events: vec![
+                                egui::Event::PointerMoved(close),
+                                egui::Event::PointerButton {
+                                    pos: close,
+                                    button: egui::PointerButton::Primary,
+                                    pressed,
+                                    modifiers: egui::Modifiers::NONE,
+                                },
+                            ],
+                            ..Default::default()
+                        },
+                        |ctx| app.app_details(ctx),
+                    );
+                }
+                assert!(
+                    app.details_app.is_none(),
+                    "visible Close must dismiss Details"
+                );
+            }
+        }
+        std::fs::remove_dir_all(home).unwrap();
     }
 
     #[test]

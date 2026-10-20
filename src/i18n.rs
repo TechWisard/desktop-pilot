@@ -26,6 +26,22 @@ fn translate(value: &str, russian: bool) -> String {
     };
     let translations = [
         (
+            "Не удалось создать ярлык в меню «Пуск». Чтобы открыть настройки, снова запустите Desktop Pilot.",
+            "The Start menu shortcut could not be created. Open Settings by launching Desktop Pilot again.",
+        ),
+        (
+            "Не удалось обновить исходный ярлык; сохранено последнее проверенное состояние:",
+            "Source shortcut could not be refreshed; its last verified state was kept:",
+        ),
+        (
+            "Фоновая работа остановилась до завершения запуска.",
+            "Background work stopped before becoming ready.",
+        ),
+        (
+            "Проводник вернул пустой идентификатор элемента",
+            "Explorer returned an empty item identifier",
+        ),
+        (
             "Команда отменена, поскольку фоновая работа отключена.",
             "Command cancelled because background work was disabled.",
         ),
@@ -860,6 +876,13 @@ mod tests {
                 true
             ),
             r"Исходный ярлык недоступен: C:\Tools\Undo\Original.lnk"
+        );
+        assert_eq!(
+            translate(
+                r"Source shortcut could not be refreshed; its last verified state was kept: \\server\Undo\App.lnk: Access denied",
+                true
+            ),
+            r"Не удалось обновить исходный ярлык; сохранено последнее проверенное состояние: \\server\Undo\App.lnk: Access denied"
         );
     }
 
