@@ -2632,11 +2632,13 @@ mod tests {
             let mut session_times = HashMap::new();
             let at = now();
             let mut attempts = 0;
-            assert!(retry_locked_usage(|| {
-                attempts += 1;
-                record_usage(store, &mut session_times, "editor", 10, true, at)
-            })
-            .is_err());
+            assert!(
+                retry_locked_usage(|| {
+                    attempts += 1;
+                    record_usage(store, &mut session_times, "editor", 10, true, at)
+                })
+                .is_err()
+            );
             assert_eq!(attempts, 1, "constraint violations must not be retried");
             assert!(session_times.is_empty());
             assert!(store.days().unwrap().is_empty());
@@ -2671,11 +2673,7 @@ mod tests {
                 let attempt = record_usage(store, &mut sessions, "editor", 10, true, at);
                 if attempts == 1 {
                     assert!(attempt.is_err());
-                    blocker
-                        .take()
-                        .unwrap()
-                        .execute_batch("ROLLBACK;")
-                        .unwrap();
+                    blocker.take().unwrap().execute_batch("ROLLBACK;").unwrap();
                 }
                 attempt
             })
