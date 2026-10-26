@@ -2783,8 +2783,7 @@ mod tests {
         with_store(|store| {
             let corrected_time = now();
             let mut sessions = HashMap::from([("editor".to_owned(), corrected_time + 30)]);
-            record_usage(store, &mut sessions, "editor", 10, true, corrected_time)
-                .unwrap();
+            record_usage(store, &mut sessions, "editor", 10, true, corrected_time).unwrap();
             assert_eq!(store.days().unwrap()[0].sessions, 0);
             assert_eq!(sessions["editor"], corrected_time);
         });
