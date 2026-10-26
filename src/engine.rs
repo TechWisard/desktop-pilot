@@ -1611,9 +1611,8 @@ impl UsageAccumulator {
             return None;
         }
         self.elapsed += elapsed;
-        self.windows.retain(|_, window| {
-            self.elapsed - window.last_seen < SHORT_VISIT_MEMORY_SECONDS
-        });
+        self.windows
+            .retain(|_, window| self.elapsed - window.last_seen < SHORT_VISIT_MEMORY_SECONDS);
         let Some(id) = id.filter(|id| !id.is_empty()) else {
             self.previous = None;
             return None;
@@ -2564,15 +2563,8 @@ mod tests {
                         timestamp += 2;
                         if let Some((id, seconds, first)) = usage.sample(Some(app), 2.0) {
                             *firsts.entry(id.clone()).or_default() += u32::from(first);
-                            record_usage(
-                                store,
-                                &mut session_times,
-                                &id,
-                                seconds,
-                                first,
-                                timestamp,
-                            )
-                            .unwrap();
+                            record_usage(store, &mut session_times, &id, seconds, first, timestamp)
+                                .unwrap();
                         }
                     }
                 }
