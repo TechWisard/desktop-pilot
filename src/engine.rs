@@ -2746,6 +2746,66 @@ mod tests {
     }
 
     #[test]
+    fn offline_clock_rollback_preview_matches_safe_apply_and_manual_release() {
+        with_store(|store| {
+            let mut cfg: Config = store.get("config").unwrap();
+            cfg.slots = 1;
+            store.set("config", &cfg).unwrap();
+
+            let rare = add_test_app(store, "Rare critical tool", "steam://rungameid/8051");
+            let mut frequent = add_test_app(store, "Frequent tool", "steam://rungameid/8052");
+            frequent.policy = Policy::Auto;
+            frequent.seed = 300.0;
+            frequent.seed_at = now();
+            store.put_app(&frequent).unwrap();
+            apply(store, true).unwrap();
+
+            let before: State = store.get("state").unwrap();
+            assert_eq!(before.owned.len(), 1);
+            assert_eq!(before.owned[0].app, rare.id);
+            let path = before.owned[0].path.clone();
+            let bytes = std::fs::read(&path).unwrap();
+
+            std::fs::remove_file(&rare.source).unwrap();
+            refresh_apps(store).unwrap();
+            let mut unavailable = store.app(&rare.id).unwrap();
+            assert!(!unavailable.valid);
+            // Reopen Settings before its next catalog scan after correcting
+            // a clock that was 14 days fast while the source was offline.
+            unavailable.unavailable_since = now() + 14 * 86400;
+            store.put_app(&unavailable).unwrap();
+
+            let proposal = preview(store, false).unwrap();
+            assert_eq!(proposal.selected.as_slice(), std::slice::from_ref(&rare.id));
+            assert!(proposal.removed.is_empty());
+            assert!(proposal.added.is_empty());
+
+            // Applying performs its normal scan and preserves the identical
+            // managed file. No original is recreated while unavailable.
+            apply(store, false).unwrap();
+            let after: State = store.get("state").unwrap();
+            assert_eq!(after.owned[0].path, path);
+            assert_eq!(after.owned[0].file_id, before.owned[0].file_id);
+            assert_eq!(after.owned[0].position, before.owned[0].position);
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+
+            // A deliberate Never choice still releases the shortcut.
+            command(store, &format!("policy:{}:Never", rare.id)).unwrap();
+            let release = preview(store, false).unwrap();
+            assert_eq!(
+                release.selected.as_slice(),
+                std::slice::from_ref(&frequent.id)
+            );
+            apply(store, false).unwrap();
+            assert!(!Path::new(&path).exists());
+            assert_eq!(
+                store.get::<State>("state").unwrap().owned[0].app,
+                frequent.id
+            );
+        });
+    }
+
+    #[test]
     fn a_future_review_checkpoint_does_not_freeze_automatic_recovery() {
         with_store(|store| {
             let mut cfg: Config = store.get("config").unwrap();

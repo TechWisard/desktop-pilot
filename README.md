@@ -16,11 +16,17 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It lear
 
 ## Get started
 
-1. Download and extract **DesktopPilot-0.2.11-windows-x64.zip** from [Releases](https://github.com/TechWisard/desktop-pilot/releases/latest).
+1. Download and extract **DesktopPilot-0.2.12-windows-x64.zip** from [Releases](https://github.com/TechWisard/desktop-pilot/releases/latest).
 2. Run `desktop-pilot.exe`. The setup walks through the operating mode, number and position of shortcuts, and observation preferences. Choose **English** or **Русский** at any time.
 3. Use your computer normally. The default is **passive observation for 7 computer sessions**. No quick shortcuts are created during learning. After the threshold, the most-used eligible apps appear automatically during an idle period. Choose sessions, active days, either condition or both in Settings.
 
 Installation is per user, by default in `%LOCALAPPDATA%\DesktopPilot`; no administrator access is required. Settings are available from the tray icon and the Start menu. This preview executable is unsigned; download only from this repository's Releases and verify the supplied SHA-256 checksum.
+
+## Improvements in 0.2.12
+
+- **Preview matches the protected desktop layout after a clock correction.** If Windows time moves backwards while the original source shortcut is offline, Desktop Pilot no longer incorrectly proposes removing an already managed shortcut just because its saved outage timestamp appears in the future.
+- **Your explicit choices remain authoritative.** An existing **Always** or manually moved shortcut stays protected, while automatic copies retain their normal temporary grace after the next verification. **Never add**, changed launch identity, genuinely vacant places and deliberate capacity reductions are still respected. Missing originals never create new quick copies.
+- The regression runs through the actual local store, Windows shortcut parser, preview and apply paths, and verifies bytes, file identity and position, plus explicit release to **Never add**. This is not a measured change in user productivity. [Details and limitations](docs/research/2026-10-26-offline-preview-clock-correction.md).
 
 ## Improvements in 0.2.11
 

@@ -1,6 +1,10 @@
-# Verification scope — 0.2.11
+# Verification scope — 0.2.12
 
 [Русский](verification.ru.md) · [Home](../README.md)
+
+## Additional 0.2.12 regressions: safe offline previews following clock corrections
+
+A saved original-source outage timestamp 14 days in the future could make Settings propose removing an existing manually chosen quick shortcut even though the subsequent filesystem rescan and apply would preserve it. The new selection regression exercises the real ranking/selection rules for Always, manually moved Auto and ordinary Auto, as well as Never, changed identity and unowned missing sources. A compound Store/Windows .url/preview/apply fixture checks that the proposed layout matches the actual safe action and preserves the original chosen file's bytes, filesystem identity and position. Deliberately setting Never still removes the managed quick copy while leaving the source alone. No new data collection or UI controls were introduced. [Research, exact failure sequence and physical-device limits](research/2026-10-26-offline-preview-clock-correction.md).
 
 ## Additional 0.2.11 regressions: backward clock corrections
 
