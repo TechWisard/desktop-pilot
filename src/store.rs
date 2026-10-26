@@ -1,7 +1,7 @@
 use crate::model::*;
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior, params};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     path::{Path, PathBuf},
     time::Duration,
@@ -10,6 +10,19 @@ use std::{
 pub struct Store {
     pub db: Connection,
     pub home: PathBuf,
+}
+
+// Do not confuse a large wall-clock correction with verified inactivity.
+// The seven-day observation window is a conservative policy, not a timing
+// claim about users; a normal seven-day absence only delays cleanup.
+const RETENTION_FORWARD_GAP_SECONDS: i64 = 7 * 86_400;
+const RETENTION_HOLD_SECONDS: i64 = 7 * 86_400;
+
+#[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
+struct RetentionClock {
+    last_observed: i64,
+    hold_until: i64,
 }
 struct NestedTransaction<'a> {
     db: &'a Connection,
@@ -292,13 +305,35 @@ impl Store {
     /// wall-clock discontinuities can be reproduced without changing Windows time.
     fn housekeeping_at(&self, time: i64) -> Result<()> {
         self.transaction(|| {
-            let cutoff = time.saturating_sub(90 * 86400);
-            self.db.execute("DELETE FROM days WHERE date<?1", [cutoff])?;
+            let mut clock: RetentionClock = self.get("retention_clock")?;
+            if clock.last_observed > 0 {
+                if time.saturating_sub(clock.last_observed) > RETENTION_FORWARD_GAP_SECONDS {
+                    // After a large forward jump we cannot distinguish a genuinely
+                    // long absence from an incorrect clock. Keep recent history
+                    // through a bounded observation period across restarts.
+                    clock.hold_until = time.saturating_add(RETENTION_HOLD_SECONDS);
+                } else if clock.last_observed.saturating_sub(time) > 86_400 {
+                    // The clock has been corrected back. An earlier future
+                    // deadline must not suspend ordinary retention indefinitely.
+                    clock.hold_until = 0;
+                }
+            }
+            clock.last_observed = time;
+            self.set("retention_clock", &clock)?;
+
+            if time >= clock.hold_until {
+                let cutoff = time.saturating_sub(90 * 86_400);
+                self.db.execute("DELETE FROM days WHERE date<?1", [cutoff])?;
+                let mut sessions: std::collections::HashMap<String, i64> =
+                    self.get("app_session_times")?;
+                sessions.retain(|_, last| *last >= cutoff);
+                self.set("app_session_times", &sessions)?;
+            }
+            // Count-bounded operational logs still need pruning during a clock
+            // hold; otherwise an extended absence could grow the database.
             self.db.execute("DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT 2000)",[])?;
             self.db.execute("DELETE FROM commands WHERE status IN ('done','error') AND id NOT IN (SELECT id FROM commands ORDER BY id DESC LIMIT 2000)", [])?;
-            let mut sessions: std::collections::HashMap<String, i64> = self.get("app_session_times")?;
-            sessions.retain(|_, time| *time >= cutoff);
-            self.set("app_session_times", &sessions)
+            Ok(())
         })
     }
 }
