@@ -1,6 +1,10 @@
-# Verification scope — 0.2.4
+# Verification scope — 0.2.5
 
 [Русский](verification.ru.md) · [Home](../README.md)
+
+## Additional 0.2.5 regressions
+
+The actual model::select function is exercised by two new scenarios: an established manually protected shortcut with three vacant places, and two owned shortcuts with two vacancies and enough challengers to test the replacement cap. The vacant positions can all fill during the same review, while only one existing shortcut may be displaced when the configured limit is one. The existing ranking, manual-protection, file-ownership and rollback tests continue to apply. These in-process fixtures do not measure time saved for real users or prove that a particular physical desktop has space available.
 
 ## Additional 0.2.4 regressions
 
@@ -49,4 +53,4 @@ Release packaging excludes installed profiles, usage databases and undo backups.
 
 ## Limits
 
-Windows Server CI and Wine do not establish interactive acceptance on every Windows 10/11 desktop. Physical multi-monitor/DPI changes, alternative shells, third-party desktop organizers, ARM64 and future taskbar formats have not been established for this release. The 100 geometry combinations verify placement calculations, not universal hardware compatibility. Version **0.2.4 remains a preview**.
+Windows Server CI and Wine do not establish interactive acceptance on every Windows 10/11 desktop. Physical multi-monitor/DPI changes, alternative shells, third-party desktop organizers, ARM64 and future taskbar formats have not been established for this release. The 100 geometry combinations verify placement calculations, not universal hardware compatibility. Version **0.2.5 remains a preview**.
