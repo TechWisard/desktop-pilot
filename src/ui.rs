@@ -2032,7 +2032,8 @@ impl Settings {
                             "Background work ended with an error. Your settings, history and shortcuts are kept.",
                         ));
                         ui.label(i18n::runtime(error));
-                        if ui.button(t("Посмотреть историю", "View history")).clicked() {
+                        if ui.button(t("Посмотреть историю", "View history")).clicked()
+                        {
                             self.tab = 3;
                             self.history_errors_only = true;
                         }
