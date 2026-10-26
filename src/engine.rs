@@ -2607,7 +2607,10 @@ mod tests {
             missing.unavailable_since = now() - 6 * 86400;
             store.put_app(&missing).unwrap();
 
-            assert_eq!(preview(store, false).unwrap().selected, [rare.id.clone()]);
+            assert_eq!(
+                preview(store, false).unwrap().selected.as_slice(),
+                std::slice::from_ref(&rare.id)
+            );
             apply(store, false).unwrap();
             let warning: String = store.get("catalog_warning").unwrap();
             assert!(warning.contains("manually protected"));
@@ -2626,8 +2629,8 @@ mod tests {
             command(store, &format!("policy:{}:Auto", rare.id)).unwrap();
             assert!(!store.get::<State>("state").unwrap().owned[0].manual);
             assert_eq!(
-                preview(store, false).unwrap().selected,
-                [frequent.id.clone()]
+                preview(store, false).unwrap().selected.as_slice(),
+                std::slice::from_ref(&frequent.id)
             );
             apply(store, false).unwrap();
             let released: State = store.get("state").unwrap();
