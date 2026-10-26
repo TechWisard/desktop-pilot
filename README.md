@@ -24,7 +24,7 @@ Installation is per user, by default in `%LOCALAPPDATA%\DesktopPilot`; no admini
 
 ## Improvements in 0.2.15
 
-Working in a different application after a large system-clock jump no longer discards recent session checkpoints for other apps. Cleanup remains bounded by the verified SQLite retention policy; the background worker reloads its cache after cleanup. This prevents accidental loss of session continuity and spurious extra sessions after clock correction. Original shortcuts, placements and manual rules remain unchanged.
+Working in a different application after a large system-clock jump no longer discards recent session checkpoints for other apps. Cleanup remains bounded by the verified SQLite retention policy; the background worker reloads its cache after cleanup. Transient SQLite writer contention is retried safely before user changes begin; persistent errors remain visible. This prevents accidental loss of session continuity and spurious extra sessions after clock correction. Original shortcuts, placements and manual rules remain unchanged.
 
 ## Improvements in 0.2.14
 
