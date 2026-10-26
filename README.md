@@ -16,11 +16,17 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It lear
 
 ## Get started
 
-1. Download and extract **DesktopPilot-0.2.9-windows-x64.zip** from [Releases](https://github.com/TechWisard/desktop-pilot/releases/latest).
+1. Download and extract **DesktopPilot-0.2.10-windows-x64.zip** from [Releases](https://github.com/TechWisard/desktop-pilot/releases/latest).
 2. Run `desktop-pilot.exe`. The setup walks through the operating mode, number and position of shortcuts, and observation preferences. Choose **English** or **Русский** at any time.
 3. Use your computer normally. The default is **passive observation for 7 computer sessions**. No quick shortcuts are created during learning. After the threshold, the most-used eligible apps appear automatically during an idle period. Choose sessions, active days, either condition or both in Settings.
 
 Installation is per user, by default in `%LOCALAPPDATA%\DesktopPilot`; no administrator access is required. Settings are available from the tray icon and the Start menu. This preview executable is unsigned; download only from this repository's Releases and verify the supplied SHA-256 checksum.
+
+## Improvements in 0.2.10
+
+- **Your manual choices outlast a disconnected source.** An already managed shortcut marked **Always** or moved by you stays in its familiar place even after the ordinary 72-hour grace period. Returning the unchanged original does not remove and recreate the quick copy.
+- **Clear offline explanations in both languages.** The warning explains whether a copy is protected by your choice or only by the temporary grace period; Windows and network paths are preserved exactly.
+- Automatic copies still expire normally; **Never add**, changed launch identity, user deletion/edit and explicitly returning to **Automatic** remain authoritative. No new shortcut is created from an unavailable source. [Scenarios and validation](docs/research/2026-10-26-manual-absence-completion.md).
 
 ## Improvements in 0.2.9
 

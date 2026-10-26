@@ -432,12 +432,12 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
         {
             if app.policy == Policy::Always || copy.manual {
                 warnings.push(format!(
-                    "Original source or target is unavailable: {}. Its manually protected quick shortcut will stay until you change its rule or remove it.",
+                    "The manually protected quick shortcut stays in place until you change its rule or remove it. The original source or target is unavailable: {}",
                     app.source
                 ));
             } else if scanned_at.saturating_sub(app.unavailable_since) < UNAVAILABLE_GRACE_SECONDS {
                 warnings.push(format!(
-                    "Original source or target is temporarily unavailable: {}. The existing quick copy is held for up to 72 hours; new copies are not created.",
+                    "The existing quick copy is held for up to 72 hours; new copies are not created. Original source or target is temporarily unavailable: {}",
                     app.source
                 ));
             }
@@ -2602,23 +2602,29 @@ mod tests {
 
             std::fs::remove_file(&rare.source).unwrap();
             refresh_apps(store).unwrap();
-            let mut missing = store.app(&rare.id).unwrap();
-            assert!(!missing.valid);
-            missing.unavailable_since = now() - 6 * 86400;
-            store.put_app(&missing).unwrap();
-
-            assert_eq!(
-                preview(store, false).unwrap().selected.as_slice(),
-                std::slice::from_ref(&rare.id)
-            );
-            apply(store, false).unwrap();
-            let warning: String = store.get("catalog_warning").unwrap();
-            assert!(warning.contains("manually protected"));
-            let retained: State = store.get("state").unwrap();
-            assert_eq!(retained.owned[0].path, protected_path);
-            assert_eq!(retained.owned[0].position, before.owned[0].position);
-            assert!(retained.owned[0].manual);
-            assert_eq!(std::fs::read(&protected_path).unwrap(), protected_bytes);
+            // Replay successive reviews across weekends and an extended absence.
+            // Only the outage clock is advanced; selection, copying and SQLite
+            // persistence are the actual application implementations.
+            for days_away in [1, 2, 3, 6, 21, 45] {
+                let mut missing = store.app(&rare.id).unwrap();
+                assert!(!missing.valid);
+                missing.unavailable_since = now() - days_away * 86400;
+                store.put_app(&missing).unwrap();
+                assert_eq!(
+                    preview(store, false).unwrap().selected.as_slice(),
+                    std::slice::from_ref(&rare.id)
+                );
+                apply(store, false).unwrap();
+                let warning: String = store.get("catalog_warning").unwrap();
+                assert!(warning.contains("manually protected"));
+                let retained: State = store.get("state").unwrap();
+                assert_eq!(retained.owned.len(), 1);
+                assert_eq!(retained.owned[0].path, protected_path);
+                assert_eq!(retained.owned[0].position, before.owned[0].position);
+                assert_eq!(retained.owned[0].file_id, before.owned[0].file_id);
+                assert!(retained.owned[0].manual);
+                assert_eq!(std::fs::read(&protected_path).unwrap(), protected_bytes);
+            }
 
             std::fs::write(&rare.source, &original_bytes).unwrap();
             refresh_apps(store).unwrap();
