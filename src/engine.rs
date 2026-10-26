@@ -1722,13 +1722,23 @@ fn record_usage(
         // so a brief focus switch or worker restart cannot inflate the ranking.
         let mut updated = session_times.clone();
         updated.insert(id.into(), time);
-        updated.retain(|_, last| time.saturating_sub(*last) < 90 * 86400);
+        // Per-visit timestamps cannot establish the age of unrelated apps
+        // after a forward clock correction. Retention belongs to the guarded
+        // SQLite housekeeping path, not to the foreground usage writer.
         store.set("app_session_times", &updated)?;
         Ok(updated)
     })?;
     *session_times = next_times;
     Ok(())
 }
+fn housekeeping_sessions(store: &Store, sessions: &mut HashMap<String, i64>) -> Result<()> {
+    store.housekeeping()?;
+    // The worker must discard any entries expired by the authoritative cleanup,
+    // rather than accidentally resurrecting them from its in-memory cache.
+    *sessions = store.get("app_session_times")?;
+    Ok(())
+}
+
 pub fn monitor(home: PathBuf) -> Result<()> {
     let _com = native::Com::new()?;
     let store = Store::open(&home)?;
@@ -1864,7 +1874,7 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                     refresh_apps(&store)?;
                     apps = store.apps()?;
                     scanned = Some(Instant::now());
-                    store.housekeeping()?;
+                    housekeeping_sessions(&store, &mut session_times)?;
                 }
                 reconcile_manual(&store)?;
                 automatic_review(&store, native::quiet_for_changes())?;

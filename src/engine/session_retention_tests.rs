@@ -83,3 +83,45 @@ fn ordinary_housekeeping_still_prunes_expired_session_checkpoints() {
         assert_eq!(kept["recent"], times["recent"]);
     });
 }
+
+#[test]
+fn correcting_the_clock_does_not_inflate_a_short_repeat_visit() {
+    with_store(|store| {
+        let at = now();
+        let mut sessions = HashMap::from([("rare".to_owned(), at - 600)]);
+        store.set("app_session_times", &sessions).unwrap();
+
+        // A large forward adjustment occurs while using a different app.
+        record_usage(store, &mut sessions, "other", 12, true, at + 120 * DAY).unwrap();
+        // Fifteen minutes after the last real visit, the original app returns.
+        // It must not be counted as a new session just because the other app
+        // observed a bad system clock in between.
+        record_usage(store, &mut sessions, "rare", 12, true, at + 300).unwrap();
+        let counted: i64 = store
+            .db
+            .query_row(
+                "SELECT COALESCE(SUM(sessions),0) FROM days WHERE app='rare'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(counted, 0);
+        assert!(checkpoints(store).contains_key("rare"));
+    });
+}
+
+#[test]
+fn periodic_worker_housekeeping_refreshes_its_session_cache() {
+    with_store(|store| {
+        let at = now();
+        let mut sessions = HashMap::from([
+            ("expired".to_owned(), at - 95 * DAY),
+            ("recent".to_owned(), at - 30 * DAY),
+        ]);
+        store.set("app_session_times", &sessions).unwrap();
+        housekeeping_sessions(store, &mut sessions).unwrap();
+        assert_eq!(sessions, checkpoints(store));
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions["recent"], at - 30 * DAY);
+    });
+}
