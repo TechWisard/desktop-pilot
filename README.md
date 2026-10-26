@@ -16,11 +16,17 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It lear
 
 ## Get started
 
-1. Download and extract **DesktopPilot-0.2.4-windows-x64.zip** from [Releases](https://github.com/TechWisard/desktop-pilot/releases/latest).
+1. Download and extract **DesktopPilot-0.2.5-windows-x64.zip** from [Releases](https://github.com/TechWisard/desktop-pilot/releases/latest).
 2. Run `desktop-pilot.exe`. The setup walks through the operating mode, number and position of shortcuts, and observation preferences. Choose **English** or **Русский** at any time.
 3. Use your computer normally. The default is **passive observation for 7 computer sessions**. No quick shortcuts are created during learning. After the threshold, the most-used eligible apps appear automatically during an idle period. Choose sessions, active days, either condition or both in Settings.
 
 Installation is per user, by default in `%LOCALAPPDATA%\DesktopPilot`; no administrator access is required. Settings are available from the tray icon and the Start menu. This preview executable is unsigned; download only from this repository's Releases and verify the supplied SHA-256 checksum.
+
+## Improvements in 0.2.5
+
+- Empty quick-access positions are refilled together at the next review instead of one per review interval. A vacancy does not consume the limit on **replacing** familiar shortcuts.
+- Existing shortcuts remain stable: real replacements still require a clear score advantage and respect the configured maximum. Manually protected choices and original files remain unchanged.
+- Additional regression tests cover recovery from multiple vacancies and a mixed recovery/replacement review. [Verification](docs/verification.md).
 
 ## Improvements in 0.2.4
 
@@ -69,7 +75,7 @@ No account, analytics, cloud synchronization or network service. The tracker sto
 
 ## Compatibility and verification
 
-Version **0.2.4 is a preview**, intended for Windows 10/11 x64 with the standard Explorer desktop. The release is checked on Windows Server 2022 and 2025 runners, with separate application screenshots and isolated filesystem fixtures. The current verification scope is recorded in the linked report. Automated geometry tests cover 100 combinations of resolution, scaling and desktop origin, including empty, occupied and insufficient-space cases. Those tests do not replace physical multi-monitor testing.
+Version **0.2.5 is a preview**, intended for Windows 10/11 x64 with the standard Explorer desktop. The release is checked on Windows Server 2022 and 2025 runners, with separate application screenshots and isolated filesystem fixtures. The current verification scope is recorded in the linked report. Automated geometry tests cover 100 combinations of resolution, scaling and desktop origin, including empty, occupied and insufficient-space cases. Those tests do not replace physical multi-monitor testing.
 
 Explorer auto-arrange must be off for positioning. A display-layout change pauses placement until you accept the new geometry. Unrecognized taskbar data stops changes rather than guessing; the pin filter can be disabled explicitly. Alternative shells and virtual-desktop managers are not validated. See [verification scope](docs/verification.md).
 
