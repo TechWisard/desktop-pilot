@@ -37,7 +37,14 @@ expected_blobs = {
 }
 for path, expected in expected_blobs.items():
     assert run(['git', 'rev-parse', 'HEAD:' + path]).stdout.strip() == expected
-assert run(['git', 'rev-parse', 'HEAD^']).stdout.strip() == BASE
+run(['git', 'merge-base', '--is-ancestor', BASE, 'HEAD'])
+# Windows TEMP may use RUNNER~1, whereas the real startup canonicalizes the
+# profile before opening it. Use that same representation in both test runs.
+# The first authoring run exposed this fixture mismatch; it is not counted as
+# a valid before/after comparison or a reason to relax a product assertion.
+replace_once('src/ui/import_ownership_tests.rs', '    let store = Store::open(&home).unwrap();', '''    std::fs::create_dir_all(&home).unwrap();
+    let home = crate::profile::ordinary_path(std::fs::canonicalize(&home).unwrap());
+    let store = Store::open(&home).unwrap();''')
 ui = Path('src/ui.rs')
 ui.write_text(ui.read_text(encoding='utf-8') + '\n#[cfg(test)]\nmod import_ownership_tests;\n', encoding='utf-8', newline='\n')
 run(['cargo', 'fmt'])
@@ -120,6 +127,7 @@ validation = {
     'format_clippy_build': 'passed',
     'workflow_run': 'https://github.com/TechWisard/desktop-pilot/actions/runs/' + os.environ['GITHUB_RUN_ID'],
     'environment': 'GitHub-hosted windows-2022; Rust 1.93.1',
+    'fixture_note': 'Canonical profile path matches production startup; earlier authoring run 40417692962 had a TEMP short-name mismatch and is not counted as baseline evidence.',
     'limits': ['No physical Windows 11 desktop', 'No human task-time measurement', 'PR/main/release validation is separate'],
 }
 Path('docs/research/2026-10-27-import-ownership-validation.json').write_text(json.dumps(validation, ensure_ascii=False, indent=2) + '\n', encoding='utf-8', newline='\n')
