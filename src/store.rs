@@ -286,8 +286,13 @@ impl Store {
         })
     }
     pub fn housekeeping(&self) -> Result<()> {
+        self.housekeeping_at(now())
+    }
+    /// Clock-injected retention is kept on the real Store/SQLite code path so
+    /// wall-clock discontinuities can be reproduced without changing Windows time.
+    fn housekeeping_at(&self, time: i64) -> Result<()> {
         self.transaction(|| {
-            let cutoff = now() - 90 * 86400;
+            let cutoff = time.saturating_sub(90 * 86400);
             self.db.execute("DELETE FROM days WHERE date<?1", [cutoff])?;
             self.db.execute("DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT 2000)",[])?;
             self.db.execute("DELETE FROM commands WHERE status IN ('done','error') AND id NOT IN (SELECT id FROM commands ORDER BY id DESC LIMIT 2000)", [])?;
@@ -556,3 +561,6 @@ mod tests {
         });
     }
 }
+
+#[cfg(test)]
+mod retention_tests;
