@@ -2429,7 +2429,8 @@ mod tests {
 
             store.observe(&app.id, 600, true, false).unwrap();
             let first = preview(store, true).unwrap();
-            assert_eq!(first.selected, [app.id.clone()]);
+            assert_eq!(first.selected.len(), 1);
+            assert_eq!(first.selected[0], app.id);
             apply(store, true).unwrap();
             let state: State = store.get("state").unwrap();
             assert_eq!(state.owned.len(), 1);
