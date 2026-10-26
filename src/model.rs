@@ -622,6 +622,50 @@ mod tests {
     }
 
     #[test]
+    fn corrected_clock_must_not_make_a_known_offline_copy_look_unprotected() {
+        let mut missing = app("rare", 5.0);
+        missing.valid = false;
+        // The source went offline before the clock was corrected backwards.
+        // The recorded absence now appears two weeks in the future.
+        missing.unavailable_since = now() + 14 * 86400;
+        missing.policy = Policy::Always;
+        let frequent = app("frequent", 300.0);
+        let cfg = Config {
+            slots: 1,
+            ..Default::default()
+        };
+        let state = State {
+            owned: vec![owned("rare", true)],
+            initialized: true,
+            ..Default::default()
+        };
+        let mut apps = vec![missing.clone(), frequent.clone()];
+        let selected = |apps: &[App], state: &State| {
+            select(apps, &rank(apps, &[], &cfg, now()), state, &cfg, false)
+        };
+        assert_eq!(selected(&apps, &state), ["rare"]);
+
+        // Legacy manually moved Auto copies and ordinary copies inside an
+        // uncertain grace period must also survive until a real rescan.
+        apps[0].policy = Policy::Auto;
+        assert_eq!(selected(&apps, &state), ["rare"]);
+        let unprotected = State {
+            owned: vec![owned("rare", false)],
+            ..state.clone()
+        };
+        assert_eq!(selected(&apps, &unprotected), ["rare"]);
+
+        // Neither a new offline shortcut nor a changed launch identity is
+        // allowed to claim a space. Explicit Never remains authoritative.
+        assert_eq!(selected(&apps, &State::default()), ["frequent"]);
+        apps[0].unavailable_since = 0;
+        assert_eq!(selected(&apps, &state), ["frequent"]);
+        apps[0].unavailable_since = now() + 14 * 86400;
+        apps[0].policy = Policy::Never;
+        assert_eq!(selected(&apps, &state), ["frequent"]);
+    }
+
+    #[test]
     fn grace_expires_without_ignoring_exclusion_or_explicit_capacity_reduction() {
         let mut offline = app("offline", 1.0);
         offline.valid = false;
