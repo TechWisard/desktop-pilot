@@ -1,6 +1,10 @@
-# Verification scope — 0.2.5
+# Verification scope — 0.2.6
 
 [Русский](verification.ru.md) · [Home](../README.md)
+
+## Additional 0.2.6 regressions
+
+The existing real `engine::refresh_apps`, `model::select`, `engine::preview`, and `engine::apply` paths now retain a previously published copy if its unchanged source or target becomes unavailable within a 72-hour grace interval, without treating the app as eligible for a new copy. Two production-policy tests cover protection of existing positions, refusal of new placement, expiry, `Never` and deliberate slot-capacity reduction. Two in-process engine tests remove and restore a shortcut original or its ordinary local target and assert preserved file identity, byte equality and recovery of valid status; the existing invalidation regression covers a changed URL identity and expiry. All of these are inert Windows fixtures in isolated directories. They do not prove physical drive disconnect handling, real Explorer icon placement or any measured savings in human task time. Research and remaining scenarios: [transient source unavailability](research/2026-10-26-transient-unavailability.md).
 
 ## Additional 0.2.5 regressions
 
@@ -53,4 +57,4 @@ Release packaging excludes installed profiles, usage databases and undo backups.
 
 ## Limits
 
-Windows Server CI and Wine do not establish interactive acceptance on every Windows 10/11 desktop. Physical multi-monitor/DPI changes, alternative shells, third-party desktop organizers, ARM64 and future taskbar formats have not been established for this release. The 100 geometry combinations verify placement calculations, not universal hardware compatibility. Version **0.2.5 remains a preview**.
+Windows Server CI and Wine do not establish interactive acceptance on every Windows 10/11 desktop. Physical multi-monitor/DPI changes, alternative shells, third-party desktop organizers, ARM64 and future taskbar formats have not been established for this release. The 100 geometry combinations verify placement calculations, not universal hardware compatibility. Version **0.2.6 remains a preview**.
