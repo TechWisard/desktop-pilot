@@ -15,7 +15,7 @@ The code that writes usage events already uses monotonic elapsed time to determi
 The automatic-review scheduler previously compared the current wall time to `last_review + interval_days`. When `last_review` was fourteen days in the future and interval was seven days, an enabled, quiet and already initialized installation had no review until the wall clock passed that future threshold. No program setting reflected this apparent inactivity.
 
 Failure-first Windows runs on the test branch:
-- [Initial historical session reproduction](https://github.com/TechWisard/desktop-pilot/actions/runs/40361844201)
+- [Initial historical session reproduction](https://github.com/TechWisard/desktop-pilot/actions/runs/40362314156)
 - [Review scheduling reproduction before the production correction](https://github.com/TechWisard/desktop-pilot/actions/runs/40363233853)
 
 **Implementation:** A confirmed first visit counts as a new session when the last persisted checkpoint is at least 20 minutes in either direction; adjustments shorter than that do not manufacture a session. Automatic review treats a stored review date more than 24 hours in the future as due, without bypassing automatic-review opt-in, learning readiness, the quiet-desktop requirement or initial preview policy. After a successful review, the actual timestamp is saved; an immediate duplicate review is not due. The normal configured interval is unchanged.
