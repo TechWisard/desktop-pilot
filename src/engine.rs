@@ -2738,6 +2738,60 @@ mod tests {
     }
 
     #[test]
+    fn corrected_backwards_clock_restores_new_usage_sessions_and_checkpoints() {
+        with_store(|store| {
+            let corrected_time = now();
+            let checkpoint = HashMap::from([(
+                "editor".to_owned(),
+                corrected_time + 2 * 3600,
+            )]);
+            store.set("app_session_times", &checkpoint).unwrap();
+
+            // A clock set two hours into the future was corrected while
+            // Desktop Pilot was stopped. Restart from its real persisted state.
+            let mut sessions: HashMap<String, i64> =
+                store.get("app_session_times").unwrap();
+            record_usage(store, &mut sessions, "editor", 10, true, corrected_time)
+                .unwrap();
+            let history = store.days().unwrap();
+            assert_eq!(history.len(), 1);
+            assert_eq!(history[0].seconds, 10);
+            assert_eq!(
+                history[0].sessions, 1,
+                "the first confirmed visit after correcting a large clock error must not be lost"
+            );
+            assert_eq!(sessions["editor"], corrected_time);
+            let persisted: HashMap<String, i64> =
+                store.get("app_session_times").unwrap();
+            assert_eq!(persisted, sessions);
+
+            // A worker restart immediately after the correction must not
+            // manufacture a second session inside the ordinary session gap.
+            record_usage(store, &mut sessions, "editor", 5, true, corrected_time + 30)
+                .unwrap();
+            assert_eq!(store.days().unwrap()[0].sessions, 1);
+            record_usage(store, &mut sessions, "editor", 10, true, corrected_time + 1230)
+                .unwrap();
+            let history = store.days().unwrap();
+            assert_eq!(history[0].seconds, 25);
+            assert_eq!(history[0].sessions, 2);
+        });
+    }
+
+    #[test]
+    fn small_backwards_clock_adjustments_do_not_inflate_short_sessions() {
+        with_store(|store| {
+            let corrected_time = now();
+            let mut sessions =
+                HashMap::from([("editor".to_owned(), corrected_time + 30)]);
+            record_usage(store, &mut sessions, "editor", 10, true, corrected_time)
+                .unwrap();
+            assert_eq!(store.days().unwrap()[0].sessions, 0);
+            assert_eq!(sessions["editor"], corrected_time);
+        });
+    }
+
+    #[test]
     fn sqlite_writer_lock_retries_the_real_usage_transaction_once() {
         with_store(|store| {
             // A second connection owns SQLite's writer lock. The first real
