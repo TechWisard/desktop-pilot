@@ -396,11 +396,19 @@ pub fn select(
         }
     }
     while result.len() > cfg.slots {
+        // When the user reduces capacity, retain usable shortcuts before a
+        // temporarily unavailable high-score copy. Manual anchors still win.
         let worst = result
             .iter()
             .enumerate()
             .filter(|(_, id)| !fixed(id))
-            .min_by(|(_, a), (_, b)| score(a).total_cmp(&score(b)))
+            .min_by(|(_, a), (_, b)| {
+                let a_usable = by_id.get(a.as_str()).is_some_and(|app| app.valid);
+                let b_usable = by_id.get(b.as_str()).is_some_and(|app| app.valid);
+                a_usable
+                    .cmp(&b_usable)
+                    .then_with(|| score(a).total_cmp(&score(b)))
+            })
             .map(|(i, _)| i);
         if let Some(i) = worst {
             result.remove(i);
@@ -559,6 +567,50 @@ mod tests {
         assert_eq!(
             select(&apps, &ranking, &reduced, &cfg, false),
             ["available"]
+        );
+    }
+
+    #[test]
+    fn shrinking_capacity_prefers_an_available_copy_over_high_ranked_unavailable_one() {
+        let mut offline = app("offline", 200.0);
+        offline.valid = false;
+        offline.unavailable_since = now();
+        let online = app("online", 20.0);
+        let apps = vec![offline.clone(), online.clone()];
+        let normal = Config {
+            slots: 2,
+            max_changes: 1,
+            ..Default::default()
+        };
+        let reduced = Config {
+            slots: 1,
+            max_changes: 1,
+            ..Default::default()
+        };
+        let state = State {
+            owned: vec![owned("offline", false), owned("online", false)],
+            initialized: true,
+            ..Default::default()
+        };
+        let ranking = rank(&apps, &[], &normal, now());
+        assert_eq!(
+            select(&apps, &ranking, &state, &normal, false),
+            ["offline", "online"]
+        );
+        // A capacity reduction must not remove the only available shortcut.
+        assert_eq!(select(&apps, &ranking, &state, &reduced, false), ["online"]);
+        // The user's explicit Always rule must still take precedence.
+        offline.policy = Policy::Always;
+        let manual = vec![offline, online];
+        assert_eq!(
+            select(
+                &manual,
+                &rank(&manual, &[], &reduced, now()),
+                &state,
+                &reduced,
+                false
+            ),
+            ["offline"]
         );
     }
 

@@ -1659,15 +1659,21 @@ fn record_usage(
         && session_times
             .get(id)
             .is_none_or(|last| time.saturating_sub(*last) >= 1200);
-    store.transaction(|| {
+    // Stage the in-memory session state until both usage and the checkpoint
+    // have committed. A storage error must not advance only one of the two.
+    let next_times = store.transaction(|| {
         store.observe(id, seconds, session, false)?;
         // Measure the gap from the last confirmed activity, not the beginning
         // of a possibly hours-long session. Persist it with the usage counters
         // so a brief focus switch or worker restart cannot inflate the ranking.
-        session_times.insert(id.into(), time);
-        session_times.retain(|_, last| time.saturating_sub(*last) < 90 * 86400);
-        store.set("app_session_times", session_times)
-    })
+        let mut updated = session_times.clone();
+        updated.insert(id.into(), time);
+        updated.retain(|_, last| time.saturating_sub(*last) < 90 * 86400);
+        store.set("app_session_times", &updated)?;
+        Ok(updated)
+    })?;
+    *session_times = next_times;
+    Ok(())
 }
 pub fn monitor(home: PathBuf) -> Result<()> {
     let _com = native::Com::new()?;
@@ -2529,6 +2535,88 @@ mod tests {
             );
         });
     }
+    #[test]
+    fn reducing_slots_removes_an_unavailable_copy_not_a_working_one() {
+        with_store(|store| {
+            let mut config: Config = store.get("config").unwrap();
+            config.slots = 2;
+            config.max_changes = 1;
+            store.set("config", &config).unwrap();
+            let mut offline = add_test_app(store, "Offline game", "steam://rungameid/601");
+            offline.policy = Policy::Auto;
+            offline.seed = 200.0;
+            offline.seed_at = now();
+            store.put_app(&offline).unwrap();
+            let mut online = add_test_app(store, "Available editor", "steam://rungameid/602");
+            online.policy = Policy::Auto;
+            online.seed = 20.0;
+            online.seed_at = now();
+            store.put_app(&online).unwrap();
+            apply(store, true).unwrap();
+            let before: State = store.get("state").unwrap();
+            assert_eq!(before.owned.len(), 2);
+            let unavailable_copy = before.owned.iter().find(|o| o.app == offline.id).unwrap();
+            let available_copy = before.owned.iter().find(|o| o.app == online.id).unwrap();
+            let unavailable_path = unavailable_copy.path.clone();
+            let available_path = available_copy.path.clone();
+            let available_sha = available_copy.sha.clone();
+
+            // A missing source enters the temporary grace period and keeps its
+            // existing place until the user explicitly reduces the capacity.
+            std::fs::remove_file(&offline.source).unwrap();
+            refresh_apps(store).unwrap();
+            assert!(!store.app(&offline.id).unwrap().valid);
+            assert_eq!(preview(store, false).unwrap().selected.len(), 2);
+
+            config.slots = 1;
+            store.set("config", &config).unwrap();
+            assert_eq!(preview(store, false).unwrap().selected, [online.id.clone()]);
+            apply(store, false).unwrap();
+
+            let after: State = store.get("state").unwrap();
+            assert_eq!(after.owned.len(), 1);
+            assert_eq!(after.owned[0].app, online.id);
+            assert_eq!(after.owned[0].path, available_path);
+            assert_eq!(after.owned[0].sha, available_sha);
+            assert!(Path::new(&available_path).is_file());
+            assert!(!Path::new(&unavailable_path).exists());
+            assert!(Path::new(&online.source).is_file());
+        });
+    }
+
+    #[test]
+    fn failed_usage_commit_does_not_advance_in_memory_session_history() {
+        with_store(|store| {
+            store
+                .set("app_session_times", &HashMap::<String, i64>::new())
+                .unwrap();
+            store
+                .db
+                .execute_batch(
+                    "CREATE TRIGGER reject_session_write BEFORE UPDATE ON kv
+                     WHEN NEW.k = 'app_session_times'
+                     BEGIN SELECT RAISE(ABORT, 'simulated storage failure'); END;",
+                )
+                .unwrap();
+            let mut session_times = HashMap::new();
+            let at = now();
+            assert!(record_usage(store, &mut session_times, "editor", 10, true, at).is_err());
+            assert!(session_times.is_empty());
+            assert!(store.days().unwrap().is_empty());
+
+            store
+                .db
+                .execute_batch("DROP TRIGGER reject_session_write;")
+                .unwrap();
+            record_usage(store, &mut session_times, "editor", 10, true, at).unwrap();
+            let days = store.days().unwrap();
+            assert_eq!(days.len(), 1);
+            assert_eq!(days[0].seconds, 10);
+            assert_eq!(days[0].sessions, 1);
+            assert_eq!(session_times["editor"], at);
+        });
+    }
+
     #[test]
     fn foreground_accumulator_uses_actual_elapsed_time_and_discards_sleep() {
         let mut usage = UsageAccumulator::default();
