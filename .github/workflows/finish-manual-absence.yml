@@ -1,0 +1,54 @@
+name: Prepare verified manual-absence release
+on:
+  push:
+    branches: [maintenance/finish-manual-absence-20261026]
+permissions:
+  contents: read
+jobs:
+  prepare:
+    if: github.repository == 'TechWisard/desktop-pilot'
+    runs-on: windows-2022
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: work
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: tools
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: d0fb8578fe377b749319ea8d4702b933210dd867
+          path: work
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
+        with:
+          toolchain: '1.93.1'
+          components: rustfmt, clippy
+      - name: Reproduce untranslated warnings and prepare exact changes
+        run: python ../tools/scripts/complete-0.2.10.py prepare
+      - name: Check candidate without weakening normal release gates
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./scripts/test-release-workflow.ps1 2>&1 | Tee-Object target/completion-guards.log
+          if ($LASTEXITCODE) { throw 'Publication guards failed' }
+          cargo fmt --check
+          if ($LASTEXITCODE) { throw 'Formatting failed' }
+          cargo test --locked 2>&1 | Tee-Object target/completion-tests.log
+          if ($LASTEXITCODE) { throw 'Regression tests failed' }
+          cargo clippy --locked --all-targets -- -D warnings
+          if ($LASTEXITCODE) { throw 'Clippy failed' }
+          cargo build --locked
+          if ($LASTEXITCODE) { throw 'Build failed' }
+          ./scripts/test-native.ps1 2>&1 | Tee-Object target/completion-native.log
+          if ($LASTEXITCODE) { throw 'Native checks failed' }
+      - name: Store verified candidate objects without moving any branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python ../tools/scripts/complete-0.2.10.py publish
