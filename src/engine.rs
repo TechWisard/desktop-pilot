@@ -2234,7 +2234,7 @@ mod tests {
                 store
                     .get::<String>("catalog_warning")
                     .unwrap()
-                    .contains("temporarily unavailable")
+                    .contains("manually protected")
             );
 
             std::fs::write(&app.source, &original).unwrap();
@@ -2277,7 +2277,13 @@ mod tests {
     #[test]
     fn missing_and_changed_originals_are_still_invalidated() {
         with_store(|store| {
-            let missing = add_test_app(store, "Missing", "steam://rungameid/706");
+            let mut missing = add_test_app(store, "Missing", "steam://rungameid/706");
+            // This fixture tests the 72-hour grace expiry for automatic
+            // placement, not a shortcut the user explicitly pinned.
+            missing.policy = Policy::Auto;
+            missing.seed = 30.0;
+            missing.seed_at = now();
+            store.put_app(&missing).unwrap();
             let changed = add_test_app(store, "Changed", "steam://rungameid/707");
             apply(store, true).unwrap();
             let before: State = store.get("state").unwrap();

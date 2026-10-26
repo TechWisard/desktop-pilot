@@ -20,6 +20,10 @@ The integrated scenario uses actual `Store`, `refresh_apps`, `preview`, `apply`,
 
 **Synthetic before/after:** At six days of unavailability, the old selector proposed one unrequested replacement and the corrected one proposes zero. This is not measured human efficiency.
 
+## Regression reconciliation
+
+The first corrected implementation exposed two older tests that implicitly used `add_test_app`'s `Always` default while expecting Auto behavior. The source-reconnect test now expects the stronger explanation for a deliberately protected copy. The separate 72-hour-expiry test explicitly creates an **Auto** shortcut with genuine historical eligibility before placement, so it continues to verify that ordinary automatic copies really disappear after the grace window. The test asserting rejection of changed launch identity remains unchanged. These are substantive scenario disambiguations, not skipped or weakened assertions.
+
 ## Remaining verification
 
 Run formatting, Rust tests, Clippy with warnings denied, build, native Windows fixtures and publication guards on both supported CI runners. Test actual unplugged devices, Windows 11 Explorer icon positions, Russian/English warning readability at 200% scaling and varied long-term project workflows separately. No changes to private user files, telemetry, schema, privileges or network activity.
