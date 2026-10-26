@@ -1,6 +1,10 @@
-# Verification scope — 0.2.14
+# Verification scope — 0.2.15
 
 [Русский](verification.ru.md) · [Home](../README.md)
+
+## Additional 0.2.15 regressions: activity writer and session retention
+
+A failure-first production writer fixture reproduces a gap in the 0.2.14 SQLite protection: after an artificial +120-day clock jump, a real visit to one app removed recent checkpoints for unrelated apps. [Baseline CI](https://github.com/TechWisard/desktop-pilot/actions/runs/40401830909) reproduced one new failure and passed 190 other Rust tests on both Windows runners; a formatting-only earlier run was not counted. The correction centralizes expiry in guarded housekeeping and reloads the worker cache afterwards. The compound tests cover a return to the original time, false extra sessions, and ordinary expiry. Final candidate results must be checked independently. [Scenario details](research/2026-10-27-session-checkpoint-retention.md).
 
 ## Additional 0.2.14 regressions: forward clock jumps and bounded retention
 

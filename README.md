@@ -16,11 +16,15 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It lear
 
 ## Get started
 
-1. Download and extract **DesktopPilot-0.2.14-windows-x64.zip** from [Releases](https://github.com/TechWisard/desktop-pilot/releases/latest).
+1. Download and extract **DesktopPilot-0.2.15-windows-x64.zip** from [Releases](https://github.com/TechWisard/desktop-pilot/releases/latest).
 2. Run `desktop-pilot.exe`. The setup walks through the operating mode, number and position of shortcuts, and observation preferences. Choose **English** or **Русский** at any time.
 3. Use your computer normally. The default is **passive observation for 7 computer sessions**. No quick shortcuts are created during learning. After the threshold, the most-used eligible apps appear automatically during an idle period. Choose sessions, active days, either condition or both in Settings.
 
 Installation is per user, by default in `%LOCALAPPDATA%\DesktopPilot`; no administrator access is required. Settings are available from the tray icon and the Start menu. This preview executable is unsigned; download only from this repository's Releases and verify the supplied SHA-256 checksum.
+
+## Improvements in 0.2.15
+
+Working in a different application after a large system-clock jump no longer discards recent session checkpoints for other apps. Cleanup remains bounded by the verified SQLite retention policy; the background worker reloads its cache after cleanup. Transient SQLite writer contention is retried safely before user changes begin; persistent errors remain visible. This prevents accidental loss of session continuity and spurious extra sessions after clock correction. Original shortcuts, placements and manual rules remain unchanged.
 
 ## Improvements in 0.2.14
 
