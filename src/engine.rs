@@ -2738,6 +2738,45 @@ mod tests {
     }
 
     #[test]
+    fn a_future_review_checkpoint_does_not_freeze_automatic_recovery() {
+        with_store(|store| {
+            let mut cfg: Config = store.get("config").unwrap();
+            cfg.automatic = true;
+            cfg.interval_days = 7;
+            store.set("config", &cfg).unwrap();
+            let baseline = now();
+            store
+                .set(
+                    "state",
+                    &State {
+                        initialized: true,
+                        last_review: baseline + 14 * 86400,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+
+            // A corrected clock must permit exactly one normal quiet review.
+            assert!(automatic_review(store, true).unwrap());
+            let after: State = store.get("state").unwrap();
+            assert!(after.last_review >= baseline && after.last_review <= now());
+            assert!(after.owned.is_empty());
+            assert!(!automatic_review(store, true).unwrap());
+
+            // Small clock adjustments and a busy desktop are not a reason
+            // to override the requested seven-day review interval.
+            let mut future = after.clone();
+            future.last_review = now() + 30;
+            store.set("state", &future).unwrap();
+            assert!(!automatic_review(store, true).unwrap());
+
+            future.last_review = now() + 14 * 86400;
+            store.set("state", &future).unwrap();
+            assert!(!automatic_review(store, false).unwrap());
+        });
+    }
+
+    #[test]
     fn corrected_backwards_clock_restores_new_usage_sessions_and_checkpoints() {
         with_store(|store| {
             let corrected_time = now();
