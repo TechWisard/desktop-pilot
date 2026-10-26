@@ -357,10 +357,13 @@ pub fn select(
             !a.valid
                 && a.policy != Policy::Never
                 && a.unavailable_since > 0
-                && a.unavailable_since <= at
-                && (at.saturating_sub(a.unavailable_since) < UNAVAILABLE_GRACE_SECONDS
-                    || a.policy == Policy::Always
-                    || state.owned.iter().any(|o| o.app == id && o.manual))
+                && (a.policy == Policy::Always
+                    || state.owned.iter().any(|o| o.app == id && o.manual)
+                    // A backwards clock correction can place the saved outage
+                    // checkpoint in the future. Its age is unknown, not expired.
+                    // Keep only existing Auto copies until the next rescan.
+                    || a.unavailable_since > at
+                    || at.saturating_sub(a.unavailable_since) < UNAVAILABLE_GRACE_SECONDS)
         })
     };
     let capacity_reduced = state.owned.len() > cfg.slots;
