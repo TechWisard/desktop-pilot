@@ -26,6 +26,14 @@ fn translate(value: &str, russian: bool) -> String {
     };
     let translations = [
         (
+            "Закреплённый вами быстрый ярлык остаётся на месте, пока вы не измените правило или не удалите его. Исходный ярлык или цель недоступны:",
+            "The manually protected quick shortcut stays in place until you change its rule or remove it. The original source or target is unavailable:",
+        ),
+        (
+            "Существующая быстрая копия сохраняется до 72 часов; новые копии не создаются. Исходный ярлык или цель временно недоступны:",
+            "The existing quick copy is held for up to 72 hours; new copies are not created. Original source or target is temporarily unavailable:",
+        ),
+        (
             "Не удалось создать ярлык в меню «Пуск». Чтобы открыть настройки, снова запустите Desktop Pilot.",
             "The Start menu shortcut could not be created. Open Settings by launching Desktop Pilot again.",
         ),
@@ -914,3 +922,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod offline_tests;

@@ -348,23 +348,26 @@ pub fn select(
     let scores: HashMap<_, _> = ranking.iter().map(|r| (r.id.as_str(), r)).collect();
     let score = |id: &str| scores.get(id).map_or(0.0, |r| r.score);
     let at = now();
-    // A missing drive must not cause a familiar shortcut to disappear at the
-    // next review. This exception never makes an unavailable app eligible for
-    // a new copy; an explicit Never rule or a shorter slot capacity still wins.
-    let in_grace = |id: &str| {
+    // Already managed copies tolerate source outages. Auto copies get 72 hours;
+    // a copy the user explicitly protected or moved must not disappear merely
+    // because its unchanged source is unavailable. An identity change is not
+    // treated as a temporary outage, and Never always takes precedence.
+    let retained_offline = |id: &str| {
         by_id.get(id).is_some_and(|a| {
             !a.valid
                 && a.policy != Policy::Never
                 && a.unavailable_since > 0
                 && a.unavailable_since <= at
-                && at.saturating_sub(a.unavailable_since) < UNAVAILABLE_GRACE_SECONDS
+                && (at.saturating_sub(a.unavailable_since) < UNAVAILABLE_GRACE_SECONDS
+                    || a.policy == Policy::Always
+                    || state.owned.iter().any(|o| o.app == id && o.manual))
         })
     };
     let capacity_reduced = state.owned.len() > cfg.slots;
     let fixed = |id: &str| {
         by_id.get(id).is_some_and(|a| a.policy == Policy::Always)
             || state.owned.iter().any(|o| o.app == id && o.manual)
-            || (!capacity_reduced && in_grace(id))
+            || (!capacity_reduced && retained_offline(id))
     };
     let allowed = |id: &str| {
         scores.get(id).is_some_and(|r| r.eligible)
@@ -379,7 +382,7 @@ pub fn select(
         .iter()
         .filter(|o| {
             allowed(&o.app)
-                || in_grace(&o.app)
+                || retained_offline(&o.app)
                 || by_id.get(o.app.as_str()).is_some_and(|a| {
                     a.valid && a.policy == Policy::Auto && !(cfg.respect_taskbar_pins && a.pinned)
                 })
@@ -530,6 +533,91 @@ mod tests {
         assert_eq!(
             select(&apps, &ranking, &State::default(), &cfg, true),
             ["available"]
+        );
+    }
+
+    #[test]
+    fn manual_anchor_survives_a_six_day_outage_but_explicit_release_and_changes_do_not() {
+        let mut rare = app("rare", 5.0);
+        rare.policy = Policy::Always;
+        rare.valid = false;
+        rare.unavailable_since = now() - 6 * 86400;
+        let frequent = app("frequent", 300.0);
+        let apps = vec![rare.clone(), frequent];
+        let cfg = Config {
+            slots: 1,
+            ..Default::default()
+        };
+        let state = State {
+            owned: vec![owned("rare", true)],
+            initialized: true,
+            ..Default::default()
+        };
+        let selected = select(&apps, &rank(&apps, &[], &cfg, now()), &state, &cfg, false);
+        assert_eq!(selected, ["rare"]);
+
+        let mut restored = apps.clone();
+        restored[0].valid = true;
+        restored[0].unavailable_since = 0;
+        assert_eq!(
+            select(
+                &restored,
+                &rank(&restored, &[], &cfg, now()),
+                &state,
+                &cfg,
+                false
+            ),
+            ["rare"]
+        );
+
+        // A previously moved shortcut is still protected if a legacy profile
+        // carries a manual ownership flag with an Auto policy.
+        let mut moved = apps.clone();
+        moved[0].policy = Policy::Auto;
+        assert_eq!(
+            select(&moved, &rank(&moved, &[], &cfg, now()), &state, &cfg, false),
+            ["rare"]
+        );
+
+        let mut excluded = apps.clone();
+        excluded[0].policy = Policy::Never;
+        assert_eq!(
+            select(
+                &excluded,
+                &rank(&excluded, &[], &cfg, now()),
+                &state,
+                &cfg,
+                false
+            ),
+            ["frequent"]
+        );
+
+        let mut released = apps.clone();
+        released[0].policy = Policy::Auto;
+        let mut released_state = state.clone();
+        released_state.owned[0].manual = false;
+        assert_eq!(
+            select(
+                &released,
+                &rank(&released, &[], &cfg, now()),
+                &released_state,
+                &cfg,
+                false
+            ),
+            ["frequent"]
+        );
+
+        let mut changed = apps.clone();
+        changed[0].unavailable_since = 0;
+        assert_eq!(
+            select(
+                &changed,
+                &rank(&changed, &[], &cfg, now()),
+                &state,
+                &cfg,
+                false
+            ),
+            ["frequent"]
         );
     }
 

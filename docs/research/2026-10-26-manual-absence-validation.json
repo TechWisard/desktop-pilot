@@ -1,0 +1,61 @@
+{
+  "source_commit": "d0fb8578fe377b749319ea8d4702b933210dd867",
+  "prepared_version": "0.2.10",
+  "preparation_run": "https://github.com/TechWisard/desktop-pilot/actions/runs/40354518771",
+  "environment": "windows-2022 / Rust 1.93.1",
+  "localization_before": {
+    "passed": 0,
+    "failed": 2
+  },
+  "after": {
+    "rust_tests_passed": 174,
+    "failed": 0,
+    "ignored": 0,
+    "native_checks": 28,
+    "release_guards": 9,
+    "fmt": "passed",
+    "clippy_warnings_denied": "passed",
+    "debug_build": "passed"
+  },
+  "ui_tests_passed": [
+    "ui::tests::a_dialog_can_grow_after_shorter_content_without_hiding_its_actions",
+    "ui::tests::a_failed_queue_and_failed_reload_do_not_leave_a_rule_looking_pending",
+    "ui::tests::a_large_catalog_keeps_every_result_and_rebuilds_changed_filters_and_scores",
+    "ui::tests::an_observation_pause_is_not_reported_as_active_learning",
+    "ui::tests::app_details_can_be_closed_with_the_mouse_without_scrolling",
+    "ui::tests::cards_remain_inside_narrow_and_wide_viewports",
+    "ui::tests::a_pending_rule_stays_pending_until_the_database_reports_its_result",
+    "ui::tests::catalog_search_finds_distinct_launch_profiles_and_user_notes",
+    "ui::tests::changes_that_become_invalid_after_merge_are_rejected",
+    "ui::tests::conflicting_settings_are_not_silently_overwritten",
+    "ui::tests::explicit_startup_or_tracking_changes_resume_a_disabled_profile",
+    "ui::tests::importing_again_keeps_rules_and_history_but_refreshes_the_target",
+    "ui::tests::catalog_controls_stay_inside_small_and_4k_scaled_viewports",
+    "ui::tests::invalid_ui_scale_cannot_make_the_window_unusable",
+    "ui::tests::importing_legacy_url_ids_keeps_one_catalog_entry_and_its_usage_history",
+    "ui::tests::long_dialogs_fit_a_minimum_window_at_large_text_scale",
+    "ui::tests::manual_mode_can_apply_without_waiting_for_disabled_collection",
+    "ui::tests::pasted_shortcut_paths_accept_windows_quotes_unc_and_duplicates",
+    "ui::tests::running_commands_are_not_mistaken_for_finished_commands",
+    "ui::tests::saved_state_overrides_a_stale_status_message",
+    "ui::tests::saving_unrelated_edits_preserves_a_background_pause",
+    "ui::tests::search_is_case_insensitive_tokenized_and_includes_paths",
+    "ui::tests::keyboard_zoom_matches_the_selector_and_survives_reopening",
+    "ui::tests::stopped_worker_failure_is_visible_but_stale_and_intentional_stops_are_not",
+    "ui::tests::switching_modes_preserves_the_users_placement_and_limits",
+    "ui::tests::system_light_theme_does_not_replace_the_product_style",
+    "ui::tests::settings_controls_remain_reachable_at_200_percent_in_a_small_window",
+    "ui::tests::unfinished_setup_can_resume_or_discard_its_saved_choices"
+  ],
+  "simulated_outage_days": [
+    1,
+    2,
+    3,
+    6,
+    21,
+    45
+  ],
+  "physical_windows11_tested": false,
+  "human_time_savings_measured": false,
+  "release_status": "Candidate only; branch and main checks plus publication still required"
+}

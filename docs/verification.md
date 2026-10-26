@@ -76,3 +76,9 @@ Release packaging excludes installed profiles, usage databases and undo backups.
 ## Limits
 
 Windows Server CI and Wine do not establish interactive acceptance on every Windows 10/11 desktop. Physical multi-monitor/DPI changes, alternative shells, third-party desktop organizers, ARM64 and future taskbar formats have not been established for this release. The 100 geometry combinations verify placement calculations, not universal hardware compatibility. Version **0.2.8 remains a preview**.
+
+## 0.2.10: manual protection during long source outages
+
+A 45-day simulated review/recovery sequence preserves a manually protected shortcut; two additional regressions cover English/Russian offline warnings and unchanged paths.
+
+[Validation, run and limitations](research/2026-10-26-manual-absence-completion.md).
