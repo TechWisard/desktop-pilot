@@ -428,13 +428,21 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
         if !app.valid
             && app.policy != Policy::Never
             && app.unavailable_since > 0
-            && scanned_at.saturating_sub(app.unavailable_since) < UNAVAILABLE_GRACE_SECONDS
-            && state.owned.iter().any(|o| o.app == app.id)
+            && let Some(copy) = state.owned.iter().find(|o| o.app == app.id)
         {
-            warnings.push(format!(
-                "Original source or target is temporarily unavailable: {}. The existing quick copy is held for up to 72 hours; new copies are not created.",
-                app.source
-            ));
+            if app.policy == Policy::Always || copy.manual {
+                warnings.push(format!(
+                    "Original source or target is unavailable: {}. Its manually protected quick shortcut will stay until you change its rule or remove it.",
+                    app.source
+                ));
+            } else if scanned_at.saturating_sub(app.unavailable_since)
+                < UNAVAILABLE_GRACE_SECONDS
+            {
+                warnings.push(format!(
+                    "Original source or target is temporarily unavailable: {}. The existing quick copy is held for up to 72 hours; new copies are not created.",
+                    app.source
+                ));
+            }
         }
         if let Some(pins) = &pins {
             app.pinned = real && config.respect_taskbar_pins && native::is_pinned(app, pins);
@@ -2597,6 +2605,8 @@ mod tests {
 
             assert_eq!(preview(store, false).unwrap().selected, [rare.id.clone()]);
             apply(store, false).unwrap();
+            let warning: String = store.get("catalog_warning").unwrap();
+            assert!(warning.contains("manually protected"));
             let retained: State = store.get("state").unwrap();
             assert_eq!(retained.owned[0].path, protected_path);
             assert_eq!(retained.owned[0].position, before.owned[0].position);

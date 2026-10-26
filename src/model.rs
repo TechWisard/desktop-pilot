@@ -348,23 +348,26 @@ pub fn select(
     let scores: HashMap<_, _> = ranking.iter().map(|r| (r.id.as_str(), r)).collect();
     let score = |id: &str| scores.get(id).map_or(0.0, |r| r.score);
     let at = now();
-    // A missing drive must not cause a familiar shortcut to disappear at the
-    // next review. This exception never makes an unavailable app eligible for
-    // a new copy; an explicit Never rule or a shorter slot capacity still wins.
-    let in_grace = |id: &str| {
+    // Already managed copies tolerate source outages. Auto copies get 72 hours;
+    // a copy the user explicitly protected or moved must not disappear merely
+    // because its unchanged source is unavailable. An identity change is not
+    // treated as a temporary outage, and Never always takes precedence.
+    let retained_offline = |id: &str| {
         by_id.get(id).is_some_and(|a| {
             !a.valid
                 && a.policy != Policy::Never
                 && a.unavailable_since > 0
                 && a.unavailable_since <= at
-                && at.saturating_sub(a.unavailable_since) < UNAVAILABLE_GRACE_SECONDS
+                && (at.saturating_sub(a.unavailable_since) < UNAVAILABLE_GRACE_SECONDS
+                    || a.policy == Policy::Always
+                    || state.owned.iter().any(|o| o.app == id && o.manual))
         })
     };
     let capacity_reduced = state.owned.len() > cfg.slots;
     let fixed = |id: &str| {
         by_id.get(id).is_some_and(|a| a.policy == Policy::Always)
             || state.owned.iter().any(|o| o.app == id && o.manual)
-            || (!capacity_reduced && in_grace(id))
+            || (!capacity_reduced && retained_offline(id))
     };
     let allowed = |id: &str| {
         scores.get(id).is_some_and(|r| r.eligible)
@@ -379,7 +382,7 @@ pub fn select(
         .iter()
         .filter(|o| {
             allowed(&o.app)
-                || in_grace(&o.app)
+                || retained_offline(&o.app)
                 || by_id.get(o.app.as_str()).is_some_and(|a| {
                     a.valid && a.policy == Policy::Auto && !(cfg.respect_taskbar_pins && a.pinned)
                 })
@@ -560,6 +563,21 @@ mod tests {
             select(
                 &restored,
                 &rank(&restored, &[], &cfg, now()),
+                &state,
+                &cfg,
+                false
+            ),
+            ["rare"]
+        );
+
+        // A previously moved shortcut is still protected if a legacy profile
+        // carries a manual ownership flag with an Auto policy.
+        let mut moved = apps.clone();
+        moved[0].policy = Policy::Auto;
+        assert_eq!(
+            select(
+                &moved,
+                &rank(&moved, &[], &cfg, now()),
                 &state,
                 &cfg,
                 false
