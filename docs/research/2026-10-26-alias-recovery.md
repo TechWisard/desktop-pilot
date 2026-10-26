@@ -35,3 +35,7 @@ To replay the baseline, use a separate worktree at the baseline commit, copy the
 Complete and record candidate/PR/main CI and publication before claiming a new released version. The existing publication workflow verifies release assets and tag/commit consistency.
 
 Not exercised: a physical Windows 11 desktop, an actual OneDrive client or remote share, prolonged network timeout, or measured task time for people. If no readable same-identity alias is found, existing conservative behavior remains; this does not solve an entire profile drive disappearing. Continue longitudinal project-switch/absence tests and real Explorer validation separately. No Windows-version matrix was added.
+
+## Executed preparation checks
+
+The unchanged baseline produced three intended assertion failures and two passing boundary checks. After the patch all 185 Rust tests passed, including the five new regressions, as did 28 native checks, nine release guards, formatting, strict Clippy and the debug build. Run: https://github.com/TechWisard/desktop-pilot/actions/runs/40379289641. Machine-readable details are in `2026-10-26-alias-recovery-validation.json`. Final PR/main CI and release publication must still be checked independently.

@@ -1,0 +1,21 @@
+{
+  "baseline_commit": "79b304a4bff84a8220486805e77da45e947d52e6",
+  "baseline_engine_blob": "97320834c5aeccbcf1b3d6b6c42a383af59fc294",
+  "baseline_regressions": {
+    "passed": 2,
+    "failed": 3
+  },
+  "after_full_tests_passed": 185,
+  "after_new_regressions_passed": 5,
+  "native_checks_passed": 28,
+  "publication_guards_passed": 9,
+  "format_clippy_build": "passed",
+  "engine_blob_after": "2c9ef304ffe5d8e0c06c08f418d7466e01a128bc",
+  "workflow_run": "https://github.com/TechWisard/desktop-pilot/actions/runs/40379289641",
+  "environment": "GitHub-hosted windows-2022; Rust 1.93.1",
+  "limits": [
+    "No physical Windows 11 desktop or real cloud sync client was exercised",
+    "No measurement of human time savings",
+    "Final PR and main release validation are separate"
+  ]
+}

@@ -12,13 +12,20 @@ fn with_profile(test: impl FnOnce(&Store)) {
     let store = Store::open(&home).unwrap();
     let desktop = home.join("Desktop");
     std::fs::create_dir_all(&desktop).unwrap();
-    store.set("test_desktop", &desktop.to_string_lossy()).unwrap();
-    store.set("config", &Config {
-        slots: 1,
-        learning_enabled: false,
-        respect_taskbar_pins: false,
-        ..Default::default()
-    }).unwrap();
+    store
+        .set("test_desktop", &desktop.to_string_lossy())
+        .unwrap();
+    store
+        .set(
+            "config",
+            &Config {
+                slots: 1,
+                learning_enabled: false,
+                respect_taskbar_pins: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
     test(&store);
     drop(store);
     std::fs::remove_dir_all(home).unwrap();
@@ -26,7 +33,11 @@ fn with_profile(test: impl FnOnce(&Store)) {
 
 fn original(store: &Store) -> App {
     let path = store.home.join("original.url");
-    std::fs::write(&path, b"[InternetShortcut]\r\nURL=https://example.invalid/Workspace\r\n").unwrap();
+    std::fs::write(
+        &path,
+        b"[InternetShortcut]\r\nURL=https://example.invalid/Workspace\r\n",
+    )
+    .unwrap();
     let mut app = native::read_link(&path).unwrap();
     app.policy = Policy::Always;
     app.seed = 17.0;
@@ -44,7 +55,11 @@ fn alias(store: &Store, app: &App, name: &str) -> App {
 }
 
 fn deny_read(path: &str) -> std::fs::File {
-    std::fs::OpenOptions::new().read(true).share_mode(0).open(path).unwrap()
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(path)
+        .unwrap()
 }
 
 fn assert_user_data(store: &Store, before: &App, days: &serde_json::Value) {
@@ -69,7 +84,10 @@ fn locked_source_recovers_via_alias_and_keeps_history_through_release() {
         let locked = deny_read(&app.source);
         assert!(native::read_link(Path::new(&app.source)).is_err());
         refresh_apps(store).unwrap();
-        assert_eq!(norm(&store.app(&app.id).unwrap().source), norm(&first.source));
+        assert_eq!(
+            norm(&store.app(&app.id).unwrap().source),
+            norm(&first.source)
+        );
         assert_eq!(store.apps().unwrap().len(), 1);
         assert_user_data(store, &app, &days);
         apply(store, true).unwrap();
@@ -83,8 +101,14 @@ fn locked_source_recovers_via_alias_and_keeps_history_through_release() {
             let proposed = preview(store, false).unwrap();
             assert!(proposed.added.is_empty() && proposed.removed.is_empty());
             apply(store, false).unwrap();
-            assert_eq!(serde_json::to_value(store.get::<State>("state").unwrap().owned).unwrap(), checkpoint);
-            assert_eq!(norm(&store.app(&app.id).unwrap().source), norm(&first.source));
+            assert_eq!(
+                serde_json::to_value(store.get::<State>("state").unwrap().owned).unwrap(),
+                checkpoint
+            );
+            assert_eq!(
+                norm(&store.app(&app.id).unwrap().source),
+                norm(&first.source)
+            );
             assert_user_data(store, &app, &days);
         }
         assert_eq!(store.get::<Config>("config").unwrap(), config);
@@ -112,7 +136,10 @@ fn partially_written_source_recovers_without_repairing_original_bytes() {
         std::fs::write(&app.source, partial).unwrap();
         assert!(native::read_link(Path::new(&app.source)).is_err());
         refresh_apps(store).unwrap();
-        assert_eq!(norm(&store.app(&app.id).unwrap().source), norm(&copy.source));
+        assert_eq!(
+            norm(&store.app(&app.id).unwrap().source),
+            norm(&copy.source)
+        );
         apply(store, true).unwrap();
         let state: State = store.get("state").unwrap();
         assert_eq!(state.owned.len(), 1);
@@ -132,11 +159,17 @@ fn an_existing_copy_is_not_recreated_when_its_source_alias_changes() {
         let copy = alias(store, &app, "alternate.url");
         let locked = deny_read(&app.source);
         refresh_apps(store).unwrap();
-        assert_eq!(norm(&store.app(&app.id).unwrap().source), norm(&copy.source));
+        assert_eq!(
+            norm(&store.app(&app.id).unwrap().source),
+            norm(&copy.source)
+        );
         let proposed = preview(store, false).unwrap();
         assert!(proposed.added.is_empty() && proposed.removed.is_empty());
         apply(store, false).unwrap();
-        assert_eq!(serde_json::to_value(store.get::<State>("state").unwrap().owned).unwrap(), serde_json::to_value(&before.owned).unwrap());
+        assert_eq!(
+            serde_json::to_value(store.get::<State>("state").unwrap().owned).unwrap(),
+            serde_json::to_value(&before.owned).unwrap()
+        );
         assert_eq!(std::fs::read(&before.owned[0].path).unwrap(), bytes);
         drop(locked);
     });
@@ -183,7 +216,12 @@ fn different_launch_arguments_are_not_a_recovery_alias() {
         apply(store, true).unwrap();
         let state: State = store.get("state").unwrap();
         assert_eq!(state.owned.len(), 1);
-        assert_eq!(native::read_link(Path::new(&state.owned[0].path)).unwrap().arguments, "--profile work");
+        assert_eq!(
+            native::read_link(Path::new(&state.owned[0].path))
+                .unwrap()
+                .arguments,
+            "--profile work"
+        );
         assert!(source.exists() && other.exists());
     });
 }
