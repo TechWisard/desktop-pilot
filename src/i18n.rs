@@ -26,6 +26,10 @@ fn translate(value: &str, russian: bool) -> String {
     };
     let translations = [
         (
+            "Этот быстрый ярлык был изменён. Добавьте его исходный ярлык вместо быстрой копии.",
+            "This quick shortcut was changed. Add its original shortcut instead.",
+        ),
+        (
             "Закреплённый вами быстрый ярлык остаётся на месте, пока вы не измените правило или не удалите его. Исходный ярлык или цель недоступны:",
             "The manually protected quick shortcut stays in place until you change its rule or remove it. The original source or target is unavailable:",
         ),
@@ -925,3 +929,6 @@ mod tests {
 
 #[cfg(test)]
 mod offline_tests;
+
+#[cfg(test)]
+mod import_ownership_tests;

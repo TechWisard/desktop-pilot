@@ -1056,6 +1056,11 @@ impl Settings {
         let home = self.store.home.clone();
         self.start_job("Adding shortcuts…", move || {
             let _com = native::Com::new()?;
+            let store = Store::open(&home)?;
+            // Import changes source ownership too. Serialize it with placement
+            // and Undo, and never alter the source set of an unfinished change.
+            let _changes = native::exclusive("changes", &store.home)?;
+            engine::ensure_no_unfinished(&store)?;
             let mut apps = Vec::new();
             let mut result = ImportResult {
                 added: Vec::new(),
@@ -1067,7 +1072,6 @@ impl Settings {
                     Err(error) => result.failed.push((path, format!("{error:#}"))),
                 }
             }
-            let store = Store::open(&home)?;
             store.transaction(|| {
                 let mut existing: HashMap<_, _> = store
                     .apps()?
@@ -1075,6 +1079,19 @@ impl Settings {
                     .map(|app| (app.id.clone(), app))
                     .collect();
                 for mut app in apps {
+                    match engine::imported_quick_copy(&store, &app) {
+                        Ok(Some(original)) => {
+                            result.added.push((original.id, original.name));
+                            continue;
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            result
+                                .failed
+                                .push((PathBuf::from(&app.source), format!("{error:#}")));
+                            continue;
+                        }
+                    }
                     if let Err(error) = prepare_imported_app(&mut app, &existing) {
                         result
                             .failed
@@ -5013,3 +5030,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod import_ownership_tests;

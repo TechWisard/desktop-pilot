@@ -226,7 +226,7 @@ fn remove_owned(path: &Path, owned: &Owned) -> Result<()> {
     }
     Ok(())
 }
-fn ensure_no_unfinished(store: &Store) -> Result<()> {
+pub(crate) fn ensure_no_unfinished(store: &Store) -> Result<()> {
     let unfinished: i64 = store.db.query_row(
         "SELECT COUNT(*) FROM transactions WHERE status IN ('prepared','rolling_back')",
         [],
@@ -3332,3 +3332,6 @@ mod session_retention_tests;
 
 #[cfg(test)]
 mod heartbeat_tests;
+
+mod import_guard;
+pub(crate) use import_guard::imported_quick_copy;

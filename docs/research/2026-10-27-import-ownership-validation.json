@@ -1,0 +1,35 @@
+{
+  "baseline_commit": "feb1041d837adc3eeb823515f92f6b0bb01c0e93",
+  "baseline_source_blobs": {
+    "src/ui.rs": "8d304c2988c35f5a68a7f6697dc6b71cac9786aa",
+    "src/engine.rs": "5eddd7d1aa3179c7aab6d616ded39277c6f16410",
+    "src/i18n.rs": "94a58a83a0ed31e05944e9188b00b3bce0571d38"
+  },
+  "baseline_ui_regressions": {
+    "passed": 2,
+    "failed": 7,
+    "failure_names": [
+      "reimporting_a_quick_copy_preserves_the_original_rule_history_and_undo",
+      "reimporting_a_quick_copy_does_not_block_undo",
+      "renamed_quick_copy_is_recognized_before_reconciliation",
+      "quick_copy_does_not_mask_a_missing_source_or_reverse_never",
+      "changed_managed_copy_is_rejected_without_blocking_other_imports",
+      "unfinished_changes_block_import_without_mutating_the_catalog",
+      "mixed_original_and_quick_copy_imports_are_order_independent"
+    ]
+  },
+  "after_full_tests_passed": 207,
+  "after_new_ui_regressions_passed": 9,
+  "after_new_translation_regressions_passed": 1,
+  "native_checks_passed": 28,
+  "publication_guards_passed": 9,
+  "format_clippy_build": "passed",
+  "workflow_run": "https://github.com/TechWisard/desktop-pilot/actions/runs/40418391085",
+  "environment": "GitHub-hosted windows-2022; Rust 1.93.1",
+  "fixture_note": "Canonical profile path matches production startup; earlier authoring run 40417692962 had a TEMP short-name mismatch and is not counted as baseline evidence.",
+  "limits": [
+    "No physical Windows 11 desktop",
+    "No human task-time measurement",
+    "PR/main/release validation is separate"
+  ]
+}
