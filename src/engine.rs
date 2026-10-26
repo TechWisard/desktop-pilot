@@ -1619,15 +1619,15 @@ impl UsageAccumulator {
         };
         let continuing = self.previous.as_deref() == Some(id);
         self.previous = Some(id.to_owned());
-        if !self.windows.contains_key(id) && self.windows.len() >= MAX_SHORT_VISIT_APPS {
-            if let Some(oldest) = self
+        if !self.windows.contains_key(id)
+            && self.windows.len() >= MAX_SHORT_VISIT_APPS
+            && let Some(oldest) = self
                 .windows
                 .iter()
                 .min_by(|a, b| a.1.last_seen.total_cmp(&b.1.last_seen))
                 .map(|(key, _)| key.clone())
-            {
-                self.windows.remove(&oldest);
-            }
+        {
+            self.windows.remove(&oldest);
         }
         let window = self.windows.entry(id.to_owned()).or_default();
         window.last_seen = self.elapsed;
