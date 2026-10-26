@@ -2776,7 +2776,7 @@ mod tests {
             store.put_app(&unavailable).unwrap();
 
             let proposal = preview(store, false).unwrap();
-            assert_eq!(proposal.selected, [rare.id.clone()]);
+            assert_eq!(proposal.selected.as_slice(), std::slice::from_ref(&rare.id));
             assert!(proposal.removed.is_empty());
             assert!(proposal.added.is_empty());
 
@@ -2792,7 +2792,7 @@ mod tests {
             // A deliberate Never choice still releases the shortcut.
             command(store, &format!("policy:{}:Never", rare.id)).unwrap();
             let release = preview(store, false).unwrap();
-            assert_eq!(release.selected, [frequent.id.clone()]);
+            assert_eq!(release.selected.as_slice(), std::slice::from_ref(&frequent.id));
             apply(store, false).unwrap();
             assert!(!Path::new(&path).exists());
             assert_eq!(
