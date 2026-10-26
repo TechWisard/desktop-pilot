@@ -556,7 +556,10 @@ mod tests {
             owned: vec![owned("offline", false), owned("available", false)],
             ..Default::default()
         };
-        assert_eq!(select(&apps, &ranking, &reduced, &cfg, false), ["available"]);
+        assert_eq!(
+            select(&apps, &ranking, &reduced, &cfg, false),
+            ["available"]
+        );
     }
 
     #[test]

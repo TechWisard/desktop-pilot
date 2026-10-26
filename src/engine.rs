@@ -556,8 +556,7 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
                 app.seed_at = previous.seed_at;
                 app.unavailable_since = if app.valid {
                     0
-                } else if previous.unavailable_since > 0
-                    && previous.unavailable_since <= scanned_at
+                } else if previous.unavailable_since > 0 && previous.unavailable_since <= scanned_at
                 {
                     previous.unavailable_since
                 } else {
@@ -2158,7 +2157,12 @@ mod tests {
             assert_eq!(during.owned.len(), 1);
             assert_eq!(during.owned[0].file_id, before.owned[0].file_id);
             assert_eq!(std::fs::read(&during.owned[0].path).unwrap(), original);
-            assert!(store.get::<String>("catalog_warning").unwrap().contains("temporarily unavailable"));
+            assert!(
+                store
+                    .get::<String>("catalog_warning")
+                    .unwrap()
+                    .contains("temporarily unavailable")
+            );
 
             std::fs::write(&app.source, &original).unwrap();
             apply(store, false).unwrap();
