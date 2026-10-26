@@ -3292,3 +3292,6 @@ mod tests {
 
 #[cfg(test)]
 mod alias_recovery_tests;
+
+#[cfg(test)]
+mod session_retention_tests;
