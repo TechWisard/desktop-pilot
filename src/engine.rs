@@ -1587,34 +1587,64 @@ pub fn automatic_review(store: &Store, quiet: bool) -> Result<bool> {
     }
     Ok(false)
 }
+const SHORT_VISIT_MEMORY_SECONDS: f64 = 20.0 * 60.0;
+const MAX_SHORT_VISIT_APPS: usize = 128;
+
 #[derive(Default)]
-struct UsageAccumulator {
-    id: String,
+struct UsageWindow {
     seconds: f64,
     recorded: u32,
+    last_seen: f64,
+}
+
+#[derive(Default)]
+struct UsageAccumulator {
+    previous: Option<String>,
+    elapsed: f64,
+    windows: HashMap<String, UsageWindow>,
 }
 impl UsageAccumulator {
     fn sample(&mut self, id: Option<&str>, elapsed: f64) -> Option<(String, u32, bool)> {
-        if id.is_none() || !elapsed.is_finite() || !(0.0..5.0).contains(&elapsed) {
+        // Never convert a delayed wake-up or invalid tick into foreground usage.
+        if !elapsed.is_finite() || !(0.0..5.0).contains(&elapsed) {
             *self = Self::default();
             return None;
         }
-        let id = id?;
-        if self.id != id {
-            self.id = id.into();
-            self.seconds = 0.0;
-            self.recorded = 0;
+        self.elapsed += elapsed;
+        self.windows
+            .retain(|_, window| self.elapsed - window.last_seen < SHORT_VISIT_MEMORY_SECONDS);
+        let Some(id) = id.filter(|id| !id.is_empty()) else {
+            self.previous = None;
+            return None;
+        };
+        let continuing = self.previous.as_deref() == Some(id);
+        self.previous = Some(id.to_owned());
+        if !self.windows.contains_key(id)
+            && self.windows.len() >= MAX_SHORT_VISIT_APPS
+            && let Some(oldest) = self
+                .windows
+                .iter()
+                .min_by(|a, b| a.1.last_seen.total_cmp(&b.1.last_seen))
+                .map(|(key, _)| key.clone())
+        {
+            self.windows.remove(&oldest);
+        }
+        let window = self.windows.entry(id.to_owned()).or_default();
+        window.last_seen = self.elapsed;
+        // The first sample after a switch is ambiguous. Repeated confirmed
+        // short visits to one app may count, but never the switching tick.
+        if !continuing {
             return None;
         }
-        self.seconds += elapsed;
-        let whole = self.seconds.floor().min(f64::from(u32::MAX)) as u32;
-        if whole < 10 || whole <= self.recorded {
+        window.seconds += elapsed;
+        let whole = window.seconds.floor().min(f64::from(u32::MAX)) as u32;
+        if whole < 10 || whole <= window.recorded {
             return None;
         }
-        let first = self.recorded == 0;
-        let delta = whole - self.recorded;
-        self.recorded = whole;
-        Some((self.id.clone(), delta, first))
+        let first = window.recorded == 0;
+        let delta = whole - window.recorded;
+        window.recorded = whole;
+        Some((id.to_owned(), delta, first))
     }
 }
 fn record_usage(
@@ -2518,6 +2548,71 @@ mod tests {
         assert!(usage.sample(Some("app"), 2.0).is_none());
         assert!(usage.sample(Some("other"), 2.0).is_none());
         assert!(usage.sample(None, 2.0).is_none());
+    }
+    #[test]
+    fn repeated_short_foreground_visits_accumulate_in_the_real_usage_store() {
+        with_store(|store| {
+            let mut usage = UsageAccumulator::default();
+            let mut session_times = HashMap::new();
+            let mut firsts = HashMap::<String, u32>::new();
+            let mut timestamp = 10_000_i64;
+            // Each visit is six seconds; before this fix all were discarded.
+            for _ in 0..3 {
+                for app in ["editor", "browser"] {
+                    for _ in 0..3 {
+                        timestamp += 2;
+                        if let Some((id, seconds, first)) = usage.sample(Some(app), 2.0) {
+                            *firsts.entry(id.clone()).or_default() += u32::from(first);
+                            record_usage(store, &mut session_times, &id, seconds, first, timestamp)
+                                .unwrap();
+                        }
+                    }
+                }
+            }
+            let history = store.days().unwrap();
+            assert_eq!(history.len(), 2);
+            for app in ["editor", "browser"] {
+                let day = history.iter().find(|day| day.app == app).unwrap();
+                assert_eq!(day.seconds, 12);
+                assert_eq!(day.sessions, 1);
+                assert_eq!(firsts[app], 1);
+            }
+        });
+    }
+
+    #[test]
+    fn incidental_switches_and_expired_short_visits_do_not_create_usage() {
+        let mut usage = UsageAccumulator::default();
+        // Alternating isolated ticks never confirms sustained engagement.
+        for _ in 0..50 {
+            assert!(usage.sample(Some("editor"), 1.0).is_none());
+            assert!(usage.sample(Some("browser"), 1.0).is_none());
+        }
+        for _ in 0..3 {
+            assert!(usage.sample(Some("editor"), 2.0).is_none());
+        }
+        // A period without confirmed foreground use expires incomplete visits.
+        for _ in 0..601 {
+            assert!(usage.sample(None, 2.0).is_none());
+        }
+        for _ in 0..3 {
+            assert!(usage.sample(Some("editor"), 2.0).is_none());
+        }
+        assert!(usage.sample(Some("editor"), 600.0).is_none());
+        for _ in 0..3 {
+            assert!(usage.sample(Some("editor"), 2.0).is_none());
+        }
+    }
+
+    #[test]
+    fn rapid_switches_keep_short_visit_memory_bounded() {
+        let mut usage = UsageAccumulator::default();
+        for index in 0..300 {
+            let app = format!("app-{index}");
+            assert!(usage.sample(Some(&app), 1.0).is_none());
+            assert!(usage.sample(Some(&app), 1.0).is_none());
+            assert!(usage.windows.len() <= MAX_SHORT_VISIT_APPS);
+        }
     }
     #[test]
     fn valid_shell_shortcuts_can_be_learned_without_overriding_manual_rules() {
