@@ -131,7 +131,10 @@ fn obstructed_adjacent_database_is_not_treated_as_an_absent_profile() {
     let selected = select(None, &local, &custom.join("desktop-pilot.exe"));
     assert_eq!(selected, custom);
     assert!(Store::open(&selected).is_err());
-    assert_eq!(std::fs::read(obstruction.join("keep.txt")).unwrap(), b"keep");
+    assert_eq!(
+        std::fs::read(obstruction.join("keep.txt")).unwrap(),
+        b"keep"
+    );
     assert!(!local.exists());
 }
 
