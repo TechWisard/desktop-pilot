@@ -384,7 +384,10 @@ pub fn select(
             break;
         }
     }
-    let mut changes = 0;
+    // Filling genuinely vacant places does not displace a familiar shortcut.
+    // The per-review change budget protects existing positions from churn, not
+    // recovery from missing, excluded or unavailable shortcuts.
+    let mut replacements = 0;
     for candidate in ranking
         .iter()
         .filter(|r| r.eligible && by_id.contains_key(r.id.as_str()))
@@ -392,13 +395,12 @@ pub fn select(
         if result.contains(&candidate.id) {
             continue;
         }
-        if !initial && changes >= cfg.max_changes {
-            break;
-        }
         if result.len() < cfg.slots {
             result.push(candidate.id.clone());
-            changes += 1;
             continue;
+        }
+        if !initial && replacements >= cfg.max_changes {
+            break;
         }
         let worst = result
             .iter()
@@ -411,7 +413,7 @@ pub fn select(
             && candidate.score - value >= 3.0
         {
             result[i] = candidate.id.clone();
-            changes += 1;
+            replacements += 1;
         }
     }
     result
@@ -490,6 +492,58 @@ mod tests {
             ["a"]
         );
     }
+    #[test]
+    fn vacant_places_are_filled_in_one_review_without_consuming_replacement_budget() {
+        let mut fixed = app("fixed", 1.0);
+        fixed.policy = Policy::Always;
+        let apps = vec![
+            fixed,
+            app("editor", 30.0),
+            app("browser", 20.0),
+            app("terminal", 10.0),
+        ];
+        let cfg = Config {
+            slots: 4,
+            max_changes: 1,
+            ..Default::default()
+        };
+        let state = State {
+            owned: vec![owned("fixed", true)],
+            initialized: true,
+            ..Default::default()
+        };
+        let selected = select(&apps, &rank(&apps, &[], &cfg, now()), &state, &cfg, false);
+        assert_eq!(selected, ["fixed", "editor", "browser", "terminal"]);
+    }
+
+    #[test]
+    fn filling_gaps_does_not_allow_more_than_one_real_replacement() {
+        let mut fixed = app("fixed", 80.0);
+        fixed.policy = Policy::Always;
+        let apps = vec![
+            fixed,
+            app("weak", 1.0),
+            app("new-a", 100.0),
+            app("new-b", 90.0),
+            app("replace", 70.0),
+            app("extra", 60.0),
+        ];
+        let cfg = Config {
+            slots: 4,
+            max_changes: 1,
+            ..Default::default()
+        };
+        let state = State {
+            owned: vec![owned("fixed", true), owned("weak", false)],
+            initialized: true,
+            ..Default::default()
+        };
+        let selected = select(&apps, &rank(&apps, &[], &cfg, now()), &state, &cfg, false);
+        assert_eq!(selected, ["fixed", "replace", "new-a", "new-b"]);
+        assert!(!selected.contains(&"weak".to_owned()));
+        assert!(!selected.contains(&"extra".to_owned()));
+    }
+
     #[test]
     fn at_most_one_replacement() {
         let apps = vec![app("a", 2.0), app("b", 3.0), app("c", 40.0), app("d", 50.0)];
