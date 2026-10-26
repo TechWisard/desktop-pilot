@@ -545,7 +545,11 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
             if real && let Some(id) = app.target.strip_prefix("steam://rungameid/") {
                 app.observed_roots = steam.get(id).cloned().into_iter().collect();
             }
+            // A valid registered URI or Shell application is not an unsafe
+            // shortcut merely because it lacks an ordinary executable path.
+            // Keep the conservative opt-in rule for unresolved targets only.
             if old.is_none()
+                && !app.valid
                 && !Path::new(&expand_env(&app.target)).is_file()
                 && !app.target.contains("://")
             {
@@ -2400,6 +2404,48 @@ mod tests {
         assert!(usage.sample(Some("other"), 2.0).is_none());
         assert!(usage.sample(None, 2.0).is_none());
     }
+    #[test]
+    fn valid_shell_shortcuts_can_be_learned_without_overriding_manual_rules() {
+        with_store(|store| {
+            let desktop: String = store.get("test_desktop").unwrap();
+            let source = Path::new(&desktop).join("Packaged App.url");
+            std::fs::write(
+                &source,
+                "[InternetShortcut]\r\nURL=shell:AppsFolder\\Publisher.App!Main\r\n",
+            )
+            .unwrap();
+
+            refresh_apps(store).unwrap();
+            let apps = store.apps().unwrap();
+            assert_eq!(apps.len(), 1);
+            let app = &apps[0];
+            assert!(app.valid);
+            assert_eq!(app.policy, Policy::Auto);
+            assert!(app.note.is_empty());
+            assert_eq!(
+                observe_app_id(&apps, "Publisher.App!Main"),
+                Some(app.id.clone())
+            );
+
+            store.observe(&app.id, 600, true, false).unwrap();
+            let first = preview(store, true).unwrap();
+            assert_eq!(first.selected.len(), 1);
+            assert_eq!(first.selected[0], app.id);
+            apply(store, true).unwrap();
+            let state: State = store.get("state").unwrap();
+            assert_eq!(state.owned.len(), 1);
+            assert_eq!(
+                std::fs::read(&state.owned[0].path).unwrap(),
+                std::fs::read(&source).unwrap()
+            );
+
+            store.policy(&app.id, Policy::Never).unwrap();
+            refresh_apps(store).unwrap();
+            assert_eq!(store.app(&app.id).unwrap().policy, Policy::Never);
+            assert!(preview(store, false).unwrap().selected.is_empty());
+        });
+    }
+
     #[test]
     fn appsfolder_targets_can_match_without_explorer_arguments() {
         let app = App {

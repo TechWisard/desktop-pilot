@@ -476,8 +476,15 @@ fn search_text(app: &App) -> String {
         _ => "",
     };
     format!(
-        "{} {} {} {} {}",
-        app.name, app.category, category_alias, app.source, app.target
+        "{} {} {} {} {} {} {} {}",
+        app.name,
+        app.category,
+        category_alias,
+        app.source,
+        app.target,
+        app.arguments,
+        app.cwd,
+        app.note,
     )
     .to_lowercase()
 }
@@ -4306,6 +4313,36 @@ mod tests {
         }
         assert_eq!(Settings::new(home.clone()).unwrap().ui_scale, 1.25);
         std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn catalog_search_finds_distinct_launch_profiles_and_user_notes() {
+        let apps = vec![
+            App {
+                id: "personal".into(),
+                name: "Browser".into(),
+                arguments: "--profile-directory=Personal".into(),
+                cwd: r"C:\Personal".into(),
+                ..Default::default()
+            },
+            App {
+                id: "research".into(),
+                name: "Browser".into(),
+                arguments: "--profile-directory=Research".into(),
+                cwd: r"D:\Projects\Quarterly".into(),
+                note: "Audit workspace".into(),
+                ..Default::default()
+            },
+        ];
+        let mut cache = CatalogCache::default();
+        cache.rebuild(&apps, &[]);
+        let recent = HashSet::new();
+        for term in ["Research", "QUARTERLY", "audit workspace"] {
+            cache.update(&apps, &[], term, 0, 0, &recent);
+            assert_eq!(cache.indices, [1], "{term} must find the intended profile");
+        }
+        cache.update(&apps, &[], "Personal", 0, 0, &recent);
+        assert_eq!(cache.indices, [0]);
     }
 
     #[test]
