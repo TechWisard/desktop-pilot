@@ -98,6 +98,18 @@ fn corrected_forward_clock_restores_normal_cleanup_without_touching_user_rules()
         assert_eq!(activity_count(store), 1);
         assert_eq!(session_count(store), 1);
 
+        // Old eligible history must be cleaned normally after correction,
+        // rather than hidden behind the discarded future hold deadline.
+        store
+            .db
+            .execute(
+                "INSERT INTO days(app,date,sessions,launches,seconds) VALUES(?1,?2,1,0,20)",
+                params!["expired", at - 91 * DAY],
+            )
+            .unwrap();
+        store.housekeeping_at(at + 7200).unwrap();
+        assert_eq!(activity_count(store), 1);
+
         assert_eq!(store.app(&app.id).unwrap().policy, Policy::Always);
         assert_eq!(store.app(&app.id).unwrap().note, app.note);
         assert_eq!(store.get::<Config>("config").unwrap(), config);
@@ -108,11 +120,28 @@ fn corrected_forward_clock_restores_normal_cleanup_without_touching_user_rules()
 fn ordinary_passage_of_two_days_still_expires_old_usage() {
     with_profile(|store| {
         let at = now();
+        // First establish a trusted housekeeping checkpoint on an empty store.
+        store.housekeeping_at(at).unwrap();
         populate(store, at, 89);
         store.housekeeping_at(at).unwrap();
         assert_eq!(activity_count(store), 1);
         store.housekeeping_at(at + 2 * DAY).unwrap();
         assert_eq!(activity_count(store), 0);
         assert_eq!(session_count(store), 0);
+    });
+}
+
+#[test]
+fn first_cleanup_of_an_upgraded_profile_defers_an_uncertain_future_clock() {
+    with_profile(|store| {
+        let at = now();
+        populate(store, at, 30);
+        // No saved housekeeping checkpoint exists on profiles from v0.2.13.
+        store.housekeeping_at(at + 120 * DAY).unwrap();
+        assert_eq!(activity_count(store), 1);
+        assert_eq!(session_count(store), 1);
+        store.housekeeping_at(at + 3600).unwrap();
+        assert_eq!(activity_count(store), 1);
+        assert_eq!(session_count(store), 1);
     });
 }

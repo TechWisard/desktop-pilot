@@ -317,6 +317,18 @@ impl Store {
                     // deadline must not suspend ordinary retention indefinitely.
                     clock.hold_until = 0;
                 }
+            } else {
+                // Older profiles do not have a saved clock cursor yet. A large
+                // gap since their newest activity may be a first-run clock error,
+                // not proof that this history can be deleted.
+                let latest_day: Option<i64> = self
+                    .db
+                    .query_row("SELECT MAX(date) FROM days", [], |row| row.get(0))?;
+                if let Some(last) = latest_day
+                    && time.saturating_sub(last) > RETENTION_FORWARD_GAP_SECONDS
+                {
+                    clock.hold_until = time.saturating_add(RETENTION_HOLD_SECONDS);
+                }
             }
             clock.last_observed = time;
             self.set("retention_clock", &clock)?;
