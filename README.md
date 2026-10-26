@@ -16,11 +16,15 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It lear
 
 ## Get started
 
-1. Download and extract **DesktopPilot-0.2.15-windows-x64.zip** from [Releases](https://github.com/TechWisard/desktop-pilot/releases/latest).
+1. Download and extract **DesktopPilot-0.2.16-windows-x64.zip** from [Releases](https://github.com/TechWisard/desktop-pilot/releases/latest).
 2. Run `desktop-pilot.exe`. The setup walks through the operating mode, number and position of shortcuts, and observation preferences. Choose **English** or **Русский** at any time.
 3. Use your computer normally. The default is **passive observation for 7 computer sessions**. No quick shortcuts are created during learning. After the threshold, the most-used eligible apps appear automatically during an idle period. Choose sessions, active days, either condition or both in Settings.
 
 Installation is per user, by default in `%LOCALAPPDATA%\DesktopPilot`; no administrator access is required. Settings are available from the tray icon and the Start menu. This preview executable is unsigned; download only from this repository's Releases and verify the supplied SHA-256 checksum.
+
+## Improvements in 0.2.16
+
+**Less background database activity while idle.** The worker now records a SQLite heartbeat at most once every 15 seconds during normal operation, rather than on every two-second poll. Startup and deliberate commands still update it immediately, and Settings retains its existing 150-second unresponsive-process warning. A deterministic 60-minute scheduler fixture checks 225 actual heartbeat writes instead of the previous per-tick 1,800, without disabling checks or losing recoverability. This is a count of SQLite updates, not a measured battery-life or disk-wear improvement. [Scope and tests](docs/research/2026-10-27-idle-heartbeat.md).
 
 ## Improvements in 0.2.15
 
