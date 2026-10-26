@@ -1647,6 +1647,35 @@ impl UsageAccumulator {
         Some((id.to_owned(), delta, first))
     }
 }
+// The usage write is one SQLite transaction; retry only lock contention, not
+// corruption, permissions, disk-full errors or an ambiguous non-SQLite failure.
+fn retry_locked_usage(mut write: impl FnMut() -> Result<()>) -> Result<()> {
+    const ATTEMPTS: usize = 3;
+    for attempt in 0..ATTEMPTS {
+        match write() {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if attempt + 1 < ATTEMPTS
+                    && error.chain().any(|source| {
+                        source
+                            .downcast_ref::<rusqlite::Error>()
+                            .and_then(rusqlite::Error::sqlite_error_code)
+                            .is_some_and(|code| {
+                                matches!(
+                                    code,
+                                    rusqlite::ErrorCode::DatabaseBusy
+                                        | rusqlite::ErrorCode::DatabaseLocked
+                                )
+                            })
+                    }) =>
+            {
+                std::thread::sleep(Duration::from_millis(125));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("the last attempt always returns")
+}
 fn record_usage(
     store: &Store,
     session_times: &mut HashMap<String, i64>,
@@ -1798,7 +1827,9 @@ pub fn monitor(home: PathBuf) -> Result<()> {
             learning_fraction = 0.0;
         }
         if let Some((id, seconds, first)) = usage.sample(active_id.as_deref(), elapsed) {
-            record_usage(&store, &mut session_times, &id, seconds, first, now())?;
+            retry_locked_usage(|| {
+                record_usage(&store, &mut session_times, &id, seconds, first, now())
+            })?;
         }
         store.set("heartbeat", &now())?;
         if maintenance.is_none_or(|at| at.elapsed() >= Duration::from_secs(60)) {
@@ -2600,7 +2631,15 @@ mod tests {
                 .unwrap();
             let mut session_times = HashMap::new();
             let at = now();
-            assert!(record_usage(store, &mut session_times, "editor", 10, true, at).is_err());
+            let mut attempts = 0;
+            assert!(
+                retry_locked_usage(|| {
+                    attempts += 1;
+                    record_usage(store, &mut session_times, "editor", 10, true, at)
+                })
+                .is_err()
+            );
+            assert_eq!(attempts, 1, "constraint violations must not be retried");
             assert!(session_times.is_empty());
             assert!(store.days().unwrap().is_empty());
 
@@ -2614,6 +2653,62 @@ mod tests {
             assert_eq!(days[0].seconds, 10);
             assert_eq!(days[0].sessions, 1);
             assert_eq!(session_times["editor"], at);
+        });
+    }
+
+    #[test]
+    fn sqlite_writer_lock_retries_the_real_usage_transaction_once() {
+        with_store(|store| {
+            // A second connection owns SQLite's writer lock. The first real
+            // record_usage transaction must fail, then the lock is released.
+            store.db.busy_timeout(Duration::from_millis(1)).unwrap();
+            let blocker = rusqlite::Connection::open(store.home.join("usage.sqlite")).unwrap();
+            blocker.execute_batch("BEGIN IMMEDIATE;").unwrap();
+            let mut blocker = Some(blocker);
+            let mut attempts = 0;
+            let mut sessions = HashMap::new();
+            let at = now();
+            retry_locked_usage(|| {
+                attempts += 1;
+                let attempt = record_usage(store, &mut sessions, "editor", 10, true, at);
+                if attempts == 1 {
+                    assert!(attempt.is_err());
+                    blocker.take().unwrap().execute_batch("ROLLBACK;").unwrap();
+                }
+                attempt
+            })
+            .unwrap();
+            assert_eq!(attempts, 2);
+            let history = store.days().unwrap();
+            assert_eq!(history.len(), 1);
+            assert_eq!(history[0].seconds, 10);
+            assert_eq!(history[0].sessions, 1);
+            assert_eq!(sessions["editor"], at);
+        });
+    }
+
+    #[test]
+    fn persistent_sqlite_lock_stops_after_three_attempts_without_partial_usage() {
+        with_store(|store| {
+            store.db.busy_timeout(Duration::from_millis(1)).unwrap();
+            let blocker = rusqlite::Connection::open(store.home.join("usage.sqlite")).unwrap();
+            blocker.execute_batch("BEGIN IMMEDIATE;").unwrap();
+            let mut attempts = 0;
+            let mut sessions = HashMap::new();
+            let at = now();
+            let failure = retry_locked_usage(|| {
+                attempts += 1;
+                record_usage(store, &mut sessions, "editor", 10, true, at)
+            });
+            assert!(failure.is_err());
+            assert_eq!(attempts, 3);
+            assert!(sessions.is_empty());
+            assert!(store.days().unwrap().is_empty());
+            blocker.execute_batch("ROLLBACK;").unwrap();
+            retry_locked_usage(|| record_usage(store, &mut sessions, "editor", 10, true, at))
+                .unwrap();
+            assert_eq!(store.days().unwrap()[0].seconds, 10);
+            assert_eq!(store.days().unwrap()[0].sessions, 1);
         });
     }
 
