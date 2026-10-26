@@ -26,10 +26,8 @@ fn populate(store: &Store, at: i64, age_days: i64) {
             params!["long-running-project", observed_at],
         )
         .unwrap();
-    let sessions = std::collections::HashMap::from([(
-        "long-running-project".to_owned(),
-        observed_at,
-    )]);
+    let sessions =
+        std::collections::HashMap::from([("long-running-project".to_owned(), observed_at)]);
     store.set("app_session_times", &sessions).unwrap();
 }
 
