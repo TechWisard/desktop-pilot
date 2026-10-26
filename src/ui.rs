@@ -350,6 +350,17 @@ fn apply_mode(config: &mut Config, mode: OperatingMode) {
         }
     }
 }
+// A stale "running" status is not an error. Only the explicit worker
+// termination marker may be shown when there is no active background process.
+fn stopped_worker_error<'a>(alive: bool, disabled: bool, status: &'a str) -> Option<&'a str> {
+    if alive || disabled {
+        return None;
+    }
+    let first_line = status.lines().next()?.trim();
+    (first_line.starts_with("Фоновый учёт остановлен:")
+        || first_line.starts_with("Background tracking stopped:"))
+    .then_some(first_line)
+}
 fn health(
     alive: bool,
     heartbeat: i64,
@@ -2011,13 +2022,31 @@ impl Settings {
             );
             match current {
                 Health::Offline => {
-                    ui.label(if self.background_disabled {
-                        t("Сбор статистики, автоматические изменения и автозапуск отключены. Ярлыки и данные сохранены. Можно запустить ручное управление или выбрать другой режим в настройках.",
-                          "Statistics, automatic changes and startup are turned off. Your shortcuts and data are kept. Start manual control or choose another mode in Settings.")
-                    } else { t(
-                        "Наблюдение и автоматические изменения сейчас не выполняются. Настройки и накопленные данные сохранены.",
-                        "Observation and automatic changes are stopped. Your settings and usage history are kept."
-                    )});
+                    if let Some(error) = stopped_worker_error(
+                        self.background_alive,
+                        self.background_disabled,
+                        &self.status,
+                    ) {
+                        ui.label(t(
+                            "Фоновая работа завершилась с ошибкой. Настройки, история и ярлыки сохранены.",
+                            "Background work ended with an error. Your settings, history and shortcuts are kept.",
+                        ));
+                        ui.label(i18n::runtime(error));
+                        if ui.button(t("Посмотреть историю", "View history")).clicked() {
+                            self.tab = 3;
+                            self.history_errors_only = true;
+                        }
+                    } else {
+                        ui.label(if self.background_disabled {
+                            t("Сбор статистики, автоматические изменения и автозапуск отключены. Ярлыки и данные сохранены. Можно запустить ручное управление или выбрать другой режим в настройках.",
+                              "Statistics, automatic changes and startup are turned off. Your shortcuts and data are kept. Start manual control or choose another mode in Settings.")
+                        } else {
+                            t(
+                                "Наблюдение и автоматические изменения сейчас не выполняются. Настройки и накопленные данные сохранены.",
+                                "Observation and automatic changes are stopped. Your settings and usage history are kept.",
+                            )
+                        });
+                    }
                     if primary(
                         ui,
                         self.job.is_none(),
@@ -4092,6 +4121,28 @@ mod tests {
                 });
             });
         }
+    }
+
+    #[test]
+    fn stopped_worker_failure_is_visible_but_stale_and_intentional_stops_are_not() {
+        let rus = "Фоновый учёт остановлен: database is locked\\nAutostart warning";
+        let eng = "Background tracking stopped: failed to save usage";
+        assert_eq!(
+            stopped_worker_error(false, false, rus),
+            Some("Фоновый учёт остановлен: database is locked")
+        );
+        assert_eq!(stopped_worker_error(false, false, eng), Some(eng));
+        assert_eq!(stopped_worker_error(true, false, rus), None);
+        assert_eq!(stopped_worker_error(false, true, rus), None);
+        assert_eq!(
+            stopped_worker_error(false, false, "Фоновый учёт работает"),
+            None
+        );
+        assert_eq!(
+            stopped_worker_error(false, false, "Changes paused: source missing"),
+            None
+        );
+        assert_eq!(stopped_worker_error(false, false, ""), None);
     }
 
     #[test]
