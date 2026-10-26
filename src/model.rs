@@ -563,6 +563,53 @@ mod tests {
     }
 
     #[test]
+    fn shrinking_capacity_prefers_an_available_copy_over_high_ranked_unavailable_one() {
+        let mut offline = app("offline", 200.0);
+        offline.valid = false;
+        offline.unavailable_since = now();
+        let online = app("online", 20.0);
+        let apps = vec![offline.clone(), online.clone()];
+        let normal = Config {
+            slots: 2,
+            max_changes: 1,
+            ..Default::default()
+        };
+        let reduced = Config {
+            slots: 1,
+            max_changes: 1,
+            ..Default::default()
+        };
+        let state = State {
+            owned: vec![owned("offline", false), owned("online", false)],
+            initialized: true,
+            ..Default::default()
+        };
+        let ranking = rank(&apps, &[], &normal, now());
+        assert_eq!(
+            select(&apps, &ranking, &state, &normal, false),
+            ["offline", "online"]
+        );
+        // A capacity reduction must not remove the only available shortcut.
+        assert_eq!(
+            select(&apps, &ranking, &state, &reduced, false),
+            ["online"]
+        );
+        // The user's explicit Always rule must still take precedence.
+        offline.policy = Policy::Always;
+        let manual = vec![offline, online];
+        assert_eq!(
+            select(
+                &manual,
+                &rank(&manual, &[], &reduced, now()),
+                &state,
+                &reduced,
+                false
+            ),
+            ["offline"]
+        );
+    }
+
+    #[test]
     fn no_churn_below_threshold() {
         let apps = vec![app("a", 10.0), app("b", 14.0)];
         let cfg = Config {
