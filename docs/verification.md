@@ -2,6 +2,14 @@
 
 [Русский](verification.ru.md) · [Home](../README.md)
 
+## Post-0.2.7 regression work: manual capacity and interrupted usage writes
+
+Real production `model::rank`/`select` and `engine::refresh_apps`/`preview`/`apply` fixtures expose a combined edge case: two already-owned shortcuts, one temporarily missing but historically high-ranked, followed by a deliberate reduction from two places to one. Previously the available shortcut was removed and the offline copy remained. The policy now discards the non-manually-protected unavailable copy first, retains the available file at its existing path, and still honors the explicitly selected **Always** exception. Grace retention without reducing capacity is unchanged.
+
+An isolated SQLite trigger simulates a failed checkpoint write after usage counters were written inside the same transaction. `record_usage` now updates its in-memory last-session cache only after the transaction commits. This preserves a coherent state for a retry without claiming that disk failures can always be recovered automatically; the monitor currently exits on an unhandled write error.
+
+**Before:** [formatted regression commit and Windows run](https://github.com/TechWisard/desktop-pilot/actions/runs/40325563091) — 164 existing tests passed; all three new regressions failed on Windows 2025. The initial test-only commit was reformatted before this run. **After:** check the Windows workflow for the final fix/merge commit before claiming completion. No physical Windows Explorer trial or user time-saving study is implied. [Research and outstanding scenarios](research/2026-10-26-capacity-and-usage-recovery.md).
+
 ## Additional 0.2.7 regressions
 
 Production `UsageAccumulator::sample` now keeps bounded partial confirmed foreground observations across short visits to multiple applications. New tests replay three six-second visits each to two alternately used apps: the initial ambiguous tick of every visit is excluded, but the remaining 12 seconds per app are recorded through the real `record_usage` and SQLite history with only one session. Rapid one-tick switches do not count; inactive gaps beyond 20 minutes and stalled 600-second ticks discard pending partial evidence; 300 distinct identities cannot exceed the 128-app in-memory bound. The earlier uninterrupted-long-use regression is retained. This is a deterministic policy test, not user timing evidence; no physical desktop or opt-in user field study has been performed. See [short foreground visits research](research/2026-10-26-short-foreground-visits.md).

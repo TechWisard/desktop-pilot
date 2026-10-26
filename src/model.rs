@@ -396,11 +396,19 @@ pub fn select(
         }
     }
     while result.len() > cfg.slots {
+        // When the user reduces capacity, retain usable shortcuts before a
+        // temporarily unavailable high-score copy. Manual anchors still win.
         let worst = result
             .iter()
             .enumerate()
             .filter(|(_, id)| !fixed(id))
-            .min_by(|(_, a), (_, b)| score(a).total_cmp(&score(b)))
+            .min_by(|(_, a), (_, b)| {
+                let a_usable = by_id.get(a.as_str()).is_some_and(|app| app.valid);
+                let b_usable = by_id.get(b.as_str()).is_some_and(|app| app.valid);
+                a_usable
+                    .cmp(&b_usable)
+                    .then_with(|| score(a).total_cmp(&score(b)))
+            })
             .map(|(i, _)| i);
         if let Some(i) = worst {
             result.remove(i);

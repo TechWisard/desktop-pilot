@@ -1659,15 +1659,21 @@ fn record_usage(
         && session_times
             .get(id)
             .is_none_or(|last| time.saturating_sub(*last) >= 1200);
-    store.transaction(|| {
+    // Stage the in-memory session state until both usage and the checkpoint
+    // have committed. A storage error must not advance only one of the two.
+    let next_times = store.transaction(|| {
         store.observe(id, seconds, session, false)?;
         // Measure the gap from the last confirmed activity, not the beginning
         // of a possibly hours-long session. Persist it with the usage counters
         // so a brief focus switch or worker restart cannot inflate the ranking.
-        session_times.insert(id.into(), time);
-        session_times.retain(|_, last| time.saturating_sub(*last) < 90 * 86400);
-        store.set("app_session_times", session_times)
-    })
+        let mut updated = session_times.clone();
+        updated.insert(id.into(), time);
+        updated.retain(|_, last| time.saturating_sub(*last) < 90 * 86400);
+        store.set("app_session_times", &updated)?;
+        Ok(updated)
+    })?;
+    *session_times = next_times;
+    Ok(())
 }
 pub fn monitor(home: PathBuf) -> Result<()> {
     let _com = native::Com::new()?;
