@@ -16,11 +16,21 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It lear
 
 ## Get started
 
-1. Download and extract **DesktopPilot-0.2.12-windows-x64.zip** from [Releases](https://github.com/TechWisard/desktop-pilot/releases/latest).
+1. Download and extract **DesktopPilot-0.2.14-windows-x64.zip** from [Releases](https://github.com/TechWisard/desktop-pilot/releases/latest).
 2. Run `desktop-pilot.exe`. The setup walks through the operating mode, number and position of shortcuts, and observation preferences. Choose **English** or **Русский** at any time.
 3. Use your computer normally. The default is **passive observation for 7 computer sessions**. No quick shortcuts are created during learning. After the threshold, the most-used eligible apps appear automatically during an idle period. Choose sessions, active days, either condition or both in Settings.
 
 Installation is per user, by default in `%LOCALAPPDATA%\DesktopPilot`; no administrator access is required. Settings are available from the tray icon and the Start menu. This preview executable is unsigned; download only from this repository's Releases and verify the supplied SHA-256 checksum.
+
+## Improvements in 0.2.14
+
+- **Recent usage survives a large forward clock correction.** An apparent gap of more than seven days between cleanup checks temporarily holds time-based deletion for seven days, so a mistaken system clock cannot immediately erase recent app history. A later backward correction releases the hold, and ordinary 90-day retention continues.
+- The same protection applies to an existing profile on its first review after upgrading when the saved activity appears unusually old. Event and command logs remain count-bounded. No layout changes, new controls or network data collection. [Reproduction and limitations](docs/research/2026-10-26-forward-clock-retention.md).
+
+## Improvements in 0.2.13
+
+- **Unavailable shortcut sources can recover through a verified identical alias.** If a saved source is locked or partially written, a readable duplicate with the same full launch identity can be used without losing usage history, manual preferences or notes.
+- Healthy sources remain stable; existing quick copies are not recreated or moved; a personal launch profile never substitutes for a work profile with different arguments. Original shortcuts are unchanged. [Reproduction and limitations](docs/research/2026-10-26-alias-recovery.md).
 
 ## Improvements in 0.2.12
 

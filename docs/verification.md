@@ -1,6 +1,14 @@
-# Verification scope — 0.2.12
+# Verification scope — 0.2.14
 
 [Русский](verification.ru.md) · [Home](../README.md)
+
+## Additional 0.2.14 regressions: forward clock jumps and bounded retention
+
+The actual SQLite Store housekeeping path was replayed with controlled clock inputs. With version 0.2.13 cleanup behavior retained, two new assertions failed after a synthetic 120-day forward jump: 30-day-old local usage records and session checkpoints were immediately deleted; the ordinary two-day-expiration boundary passed. [Failure-first Windows run](https://github.com/TechWisard/desktop-pilot/actions/runs/40397755590): 186 Rust tests passed, two targeted assertions failed. The corrected scenarios also cover repeated forward scans, return to the real date, ordinary expiry, preservation of Always rules and settings, and the first scan of a prior profile. Count-limited event/command retention remains active. [Evidence and limits](research/2026-10-26-forward-clock-retention.md).
+
+## Additional 0.2.13 regressions: stable recovery through duplicate launch identities
+
+Five production-path fixtures use real Windows shortcuts, denied-read handles, SQLite, preview, apply and user-rule commands. They verify recovery through exact aliases without recreating an already managed desktop copy, preserving policy/history/bytes/identity/position over repeated reviews; different browser launch arguments never merge. The [candidate regression run](https://github.com/TechWisard/desktop-pilot/actions/runs/40379289641) passed 185 Rust tests, 28 native fixtures, nine publication guards, formatting, strict Clippy and build. Final release download provenance was checked separately in [public archive verification](https://github.com/TechWisard/desktop-pilot/actions/runs/40382123645). No physical Windows 11 or human task-time result is claimed.
 
 ## Additional 0.2.12 regressions: safe offline previews following clock corrections
 
