@@ -2837,6 +2837,42 @@ mod tests {
     }
 
     #[test]
+    fn corrected_clock_review_preserves_manual_shortcut_and_requires_user_permission() {
+        with_store(|store| {
+            add_test_app(store, "Hand picked", "steam://rungameid/523");
+            apply(store, true).unwrap();
+            let original: State = store.get("state").unwrap();
+            assert_eq!(original.owned.len(), 1);
+            let shortcut = original.owned[0].clone();
+            let bytes = std::fs::read(&shortcut.path).unwrap();
+
+            let mut config: Config = store.get("config").unwrap();
+            config.automatic = false;
+            store.set("config", &config).unwrap();
+
+            let future = now() + 21 * 86400;
+            let mut pending = original.clone();
+            pending.last_review = future;
+            store.set("state", &pending).unwrap();
+            assert!(!automatic_review(store, true).unwrap());
+            assert_eq!(store.get::<State>("state").unwrap().last_review, future);
+
+            config.automatic = true;
+            store.set("config", &config).unwrap();
+            assert!(!automatic_review(store, false).unwrap());
+            assert_eq!(store.get::<State>("state").unwrap().last_review, future);
+
+            assert!(automatic_review(store, true).unwrap());
+            let after: State = store.get("state").unwrap();
+            assert_eq!(after.owned.len(), 1);
+            assert_eq!(after.owned[0].path, shortcut.path);
+            assert_eq!(after.owned[0].file_id, shortcut.file_id);
+            assert_eq!(std::fs::read(&shortcut.path).unwrap(), bytes);
+            assert!(!automatic_review(store, true).unwrap());
+        });
+    }
+
+    #[test]
     fn sqlite_writer_lock_retries_the_real_usage_transaction_once() {
         with_store(|store| {
             // A second connection owns SQLite's writer lock. The first real
