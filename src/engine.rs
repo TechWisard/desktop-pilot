@@ -2598,7 +2598,10 @@ mod tests {
             assert!(session_times.is_empty());
             assert!(store.days().unwrap().is_empty());
 
-            store.db.execute_batch("DROP TRIGGER reject_session_write;").unwrap();
+            store
+                .db
+                .execute_batch("DROP TRIGGER reject_session_write;")
+                .unwrap();
             record_usage(store, &mut session_times, "editor", 10, true, at).unwrap();
             let days = store.days().unwrap();
             assert_eq!(days.len(), 1);

@@ -590,10 +590,7 @@ mod tests {
             ["offline", "online"]
         );
         // A capacity reduction must not remove the only available shortcut.
-        assert_eq!(
-            select(&apps, &ranking, &state, &reduced, false),
-            ["online"]
-        );
+        assert_eq!(select(&apps, &ranking, &state, &reduced, false), ["online"]);
         // The user's explicit Always rule must still take precedence.
         offline.policy = Policy::Always;
         let manual = vec![offline, online];
