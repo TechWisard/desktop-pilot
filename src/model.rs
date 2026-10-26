@@ -557,14 +557,26 @@ mod tests {
         restored[0].valid = true;
         restored[0].unavailable_since = 0;
         assert_eq!(
-            select(&restored, &rank(&restored, &[], &cfg, now()), &state, &cfg, false),
+            select(
+                &restored,
+                &rank(&restored, &[], &cfg, now()),
+                &state,
+                &cfg,
+                false
+            ),
             ["rare"]
         );
 
         let mut excluded = apps.clone();
         excluded[0].policy = Policy::Never;
         assert_eq!(
-            select(&excluded, &rank(&excluded, &[], &cfg, now()), &state, &cfg, false),
+            select(
+                &excluded,
+                &rank(&excluded, &[], &cfg, now()),
+                &state,
+                &cfg,
+                false
+            ),
             ["frequent"]
         );
 
@@ -573,14 +585,26 @@ mod tests {
         let mut released_state = state.clone();
         released_state.owned[0].manual = false;
         assert_eq!(
-            select(&released, &rank(&released, &[], &cfg, now()), &released_state, &cfg, false),
+            select(
+                &released,
+                &rank(&released, &[], &cfg, now()),
+                &released_state,
+                &cfg,
+                false
+            ),
             ["frequent"]
         );
 
         let mut changed = apps.clone();
         changed[0].unavailable_since = 0;
         assert_eq!(
-            select(&changed, &rank(&changed, &[], &cfg, now()), &state, &cfg, false),
+            select(
+                &changed,
+                &rank(&changed, &[], &cfg, now()),
+                &state,
+                &cfg,
+                false
+            ),
             ["frequent"]
         );
     }

@@ -2611,7 +2611,10 @@ mod tests {
 
             command(store, &format!("policy:{}:Auto", rare.id)).unwrap();
             assert!(!store.get::<State>("state").unwrap().owned[0].manual);
-            assert_eq!(preview(store, false).unwrap().selected, [frequent.id.clone()]);
+            assert_eq!(
+                preview(store, false).unwrap().selected,
+                [frequent.id.clone()]
+            );
             apply(store, false).unwrap();
             let released: State = store.get("state").unwrap();
             assert_eq!(released.owned.len(), 1);
