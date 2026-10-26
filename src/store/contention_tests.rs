@@ -42,7 +42,10 @@ fn transient_writer_busy_at_begin_does_not_discard_a_user_change() {
         store.db.busy_timeout(Duration::from_millis(10)).unwrap();
         let attempt = store.transaction(|| store.set("value", &1u32));
         holder.join().unwrap();
-        assert!(attempt.is_ok(), "short writer contention should be retried: {attempt:?}");
+        assert!(
+            attempt.is_ok(),
+            "short writer contention should be retried: {attempt:?}"
+        );
         assert_eq!(store.get::<u32>("value").unwrap(), 1);
     });
 }
