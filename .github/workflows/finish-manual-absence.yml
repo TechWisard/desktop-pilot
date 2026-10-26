@@ -4,6 +4,9 @@ on:
     branches: [maintenance/finish-manual-absence-20261026]
 permissions:
   contents: read
+concurrency:
+  group: manual-absence-preparation
+  cancel-in-progress: true
 jobs:
   prepare:
     if: github.repository == 'TechWisard/desktop-pilot'
@@ -38,7 +41,7 @@ jobs:
       - name: Check candidate without weakening normal release gates
         run: |
           $ErrorActionPreference = 'Stop'
-          ./scripts/test-release-workflow.ps1 2>&1 | Tee-Object target/completion-guards.log
+          ./scripts/test-release-workflow.ps1 *>&1 | Tee-Object target/completion-guards.log
           if ($LASTEXITCODE) { throw 'Publication guards failed' }
           cargo fmt --check
           if ($LASTEXITCODE) { throw 'Formatting failed' }
@@ -48,7 +51,7 @@ jobs:
           if ($LASTEXITCODE) { throw 'Clippy failed' }
           cargo build --locked
           if ($LASTEXITCODE) { throw 'Build failed' }
-          ./scripts/test-native.ps1 2>&1 | Tee-Object target/completion-native.log
+          ./scripts/test-native.ps1 *>&1 | Tee-Object target/completion-native.log
           if ($LASTEXITCODE) { throw 'Native checks failed' }
       - name: Store verified candidate objects without moving any branch
         env:
