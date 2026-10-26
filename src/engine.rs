@@ -1578,13 +1578,18 @@ pub fn automatic_review(store: &Store, quiet: bool) -> Result<bool> {
     let mut progress: Progress = store.get("learning")?;
     progress.finish_if_ready(&config, now());
     store.set("learning", &progress)?;
+    let review_at = now();
+    let review_due = !state.initialized
+        || review_at
+            >= state
+                .last_review
+                .saturating_add(config.interval_days * 86400)
+        // A large backwards wall-clock correction must not block automatic
+        // reviews for weeks. The usual quiet/learning checks still apply.
+        || state.last_review > review_at.saturating_add(86400);
     if config.automatic
         && progress.ready(&config)
-        && (!state.initialized
-            || now()
-                >= state
-                    .last_review
-                    .saturating_add(config.interval_days * 86400))
+        && review_due
         && quiet
         && (state.initialized || !preview(store, true)?.selected.is_empty())
     {
@@ -1691,9 +1696,12 @@ fn record_usage(
     time: i64,
 ) -> Result<()> {
     let session = first
-        && session_times
-            .get(id)
-            .is_none_or(|last| time.saturating_sub(*last) >= 1200);
+        && session_times.get(id).is_none_or(|last| {
+            // A clearly future checkpoint can result from correcting the
+            // wall clock. Keep the usual gap for small time adjustments;
+            // only an independently confirmed first visit can count.
+            time.saturating_sub(*last) >= 1200 || last.saturating_sub(time) >= 1200
+        });
     // Stage the in-memory session state until both usage and the checkpoint
     // have committed. A storage error must not advance only one of the two.
     let next_times = store.transaction(|| {
