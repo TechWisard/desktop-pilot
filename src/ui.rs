@@ -352,7 +352,7 @@ fn apply_mode(config: &mut Config, mode: OperatingMode) {
 }
 // A stale "running" status is not an error. Only the explicit worker
 // termination marker may be shown when there is no active background process.
-fn stopped_worker_error<'a>(alive: bool, disabled: bool, status: &'a str) -> Option<&'a str> {
+fn stopped_worker_error(alive: bool, disabled: bool, status: &str) -> Option<&str> {
     if alive || disabled {
         return None;
     }
