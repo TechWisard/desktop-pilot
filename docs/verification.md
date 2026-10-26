@@ -1,6 +1,10 @@
-# Verification scope — 0.2.6
+# Verification scope — 0.2.7
 
 [Русский](verification.ru.md) · [Home](../README.md)
+
+## Additional 0.2.7 regressions
+
+Production `UsageAccumulator::sample` now keeps bounded partial confirmed foreground observations across short visits to multiple applications. New tests replay three six-second visits each to two alternately used apps: the initial ambiguous tick of every visit is excluded, but the remaining 12 seconds per app are recorded through the real `record_usage` and SQLite history with only one session. Rapid one-tick switches do not count; inactive gaps beyond 20 minutes and stalled 600-second ticks discard pending partial evidence; 300 distinct identities cannot exceed the 128-app in-memory bound. The earlier uninterrupted-long-use regression is retained. This is a deterministic policy test, not user timing evidence; no physical desktop or opt-in user field study has been performed. See [short foreground visits research](research/2026-10-26-short-foreground-visits.md).
 
 ## Additional 0.2.6 regressions
 
@@ -57,4 +61,4 @@ Release packaging excludes installed profiles, usage databases and undo backups.
 
 ## Limits
 
-Windows Server CI and Wine do not establish interactive acceptance on every Windows 10/11 desktop. Physical multi-monitor/DPI changes, alternative shells, third-party desktop organizers, ARM64 and future taskbar formats have not been established for this release. The 100 geometry combinations verify placement calculations, not universal hardware compatibility. Version **0.2.6 remains a preview**.
+Windows Server CI and Wine do not establish interactive acceptance on every Windows 10/11 desktop. Physical multi-monitor/DPI changes, alternative shells, third-party desktop organizers, ARM64 and future taskbar formats have not been established for this release. The 100 geometry combinations verify placement calculations, not universal hardware compatibility. Version **0.2.7 remains a preview**.
