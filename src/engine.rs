@@ -1578,13 +1578,18 @@ pub fn automatic_review(store: &Store, quiet: bool) -> Result<bool> {
     let mut progress: Progress = store.get("learning")?;
     progress.finish_if_ready(&config, now());
     store.set("learning", &progress)?;
+    let review_at = now();
+    let review_due = !state.initialized
+        || review_at
+            >= state
+                .last_review
+                .saturating_add(config.interval_days * 86400)
+        // A large backwards wall-clock correction must not block automatic
+        // reviews for weeks. The usual quiet/learning checks still apply.
+        || state.last_review > review_at.saturating_add(86400);
     if config.automatic
         && progress.ready(&config)
-        && (!state.initialized
-            || now()
-                >= state
-                    .last_review
-                    .saturating_add(config.interval_days * 86400))
+        && review_due
         && quiet
         && (state.initialized || !preview(store, true)?.selected.is_empty())
     {
@@ -1691,9 +1696,12 @@ fn record_usage(
     time: i64,
 ) -> Result<()> {
     let session = first
-        && session_times
-            .get(id)
-            .is_none_or(|last| time.saturating_sub(*last) >= 1200);
+        && session_times.get(id).is_none_or(|last| {
+            // A clearly future checkpoint can result from correcting the
+            // wall clock. Keep the usual gap for small time adjustments;
+            // only an independently confirmed first visit can count.
+            time.saturating_sub(*last) >= 1200 || last.saturating_sub(time) >= 1200
+        });
     // Stage the in-memory session state until both usage and the checkpoint
     // have committed. A storage error must not advance only one of the two.
     let next_times = store.transaction(|| {
@@ -2734,6 +2742,133 @@ mod tests {
             assert_eq!(days[0].seconds, 10);
             assert_eq!(days[0].sessions, 1);
             assert_eq!(session_times["editor"], at);
+        });
+    }
+
+    #[test]
+    fn a_future_review_checkpoint_does_not_freeze_automatic_recovery() {
+        with_store(|store| {
+            let mut cfg: Config = store.get("config").unwrap();
+            cfg.automatic = true;
+            cfg.interval_days = 7;
+            store.set("config", &cfg).unwrap();
+            let baseline = now();
+            store
+                .set(
+                    "state",
+                    &State {
+                        initialized: true,
+                        last_review: baseline + 14 * 86400,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+
+            // A corrected clock must permit exactly one normal quiet review.
+            assert!(automatic_review(store, true).unwrap());
+            let after: State = store.get("state").unwrap();
+            assert!(after.last_review >= baseline && after.last_review <= now());
+            assert!(after.owned.is_empty());
+            assert!(!automatic_review(store, true).unwrap());
+
+            // Small clock adjustments and a busy desktop are not a reason
+            // to override the requested seven-day review interval.
+            let mut future = after.clone();
+            future.last_review = now() + 30;
+            store.set("state", &future).unwrap();
+            assert!(!automatic_review(store, true).unwrap());
+
+            future.last_review = now() + 14 * 86400;
+            store.set("state", &future).unwrap();
+            assert!(!automatic_review(store, false).unwrap());
+        });
+    }
+
+    #[test]
+    fn corrected_backwards_clock_restores_new_usage_sessions_and_checkpoints() {
+        with_store(|store| {
+            let corrected_time = now();
+            let checkpoint = HashMap::from([("editor".to_owned(), corrected_time + 2 * 3600)]);
+            store.set("app_session_times", &checkpoint).unwrap();
+
+            // A clock set two hours into the future was corrected while
+            // Desktop Pilot was stopped. Restart from its real persisted state.
+            let mut sessions: HashMap<String, i64> = store.get("app_session_times").unwrap();
+            record_usage(store, &mut sessions, "editor", 10, true, corrected_time).unwrap();
+            let history = store.days().unwrap();
+            assert_eq!(history.len(), 1);
+            assert_eq!(history[0].seconds, 10);
+            assert_eq!(
+                history[0].sessions, 1,
+                "the first confirmed visit after correcting a large clock error must not be lost"
+            );
+            assert_eq!(sessions["editor"], corrected_time);
+            let persisted: HashMap<String, i64> = store.get("app_session_times").unwrap();
+            assert_eq!(persisted, sessions);
+
+            // A worker restart immediately after the correction must not
+            // manufacture a second session inside the ordinary session gap.
+            record_usage(store, &mut sessions, "editor", 5, true, corrected_time + 30).unwrap();
+            assert_eq!(store.days().unwrap()[0].sessions, 1);
+            record_usage(
+                store,
+                &mut sessions,
+                "editor",
+                10,
+                true,
+                corrected_time + 1230,
+            )
+            .unwrap();
+            let history = store.days().unwrap();
+            assert_eq!(history[0].seconds, 25);
+            assert_eq!(history[0].sessions, 2);
+        });
+    }
+
+    #[test]
+    fn small_backwards_clock_adjustments_do_not_inflate_short_sessions() {
+        with_store(|store| {
+            let corrected_time = now();
+            let mut sessions = HashMap::from([("editor".to_owned(), corrected_time + 30)]);
+            record_usage(store, &mut sessions, "editor", 10, true, corrected_time).unwrap();
+            assert_eq!(store.days().unwrap()[0].sessions, 0);
+            assert_eq!(sessions["editor"], corrected_time);
+        });
+    }
+
+    #[test]
+    fn corrected_clock_review_preserves_manual_shortcut_and_requires_user_permission() {
+        with_store(|store| {
+            add_test_app(store, "Hand picked", "steam://rungameid/523");
+            apply(store, true).unwrap();
+            let original: State = store.get("state").unwrap();
+            assert_eq!(original.owned.len(), 1);
+            let shortcut = original.owned[0].clone();
+            let bytes = std::fs::read(&shortcut.path).unwrap();
+
+            let mut config: Config = store.get("config").unwrap();
+            config.automatic = false;
+            store.set("config", &config).unwrap();
+
+            let future = now() + 21 * 86400;
+            let mut pending = original.clone();
+            pending.last_review = future;
+            store.set("state", &pending).unwrap();
+            assert!(!automatic_review(store, true).unwrap());
+            assert_eq!(store.get::<State>("state").unwrap().last_review, future);
+
+            config.automatic = true;
+            store.set("config", &config).unwrap();
+            assert!(!automatic_review(store, false).unwrap());
+            assert_eq!(store.get::<State>("state").unwrap().last_review, future);
+
+            assert!(automatic_review(store, true).unwrap());
+            let after: State = store.get("state").unwrap();
+            assert_eq!(after.owned.len(), 1);
+            assert_eq!(after.owned[0].path, shortcut.path);
+            assert_eq!(after.owned[0].file_id, shortcut.file_id);
+            assert_eq!(std::fs::read(&shortcut.path).unwrap(), bytes);
+            assert!(!automatic_review(store, true).unwrap());
         });
     }
 

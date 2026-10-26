@@ -1,6 +1,12 @@
-# Verification scope — 0.2.9
+# Verification scope — 0.2.11
 
 [Русский](verification.ru.md) · [Home](../README.md)
+
+## Additional 0.2.11 regressions: backward clock corrections
+
+The actual `record_usage`/SQLite session writer and `automatic_review`/desktop apply logic are tested with persisted checkpoints that are two hours, 14 days, and 21 days ahead of the corrected wall clock. Confirmed new usage resumes without a lost first session; a 30-second adjustment does not inflate sessions; a normal session gap is enforced and a corrected review does not immediately recur. A combined real Store/shortcut-file fixture exercises a user-chosen **Always** copy while automation is disabled, the desktop is busy and it becomes quiet again. The file path, bytes and identity remain unchanged and user opt-out is honored.
+
+The failure-first Windows runs [usage](https://github.com/TechWisard/desktop-pilot/actions/runs/40362314156) and [review scheduling](https://github.com/TechWisard/desktop-pilot/actions/runs/40363233853) show the earlier issue. The first corrected candidate [passed on both Windows runners](https://github.com/TechWisard/desktop-pilot/actions/runs/40363813409) with 177 Rust tests, 28 native checks, nine publication guards, formatting, strict Clippy and debug build. The additional manual-choice regression and versioned release have their own CI gates and must be checked independently. These tests do not change the physical system clock or prove savings in users' work time. [Primary sources, reproduction and open limits](research/2026-10-26-clock-correction-recovery.md).
 
 ## Additional 0.2.9 regressions: brief SQLite contention and unexpected worker stop
 
