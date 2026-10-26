@@ -41,17 +41,20 @@ jobs:
       - name: Check candidate without weakening normal release gates
         run: |
           $ErrorActionPreference = 'Stop'
-          ./scripts/test-release-workflow.ps1 *>&1 | Tee-Object target/completion-guards.log
+          $guards = [System.IO.Path]::GetFullPath('target/completion-guards.log')
+          $tests = [System.IO.Path]::GetFullPath('target/completion-tests.log')
+          $native = [System.IO.Path]::GetFullPath('target/completion-native.log')
+          pwsh -NoProfile -File ./scripts/test-release-workflow.ps1 2>&1 | Tee-Object -FilePath $guards
           if ($LASTEXITCODE) { throw 'Publication guards failed' }
           cargo fmt --check
           if ($LASTEXITCODE) { throw 'Formatting failed' }
-          cargo test --locked 2>&1 | Tee-Object target/completion-tests.log
+          cargo test --locked 2>&1 | Tee-Object -FilePath $tests
           if ($LASTEXITCODE) { throw 'Regression tests failed' }
           cargo clippy --locked --all-targets -- -D warnings
           if ($LASTEXITCODE) { throw 'Clippy failed' }
           cargo build --locked
           if ($LASTEXITCODE) { throw 'Build failed' }
-          ./scripts/test-native.ps1 *>&1 | Tee-Object target/completion-native.log
+          pwsh -NoProfile -File ./scripts/test-native.ps1 2>&1 | Tee-Object -FilePath $native
           if ($LASTEXITCODE) { throw 'Native checks failed' }
       - name: Store verified candidate objects without moving any branch
         env:
