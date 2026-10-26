@@ -4125,7 +4125,7 @@ mod tests {
 
     #[test]
     fn stopped_worker_failure_is_visible_but_stale_and_intentional_stops_are_not() {
-        let rus = "Фоновый учёт остановлен: database is locked\\nAutostart warning";
+        let rus = "Фоновый учёт остановлен: database is locked\nAutostart warning";
         let eng = "Background tracking stopped: failed to save usage";
         assert_eq!(
             stopped_worker_error(false, false, rus),
