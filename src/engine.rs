@@ -2567,6 +2567,61 @@ mod tests {
         });
     }
     #[test]
+    fn manually_pinned_rare_shortcut_survives_long_absence_then_obeys_release() {
+        with_store(|store| {
+            let mut config: Config = store.get("config").unwrap();
+            config.slots = 1;
+            store.set("config", &config).unwrap();
+
+            let rare = add_test_app(store, "Rare critical tool", "steam://rungameid/8401");
+            let mut frequent = add_test_app(store, "Daily project", "steam://rungameid/8402");
+            frequent.policy = Policy::Auto;
+            frequent.seed = 300.0;
+            frequent.seed_at = now();
+            store.put_app(&frequent).unwrap();
+
+            apply(store, true).unwrap();
+            let before: State = store.get("state").unwrap();
+            assert_eq!(before.owned.len(), 1);
+            assert_eq!(before.owned[0].app, rare.id);
+            let protected_path = before.owned[0].path.clone();
+            let protected_bytes = std::fs::read(&protected_path).unwrap();
+            let original_bytes = std::fs::read(&rare.source).unwrap();
+
+            std::fs::remove_file(&rare.source).unwrap();
+            refresh_apps(store).unwrap();
+            let mut missing = store.app(&rare.id).unwrap();
+            assert!(!missing.valid);
+            missing.unavailable_since = now() - 6 * 86400;
+            store.put_app(&missing).unwrap();
+
+            assert_eq!(preview(store, false).unwrap().selected, [rare.id.clone()]);
+            apply(store, false).unwrap();
+            let retained: State = store.get("state").unwrap();
+            assert_eq!(retained.owned[0].path, protected_path);
+            assert_eq!(retained.owned[0].position, before.owned[0].position);
+            assert!(retained.owned[0].manual);
+            assert_eq!(std::fs::read(&protected_path).unwrap(), protected_bytes);
+
+            std::fs::write(&rare.source, &original_bytes).unwrap();
+            refresh_apps(store).unwrap();
+            assert!(store.app(&rare.id).unwrap().valid);
+            apply(store, false).unwrap();
+            assert_eq!(std::fs::read(&protected_path).unwrap(), protected_bytes);
+
+            command(store, &format!("policy:{}:Auto", rare.id)).unwrap();
+            assert!(!store.get::<State>("state").unwrap().owned[0].manual);
+            assert_eq!(preview(store, false).unwrap().selected, [frequent.id.clone()]);
+            apply(store, false).unwrap();
+            let released: State = store.get("state").unwrap();
+            assert_eq!(released.owned.len(), 1);
+            assert_eq!(released.owned[0].app, frequent.id);
+            assert!(!Path::new(&protected_path).exists());
+            assert_eq!(std::fs::read(&rare.source).unwrap(), original_bytes);
+        });
+    }
+
+    #[test]
     fn reducing_slots_removes_an_unavailable_copy_not_a_working_one() {
         with_store(|store| {
             let mut config: Config = store.get("config").unwrap();

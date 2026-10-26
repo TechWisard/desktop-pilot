@@ -534,6 +534,58 @@ mod tests {
     }
 
     #[test]
+    fn manual_anchor_survives_a_six_day_outage_but_explicit_release_and_changes_do_not() {
+        let mut rare = app("rare", 5.0);
+        rare.policy = Policy::Always;
+        rare.valid = false;
+        rare.unavailable_since = now() - 6 * 86400;
+        let frequent = app("frequent", 300.0);
+        let apps = vec![rare.clone(), frequent];
+        let cfg = Config {
+            slots: 1,
+            ..Default::default()
+        };
+        let state = State {
+            owned: vec![owned("rare", true)],
+            initialized: true,
+            ..Default::default()
+        };
+        let selected = select(&apps, &rank(&apps, &[], &cfg, now()), &state, &cfg, false);
+        assert_eq!(selected, ["rare"]);
+
+        let mut restored = apps.clone();
+        restored[0].valid = true;
+        restored[0].unavailable_since = 0;
+        assert_eq!(
+            select(&restored, &rank(&restored, &[], &cfg, now()), &state, &cfg, false),
+            ["rare"]
+        );
+
+        let mut excluded = apps.clone();
+        excluded[0].policy = Policy::Never;
+        assert_eq!(
+            select(&excluded, &rank(&excluded, &[], &cfg, now()), &state, &cfg, false),
+            ["frequent"]
+        );
+
+        let mut released = apps.clone();
+        released[0].policy = Policy::Auto;
+        let mut released_state = state.clone();
+        released_state.owned[0].manual = false;
+        assert_eq!(
+            select(&released, &rank(&released, &[], &cfg, now()), &released_state, &cfg, false),
+            ["frequent"]
+        );
+
+        let mut changed = apps.clone();
+        changed[0].unavailable_since = 0;
+        assert_eq!(
+            select(&changed, &rank(&changed, &[], &cfg, now()), &state, &cfg, false),
+            ["frequent"]
+        );
+    }
+
+    #[test]
     fn grace_expires_without_ignoring_exclusion_or_explicit_capacity_reduction() {
         let mut offline = app("offline", 1.0);
         offline.valid = false;
