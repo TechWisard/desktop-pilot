@@ -33,10 +33,24 @@ fn forward_jump_usage_must_not_delete_other_apps_recent_checkpoints() {
 
         // The foreground tick really occurred, but the wall clock was abruptly
         // advanced. A different app must not lose 30- or 60-day-old evidence.
-        record_usage(store, &mut times, "current-project", 12, true, at + 120 * DAY).unwrap();
+        record_usage(
+            store,
+            &mut times,
+            "current-project",
+            12,
+            true,
+            at + 120 * DAY,
+        )
+        .unwrap();
         for name in ["rare-project", "weekly-tool"] {
-            assert!(times.contains_key(name), "{name} was pruned from worker memory");
-            assert!(checkpoints(store).contains_key(name), "{name} was erased from SQLite");
+            assert!(
+                times.contains_key(name),
+                "{name} was pruned from worker memory"
+            );
+            assert!(
+                checkpoints(store).contains_key(name),
+                "{name} was erased from SQLite"
+            );
         }
 
         // After the clock returns, a new real visit still records correctly
