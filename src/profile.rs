@@ -4,27 +4,40 @@ use std::path::{Path, PathBuf};
 fn adjacent_profile(executable: &Path) -> Option<PathBuf> {
     let parent = executable.parent()?;
     let database = parent.join("usage.sqlite");
-    if !database.is_file() {
-        return None;
+    match std::fs::metadata(&database) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        // An inaccessible or obstructed profile is not an absent profile. Let
+        // Store::open report the error rather than silently selecting another.
+        Err(_) => return Some(parent.to_path_buf()),
+        Ok(metadata) if !metadata.is_file() => return Some(parent.to_path_buf()),
+        Ok(_) => {}
     }
     // Preserve the original default installation even if its database needs
-    // repair; custom folders require positive, read-only schema identification.
+    // repair. A readable unrelated database in a custom folder is still skipped.
     if parent
         .file_name()
         .is_some_and(|name| name.eq_ignore_ascii_case("DesktopPilot"))
     {
         return Some(parent.to_path_buf());
     }
-    let database = rusqlite::Connection::open_with_flags(
+    let database = match rusqlite::Connection::open_with_flags(
         database,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .ok()?;
-    let expected_tables: i64 = database.query_row(
+    ) {
+        Ok(database) => database,
+        Err(_) => return Some(parent.to_path_buf()),
+    };
+    let expected_tables: rusqlite::Result<i64> = database.query_row(
         "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name IN ('kv','apps','days','events','commands','transactions')",
         [], |row| row.get(0),
-    ).ok()?;
-    (expected_tables == 6).then(|| parent.to_path_buf())
+    );
+    // Busy, damaged or temporarily unreadable SQLite cannot prove that this is
+    // an unrelated database. Retain its location without repairing or writing it;
+    // Store::open still validates the complete schema before any initialization.
+    match expected_tables {
+        Ok(6) | Err(_) => Some(parent.to_path_buf()),
+        Ok(_) => None,
+    }
 }
 
 fn select(explicit: Option<&Path>, local: &Path, executable: &Path) -> PathBuf {
