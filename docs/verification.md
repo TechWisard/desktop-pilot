@@ -1,14 +1,14 @@
-# Verification scope — 0.2.7
+# Verification scope — 0.2.8
 
 [Русский](verification.ru.md) · [Home](../README.md)
 
-## Post-0.2.7 regression work: manual capacity and interrupted usage writes
+## Additional 0.2.8 regressions: capacity reduction and interrupted usage writes
 
 Real production `model::rank`/`select` and `engine::refresh_apps`/`preview`/`apply` fixtures expose a combined edge case: two already-owned shortcuts, one temporarily missing but historically high-ranked, followed by a deliberate reduction from two places to one. Previously the available shortcut was removed and the offline copy remained. The policy now discards the non-manually-protected unavailable copy first, retains the available file at its existing path, and still honors the explicitly selected **Always** exception. Grace retention without reducing capacity is unchanged.
 
 An isolated SQLite trigger simulates a failed checkpoint write after usage counters were written inside the same transaction. `record_usage` now updates its in-memory last-session cache only after the transaction commits. This preserves a coherent state for a retry without claiming that disk failures can always be recovered automatically; the monitor currently exits on an unhandled write error.
 
-**Before:** [formatted regression commit and Windows run](https://github.com/TechWisard/desktop-pilot/actions/runs/40325563091) — 164 existing tests passed; all three new regressions failed on Windows 2025. The initial test-only commit was reformatted before this run. **After:** check the Windows workflow for the final fix/merge commit before claiming completion. No physical Windows Explorer trial or user time-saving study is implied. [Research and outstanding scenarios](research/2026-10-26-capacity-and-usage-recovery.md).
+**Before:** [formatted regression commit and Windows run](https://github.com/TechWisard/desktop-pilot/actions/runs/40325563091) — 164 existing tests passed; all three new regressions failed on Windows 2025. The initial test-only commit was reformatted before this run. **After:** [verified fix run](https://github.com/TechWisard/desktop-pilot/actions/runs/40326209390) — both Windows 2022/2025 jobs passed formatting, all 167 Rust tests, Clippy with warnings denied, debug build, native fixtures and release-publication guards. The final release run validates its own packaged executable and assets separately. No physical Windows Explorer trial or user time-saving study is implied. [Research and outstanding scenarios](research/2026-10-26-capacity-and-usage-recovery.md).
 
 ## Additional 0.2.7 regressions
 
@@ -69,4 +69,4 @@ Release packaging excludes installed profiles, usage databases and undo backups.
 
 ## Limits
 
-Windows Server CI and Wine do not establish interactive acceptance on every Windows 10/11 desktop. Physical multi-monitor/DPI changes, alternative shells, third-party desktop organizers, ARM64 and future taskbar formats have not been established for this release. The 100 geometry combinations verify placement calculations, not universal hardware compatibility. Version **0.2.7 remains a preview**.
+Windows Server CI and Wine do not establish interactive acceptance on every Windows 10/11 desktop. Physical multi-monitor/DPI changes, alternative shells, third-party desktop organizers, ARM64 and future taskbar formats have not been established for this release. The 100 geometry combinations verify placement calculations, not universal hardware compatibility. Version **0.2.8 remains a preview**.
