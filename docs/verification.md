@@ -1,6 +1,12 @@
-# Verification scope — 0.2.8
+# Verification scope — 0.2.9
 
 [Русский](verification.ru.md) · [Home](../README.md)
+
+## Additional 0.2.9 regressions: brief SQLite contention and unexpected worker stop
+
+A second actual SQLite connection holds a write transaction while the production usage writer attempts to record confirmed activity. One fixture releases the lock after the first failed transaction: the bounded retry writes exactly 10 seconds, one session and one committed in-memory checkpoint. Another holds the lock across all three attempts, verifies no partial usage or session state, then releases it and retries successfully. An existing abort-trigger regression now explicitly ensures that a **non-lock** constraint error is attempted only once and rolled back. The Home status regression distinguishes a stopped monitor's real error from stale healthy text, an active process and an intentionally disabled service.
+
+[Windows branch verification](https://github.com/TechWisard/desktop-pilot/actions/runs/40331163215) passed formatting, **170 Rust tests**, Clippy with warnings denied, debug build, 28 native integration checks and release-publication guards on **both Windows 2022 and 2025**. The versioned release build and packaged asset validation run separately. The fixture uses the genuine Store/SQLite transactions, but does not test a physical disk failure, a full process+tray failure-and-restart cycle, new 150–200% error-state screenshots or real-user task times. No telemetry or user-file changes. [Research and follow-ups](research/2026-10-26-worker-lock-recovery.md).
 
 ## Additional 0.2.8 regressions: capacity reduction and interrupted usage writes
 

@@ -37,3 +37,7 @@ The sequences are deterministic synthetic fault injection into **real production
 2. Test a real long-held SQLite lock while the complete background process/tray are running, including restarting and resuming a queued command. The unit fixtures exercise the production transaction/retry path, but not the full process.
 3. Consider a recovery policy for database errors in other worker operations only after verifying those calls are safe to retry. Never blanket-retry desktop changes.
 4. Continue the long-sequence project-switching, rare-app, manual placement and five-day absence scenarios from earlier research. No user telemetry is introduced.
+
+## Verified automated checks
+
+On the merged change, [Windows checks](https://github.com/TechWisard/desktop-pilot/actions/runs/40331163215) passed on windows-2022 and windows-2025: formatting, 170 tests, Clippy warnings denied, build, 28 native checks and publication-guard tests. The two actual SQLite lock tests and Home status regression are among those tests. The release-package and tag verification is separate; the native fixture checks do not reproduce a real user desktop failure.

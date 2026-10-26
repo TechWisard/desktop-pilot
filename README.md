@@ -16,11 +16,17 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It lear
 
 ## Get started
 
-1. Download and extract **DesktopPilot-0.2.8-windows-x64.zip** from [Releases](https://github.com/TechWisard/desktop-pilot/releases/latest).
+1. Download and extract **DesktopPilot-0.2.9-windows-x64.zip** from [Releases](https://github.com/TechWisard/desktop-pilot/releases/latest).
 2. Run `desktop-pilot.exe`. The setup walks through the operating mode, number and position of shortcuts, and observation preferences. Choose **English** or **Русский** at any time.
 3. Use your computer normally. The default is **passive observation for 7 computer sessions**. No quick shortcuts are created during learning. After the threshold, the most-used eligible apps appear automatically during an idle period. Choose sessions, active days, either condition or both in Settings.
 
 Installation is per user, by default in `%LOCALAPPDATA%\DesktopPilot`; no administrator access is required. Settings are available from the tray icon and the Start menu. This preview executable is unsigned; download only from this repository's Releases and verify the supplied SHA-256 checksum.
+
+## Improvements in 0.2.9
+
+- **A brief storage lock no longer stops tracking immediately.** When another application temporarily holds SQLite's writer lock, Desktop Pilot makes up to three bounded attempts to save the complete usage transaction. Confirmed time and sessions are recorded only once; persistent and non-lock errors are still reported rather than silently ignored.
+- **Clear recovery when tracking stops:** Home shows the saved reason for an unexpected background failure, with **View history** and **Resume background work**. Intentional shutdown and previously saved settings are not mistaken for errors.
+- Three additional regressions use the real SQLite store and Home status logic. All 170 Rust tests, native fixtures and release checks passed on both Windows CI environments before the release update. No network account, hidden telemetry or data migration is introduced. [Verification and limits](docs/verification.md).
 
 ## Improvements in 0.2.8
 
