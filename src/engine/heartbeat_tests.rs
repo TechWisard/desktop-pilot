@@ -53,45 +53,43 @@ fn startup_long_absence_and_explicit_commands_never_lose_readiness() {
         let mut last = None;
         let before = sql_writes(store);
         assert!(publish_heartbeat_if_due(store, &mut last, start, false).unwrap());
-        assert!(!publish_heartbeat_if_due(
-            store,
-            &mut last,
-            start + Duration::from_secs(2),
-            false
-        ).unwrap());
+        assert!(
+            !publish_heartbeat_if_due(store, &mut last, start + Duration::from_secs(2), false)
+                .unwrap()
+        );
         // An explicit queued command forces a fresh signal without waiting.
-        assert!(publish_heartbeat_if_due(
-            store,
-            &mut last,
-            start + Duration::from_secs(3),
-            true
-        ).unwrap());
-        assert!(!publish_heartbeat_if_due(
-            store,
-            &mut last,
-            start + Duration::from_secs(16),
-            false
-        ).unwrap());
-        assert!(publish_heartbeat_if_due(
-            store,
-            &mut last,
-            start + Duration::from_secs(18),
-            false
-        ).unwrap());
+        assert!(
+            publish_heartbeat_if_due(store, &mut last, start + Duration::from_secs(3), true)
+                .unwrap()
+        );
+        assert!(
+            !publish_heartbeat_if_due(store, &mut last, start + Duration::from_secs(16), false)
+                .unwrap()
+        );
+        assert!(
+            publish_heartbeat_if_due(store, &mut last, start + Duration::from_secs(18), false)
+                .unwrap()
+        );
         // After a suspended clock or an extended absence, one write resumes
         // operation; no backlog of idle ticks is replayed into the WAL.
-        assert!(publish_heartbeat_if_due(
-            store,
-            &mut last,
-            start + Duration::from_secs(8 * 3600),
-            false
-        ).unwrap());
-        assert!(!publish_heartbeat_if_due(
-            store,
-            &mut last,
-            start + Duration::from_secs(8 * 3600 + 2),
-            false
-        ).unwrap());
+        assert!(
+            publish_heartbeat_if_due(
+                store,
+                &mut last,
+                start + Duration::from_secs(8 * 3600),
+                false
+            )
+            .unwrap()
+        );
+        assert!(
+            !publish_heartbeat_if_due(
+                store,
+                &mut last,
+                start + Duration::from_secs(8 * 3600 + 2),
+                false
+            )
+            .unwrap()
+        );
         assert_eq!(sql_writes(store) - before, 4);
     });
 }
