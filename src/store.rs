@@ -107,8 +107,7 @@ fn begin_immediate_with_retry(db: &Connection) -> rusqlite::Result<Transaction<'
             // Only retry acquiring the writer before any user closure runs.
             // Replaying arbitrary operations after a partial write is unsafe.
             Err(rusqlite::Error::SqliteFailure(error, _))
-                if error.code == rusqlite::ErrorCode::DatabaseBusy
-                    && attempt + 1 < ATTEMPTS =>
+                if error.code == rusqlite::ErrorCode::DatabaseBusy && attempt + 1 < ATTEMPTS =>
             {
                 std::thread::sleep(Duration::from_millis(125));
             }
