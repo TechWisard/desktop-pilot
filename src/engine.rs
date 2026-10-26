@@ -1739,6 +1739,29 @@ fn housekeeping_sessions(store: &Store, sessions: &mut HashMap<String, i64>) -> 
     Ok(())
 }
 
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
+
+/// Keep startup and explicit commands responsive without rewriting the same
+/// SQLite heartbeat on every two-second idle monitor tick.
+fn publish_heartbeat_if_due(
+    store: &Store,
+    last_written: &mut Option<Instant>,
+    tick: Instant,
+    force: bool,
+) -> Result<bool> {
+    if !force
+        && last_written
+            .as_ref()
+            .is_some_and(|last| tick.saturating_duration_since(*last) < HEARTBEAT_INTERVAL)
+    {
+        return Ok(false);
+    }
+    store.set("heartbeat", &now())?;
+    // A failed SQLite write never advances the next-eligible checkpoint.
+    *last_written = Some(tick);
+    Ok(true)
+}
+
 pub fn monitor(home: PathBuf) -> Result<()> {
     let _com = native::Com::new()?;
     let store = Store::open(&home)?;
@@ -1755,6 +1778,7 @@ pub fn monitor(home: PathBuf) -> Result<()> {
     let mut learning_fraction = 0.0f64;
     let mut session_times: HashMap<String, i64> = store.get("app_session_times")?;
     let mut last_tick = Instant::now();
+    let mut last_heartbeat = None;
     let mut maintenance: Option<Instant> = None;
     let mut scanned: Option<Instant> = None;
     let mut last_autostart = None;
@@ -1773,7 +1797,7 @@ pub fn monitor(home: PathBuf) -> Result<()> {
             if !store.claim_command(id)? {
                 continue;
             }
-            store.set("heartbeat", &now())?;
+            let _ = publish_heartbeat_if_due(&store, &mut last_heartbeat, Instant::now(), true)?;
             let result = command(&store, &action);
             store.finish(id, &result)?;
             apps = store.apps()?;
@@ -1866,7 +1890,7 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                 record_usage(&store, &mut session_times, &id, seconds, first, now())
             })?;
         }
-        store.set("heartbeat", &now())?;
+        let _ = publish_heartbeat_if_due(&store, &mut last_heartbeat, Instant::now(), false)?;
         if maintenance.is_none_or(|at| at.elapsed() >= Duration::from_secs(60)) {
             maintenance = Some(Instant::now());
             let result = (|| -> Result<()> {
@@ -3305,3 +3329,6 @@ mod alias_recovery_tests;
 
 #[cfg(test)]
 mod session_retention_tests;
+
+#[cfg(test)]
+mod heartbeat_tests;
