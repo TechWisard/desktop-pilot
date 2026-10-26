@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
+/// Retain only an already managed shortcut while its unchanged source is unavailable.
+/// A new shortcut must still have a verified original to be placed.
+pub const UNAVAILABLE_GRACE_SECONDS: i64 = 72 * 3600;
+
 pub fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
@@ -193,6 +197,10 @@ pub struct App {
     pub note: String,
     #[serde(default)]
     pub valid: bool,
+    /// UTC time at which the unchanged source or launch target first became unavailable.
+    /// Zero means available or changed identity; old profiles deserialize as zero.
+    #[serde(default)]
+    pub unavailable_since: i64,
     #[serde(default)]
     pub observed_roots: Vec<String>,
 }
@@ -339,9 +347,24 @@ pub fn select(
     let by_id: HashMap<_, _> = apps.iter().map(|a| (a.id.as_str(), a)).collect();
     let scores: HashMap<_, _> = ranking.iter().map(|r| (r.id.as_str(), r)).collect();
     let score = |id: &str| scores.get(id).map_or(0.0, |r| r.score);
+    let at = now();
+    // A missing drive must not cause a familiar shortcut to disappear at the
+    // next review. This exception never makes an unavailable app eligible for
+    // a new copy; an explicit Never rule or a shorter slot capacity still wins.
+    let in_grace = |id: &str| {
+        by_id.get(id).is_some_and(|a| {
+            !a.valid
+                && a.policy != Policy::Never
+                && a.unavailable_since > 0
+                && a.unavailable_since <= at
+                && at.saturating_sub(a.unavailable_since) < UNAVAILABLE_GRACE_SECONDS
+        })
+    };
+    let capacity_reduced = state.owned.len() > cfg.slots;
     let fixed = |id: &str| {
         by_id.get(id).is_some_and(|a| a.policy == Policy::Always)
             || state.owned.iter().any(|o| o.app == id && o.manual)
+            || (!capacity_reduced && in_grace(id))
     };
     let allowed = |id: &str| {
         scores.get(id).is_some_and(|r| r.eligible)
@@ -356,6 +379,7 @@ pub fn select(
         .iter()
         .filter(|o| {
             allowed(&o.app)
+                || in_grace(&o.app)
                 || by_id.get(o.app.as_str()).is_some_and(|a| {
                     a.valid && a.policy == Policy::Auto && !(cfg.respect_taskbar_pins && a.pinned)
                 })
@@ -476,6 +500,65 @@ mod tests {
             ["a"]
         );
     }
+
+    #[test]
+    fn an_unavailable_original_protects_existing_space_but_cannot_get_a_new_space() {
+        let mut offline = app("offline", 80.0);
+        offline.valid = false;
+        offline.unavailable_since = now();
+        let apps = vec![offline, app("available", 200.0)];
+        let cfg = Config {
+            slots: 1,
+            ..Default::default()
+        };
+        let ranking = rank(&apps, &[], &cfg, now());
+        assert!(!ranking.iter().find(|r| r.id == "offline").unwrap().eligible);
+        let state = State {
+            owned: vec![owned("offline", false)],
+            initialized: true,
+            ..Default::default()
+        };
+        assert_eq!(select(&apps, &ranking, &state, &cfg, false), ["offline"]);
+        assert_eq!(
+            select(&apps, &ranking, &State::default(), &cfg, true),
+            ["available"]
+        );
+    }
+
+    #[test]
+    fn grace_expires_without_ignoring_exclusion_or_explicit_capacity_reduction() {
+        let mut offline = app("offline", 1.0);
+        offline.valid = false;
+        offline.unavailable_since = now() - UNAVAILABLE_GRACE_SECONDS - 10;
+        let apps = vec![offline.clone(), app("available", 100.0)];
+        let cfg = Config {
+            slots: 1,
+            ..Default::default()
+        };
+        let state = State {
+            owned: vec![owned("offline", false)],
+            initialized: true,
+            ..Default::default()
+        };
+        let ranking = rank(&apps, &[], &cfg, now());
+        assert_eq!(select(&apps, &ranking, &state, &cfg, false), ["available"]);
+
+        offline.unavailable_since = now();
+        offline.policy = Policy::Never;
+        let apps = vec![offline.clone(), app("available", 100.0)];
+        let ranking = rank(&apps, &[], &cfg, now());
+        assert_eq!(select(&apps, &ranking, &state, &cfg, false), ["available"]);
+
+        offline.policy = Policy::Auto;
+        let apps = vec![offline, app("available", 100.0)];
+        let ranking = rank(&apps, &[], &cfg, now());
+        let reduced = State {
+            owned: vec![owned("offline", false), owned("available", false)],
+            ..Default::default()
+        };
+        assert_eq!(select(&apps, &ranking, &reduced, &cfg, false), ["available"]);
+    }
+
     #[test]
     fn no_churn_below_threshold() {
         let apps = vec![app("a", 10.0), app("b", 14.0)];

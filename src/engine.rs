@@ -383,10 +383,27 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
     } else {
         Some(Vec::new())
     };
+    let state: State = store.get("state")?;
+    let scanned_at = now();
     let mut known = store.apps()?;
     for app in &mut known {
         match native::read_link(Path::new(&app.source)) {
-            Ok(actual) => app.valid = actual.valid && actual.identity() == app.identity(),
+            Ok(actual) if actual.identity() != app.identity() => {
+                // A different launch identity is an actual change, not a temporary
+                // unavailable drive. Do not keep managing the obsolete copy.
+                app.valid = false;
+                app.unavailable_since = 0;
+            }
+            Ok(actual) if actual.valid => {
+                app.valid = true;
+                app.unavailable_since = 0;
+            }
+            Ok(_) => {
+                app.valid = false;
+                if app.unavailable_since == 0 || app.unavailable_since > scanned_at {
+                    app.unavailable_since = scanned_at;
+                }
+            }
             Err(error) => {
                 let missing = match std::fs::metadata(&app.source) {
                     Ok(metadata) => !metadata.is_file(),
@@ -394,6 +411,9 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
                 };
                 if missing {
                     app.valid = false;
+                    if app.unavailable_since == 0 || app.unavailable_since > scanned_at {
+                        app.unavailable_since = scanned_at;
+                    }
                 } else {
                     // A sharing violation or an installer/sync client's partial
                     // write does not prove that the existing quick copy is broken.
@@ -404,6 +424,17 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
                     ));
                 }
             }
+        }
+        if !app.valid
+            && app.policy != Policy::Never
+            && app.unavailable_since > 0
+            && scanned_at.saturating_sub(app.unavailable_since) < UNAVAILABLE_GRACE_SECONDS
+            && state.owned.iter().any(|o| o.app == app.id)
+        {
+            warnings.push(format!(
+                "Original source or target is temporarily unavailable: {}. The existing quick copy is held for up to 72 hours; new copies are not created.",
+                app.source
+            ));
         }
         if let Some(pins) = &pins {
             app.pinned = real && config.respect_taskbar_pins && native::is_pinned(app, pins);
@@ -497,7 +528,6 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
     }
     paths.sort_by_key(|p| norm(&p.to_string_lossy()));
     paths.dedup_by(|a, b| norm(&a.to_string_lossy()) == norm(&b.to_string_lossy()));
-    let state: State = store.get("state")?;
     let executable = norm(&std::env::current_exe()?.to_string_lossy());
     let installed = norm(&store.home.join("desktop-pilot.exe").to_string_lossy());
     for path in paths {
@@ -524,6 +554,15 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
                 app.policy = previous.policy.clone();
                 app.seed = previous.seed;
                 app.seed_at = previous.seed_at;
+                app.unavailable_since = if app.valid {
+                    0
+                } else if previous.unavailable_since > 0
+                    && previous.unavailable_since <= scanned_at
+                {
+                    previous.unavailable_since
+                } else {
+                    scanned_at
+                };
                 app.observed_roots = previous.observed_roots.clone();
                 app.note = previous.note.clone();
             }
@@ -544,6 +583,9 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
             }
             if real && let Some(id) = app.target.strip_prefix("steam://rungameid/") {
                 app.observed_roots = steam.get(id).cloned().into_iter().collect();
+            }
+            if !app.valid && app.unavailable_since == 0 {
+                app.unavailable_since = scanned_at;
             }
             // A valid registered URI or Shell application is not an unsafe
             // shortcut merely because it lacks an ordinary executable path.
@@ -2097,6 +2139,64 @@ mod tests {
             assert!(store.get::<bool>("shutdown").unwrap());
         });
     }
+
+    #[test]
+    fn disconnected_source_recovers_without_replacing_the_owned_desktop_copy() {
+        with_store(|store| {
+            let app = add_test_app(store, "Offline source", "steam://rungameid/709");
+            apply(store, true).unwrap();
+            let before: State = store.get("state").unwrap();
+            let original = std::fs::read(&app.source).unwrap();
+            std::fs::remove_file(&app.source).unwrap();
+
+            apply(store, false).unwrap();
+            let unavailable = store.app(&app.id).unwrap();
+            assert!(!unavailable.valid);
+            assert!(unavailable.unavailable_since > 0);
+            assert_eq!(preview(store, false).unwrap().removed.len(), 0);
+            let during: State = store.get("state").unwrap();
+            assert_eq!(during.owned.len(), 1);
+            assert_eq!(during.owned[0].file_id, before.owned[0].file_id);
+            assert_eq!(std::fs::read(&during.owned[0].path).unwrap(), original);
+            assert!(store.get::<String>("catalog_warning").unwrap().contains("temporarily unavailable"));
+
+            std::fs::write(&app.source, &original).unwrap();
+            apply(store, false).unwrap();
+            let restored = store.app(&app.id).unwrap();
+            assert!(restored.valid);
+            assert_eq!(restored.unavailable_since, 0);
+            let after: State = store.get("state").unwrap();
+            assert_eq!(after.owned.len(), 1);
+            assert_eq!(after.owned[0].file_id, before.owned[0].file_id);
+            assert!(store.get::<String>("catalog_warning").unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn disconnected_target_does_not_remove_the_originally_valid_quick_copy() {
+        with_store(|store| {
+            let target = store.home.join("external-target.exe");
+            std::fs::write(&target, b"test executable placeholder").unwrap();
+            let app = add_test_app(store, "External target", &target.to_string_lossy());
+            apply(store, true).unwrap();
+            let before: State = store.get("state").unwrap();
+            std::fs::remove_file(&target).unwrap();
+            apply(store, false).unwrap();
+            assert!(!store.app(&app.id).unwrap().valid);
+            let during: State = store.get("state").unwrap();
+            assert_eq!(during.owned.len(), 1);
+            assert_eq!(during.owned[0].file_id, before.owned[0].file_id);
+            std::fs::write(&target, b"target restored").unwrap();
+            apply(store, false).unwrap();
+            assert!(store.app(&app.id).unwrap().valid);
+            assert_eq!(store.app(&app.id).unwrap().unavailable_since, 0);
+            assert_eq!(
+                store.get::<State>("state").unwrap().owned[0].file_id,
+                before.owned[0].file_id
+            );
+        });
+    }
+
     #[test]
     fn missing_and_changed_originals_are_still_invalidated() {
         with_store(|store| {
@@ -2113,14 +2213,25 @@ mod tests {
             apply(store, false).unwrap();
             assert!(!store.app(&missing.id).unwrap().valid);
             assert!(!store.app(&changed.id).unwrap().valid);
-            assert!(store.get::<State>("state").unwrap().owned.is_empty());
+            let during: State = store.get("state").unwrap();
+            assert_eq!(during.owned.len(), 1);
+            assert_eq!(during.owned[0].app, missing.id);
+            assert!(Path::new(&during.owned[0].path).exists());
             assert!(
                 before
                     .owned
                     .iter()
+                    .filter(|owned| owned.app == changed.id)
                     .all(|owned| !Path::new(&owned.path).exists())
             );
             assert!(Path::new(&changed.source).is_file());
+
+            let mut expired = store.app(&missing.id).unwrap();
+            expired.unavailable_since = now() - UNAVAILABLE_GRACE_SECONDS - 10;
+            store.put_app(&expired).unwrap();
+            apply(store, false).unwrap();
+            assert!(store.get::<State>("state").unwrap().owned.is_empty());
+            assert!(!Path::new(&during.owned[0].path).exists());
         });
     }
     #[test]
