@@ -1,6 +1,10 @@
-# Verification scope — 0.2.3
+# Verification scope — 0.2.4
 
 [Русский](verification.ru.md) · [Home](../README.md)
+
+## Additional 0.2.4 regressions
+
+Windows fixtures now exercise the actual catalog, App ID recognition, usage, ranking, preview and copy of a valid `shell:AppsFolder` shortcut; verify unchanged original bytes and a subsequent explicit `Never` rule. Settings search fixtures cover distinct launch profiles, working directories and user notes. They do not establish actual launching of every URI handler or packaged application. The 0.2.3 screenshots remain historical evidence, not a new 0.2.4 screenshot campaign.
 
 ## Release gates
 
@@ -45,4 +49,4 @@ Release packaging excludes installed profiles, usage databases and undo backups.
 
 ## Limits
 
-Windows Server CI and Wine do not establish interactive acceptance on every Windows 10/11 desktop. Physical multi-monitor/DPI changes, alternative shells, third-party desktop organizers, ARM64 and future taskbar formats have not been established for this release. The 100 geometry combinations verify placement calculations, not universal hardware compatibility. Version **0.2.3 remains a preview**.
+Windows Server CI and Wine do not establish interactive acceptance on every Windows 10/11 desktop. Physical multi-monitor/DPI changes, alternative shells, third-party desktop organizers, ARM64 and future taskbar formats have not been established for this release. The 100 geometry combinations verify placement calculations, not universal hardware compatibility. Version **0.2.4 remains a preview**.
