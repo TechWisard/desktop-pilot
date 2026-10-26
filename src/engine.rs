@@ -372,6 +372,7 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
         HashMap::new()
     };
     let mut warnings = Vec::new();
+    let mut unreadable_sources = HashSet::new();
     let pins = if real && config.respect_taskbar_pins {
         match native::pin_identities() {
             Ok(pins) => Some(pins),
@@ -405,6 +406,7 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
                 }
             }
             Err(error) => {
+                unreadable_sources.insert(app.id.clone());
                 let missing = match std::fs::metadata(&app.source) {
                     Ok(metadata) => !metadata.is_file(),
                     Err(error) => error.kind() == std::io::ErrorKind::NotFound,
@@ -552,7 +554,13 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
             // their statistics and policies after correcting URL case handling.
             let old = known.iter().position(|a| a.identity() == app.identity());
             if let Some(index) = old {
-                if known[index].valid {
+                // Keep a stable verified source, but do not let its cached
+                // validity hide a readable alias during a lock or partial write.
+                // Full launch identity was matched above; an invalid alias must
+                // never replace the last verified state of an unreadable source.
+                if known[index].valid
+                    && (!unreadable_sources.contains(&known[index].id) || !app.valid)
+                {
                     continue;
                 }
                 let previous = &known[index];
@@ -604,6 +612,9 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
                 app.policy = Policy::Never;
             }
             if let Some(index) = old {
+                if app.valid {
+                    unreadable_sources.remove(&app.id);
+                }
                 known[index] = app;
             } else {
                 known.push(app);
@@ -3278,3 +3289,6 @@ mod tests {
         assert!(suggest_zone(&layout, 1).is_err());
     }
 }
+
+#[cfg(test)]
+mod alias_recovery_tests;
