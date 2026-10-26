@@ -575,13 +575,7 @@ mod tests {
         let mut moved = apps.clone();
         moved[0].policy = Policy::Auto;
         assert_eq!(
-            select(
-                &moved,
-                &rank(&moved, &[], &cfg, now()),
-                &state,
-                &cfg,
-                false
-            ),
+            select(&moved, &rank(&moved, &[], &cfg, now()), &state, &cfg, false),
             ["rare"]
         );
 

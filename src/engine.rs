@@ -435,9 +435,7 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
                     "Original source or target is unavailable: {}. Its manually protected quick shortcut will stay until you change its rule or remove it.",
                     app.source
                 ));
-            } else if scanned_at.saturating_sub(app.unavailable_since)
-                < UNAVAILABLE_GRACE_SECONDS
-            {
+            } else if scanned_at.saturating_sub(app.unavailable_since) < UNAVAILABLE_GRACE_SECONDS {
                 warnings.push(format!(
                     "Original source or target is temporarily unavailable: {}. The existing quick copy is held for up to 72 hours; new copies are not created.",
                     app.source
