@@ -99,6 +99,25 @@ fn initialize_schema(db: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn begin_immediate_with_retry(db: &Connection) -> rusqlite::Result<Transaction<'_>> {
+    const ATTEMPTS: usize = 3;
+    for attempt in 0..ATTEMPTS {
+        match Transaction::new_unchecked(db, TransactionBehavior::Immediate) {
+            Ok(transaction) => return Ok(transaction),
+            // Only retry acquiring the writer before any user closure runs.
+            // Replaying arbitrary operations after a partial write is unsafe.
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if error.code == rusqlite::ErrorCode::DatabaseBusy
+                    && attempt + 1 < ATTEMPTS =>
+            {
+                std::thread::sleep(Duration::from_millis(125));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("the last attempt always returns")
+}
+
 impl Store {
     pub fn open(home: &Path) -> Result<Self> {
         std::fs::create_dir_all(home)?;
@@ -150,7 +169,7 @@ impl Store {
             savepoint.committed = true;
             return Ok(result);
         }
-        let tx = Transaction::new_unchecked(&self.db, TransactionBehavior::Immediate)?;
+        let tx = begin_immediate_with_retry(&self.db)?;
         let result = operation()?;
         tx.commit()?;
         Ok(result)
