@@ -2792,7 +2792,10 @@ mod tests {
             // A deliberate Never choice still releases the shortcut.
             command(store, &format!("policy:{}:Never", rare.id)).unwrap();
             let release = preview(store, false).unwrap();
-            assert_eq!(release.selected.as_slice(), std::slice::from_ref(&frequent.id));
+            assert_eq!(
+                release.selected.as_slice(),
+                std::slice::from_ref(&frequent.id)
+            );
             apply(store, false).unwrap();
             assert!(!Path::new(&path).exists());
             assert_eq!(
