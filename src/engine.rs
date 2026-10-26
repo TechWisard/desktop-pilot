@@ -2795,7 +2795,10 @@ mod tests {
             assert_eq!(release.selected, [frequent.id.clone()]);
             apply(store, false).unwrap();
             assert!(!Path::new(&path).exists());
-            assert_eq!(store.get::<State>("state").unwrap().owned[0].app, frequent.id);
+            assert_eq!(
+                store.get::<State>("state").unwrap().owned[0].app,
+                frequent.id
+            );
         });
     }
 
