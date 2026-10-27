@@ -16,7 +16,7 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It lear
 
 ## Get started
 
-1. Download and extract **DesktopPilot-0.2.16-windows-x64.zip** from [Releases](https://github.com/TechWisard/desktop-pilot/releases/latest).
+1. Download the **Windows x64 ZIP archive** (`DesktopPilot-*-windows-x64.zip`) from the [latest release](https://github.com/TechWisard/desktop-pilot/releases/latest) and extract it.
 2. Run `desktop-pilot.exe`. The setup walks through the operating mode, number and position of shortcuts, and observation preferences. Choose **English** or **Русский** at any time.
 3. Use your computer normally. The default is **passive observation for 7 computer sessions**. No quick shortcuts are created during learning. After the threshold, the most-used eligible apps appear automatically during an idle period. Choose sessions, active days, either condition or both in Settings.
 

@@ -1,0 +1,52 @@
+{
+  "baseline": {
+    "release": "v0.2.25",
+    "main_sha": "4bd928af1e00ff2070c3fd7b41dedc1e38bb36a7",
+    "red_test_sha": "6bda5b0248a48c1cbdaf8cd9c0f5906b7dc57ea5",
+    "ci": "https://github.com/TechWisard/desktop-pilot/actions/runs/40505861885",
+    "os": [
+      "windows-2022",
+      "windows-2025"
+    ],
+    "rust": {
+      "passed": 239,
+      "failed": 3,
+      "failed_names": [
+        "a_source_imported_while_scanning_keeps_its_new_path_and_manual_copy",
+        "a_first_manual_import_wins_over_the_same_app_discovered_during_scan",
+        "a_transaction_started_during_scan_blocks_stale_catalog_changes"
+      ]
+    },
+    "format": "pass",
+    "readme_checks": "pass",
+    "publication_guards": "pass",
+    "note": "Prior unformatted authoring runs failed format and are not counted as red behavioral evidence"
+  },
+  "corrected": {
+    "head_before_documentation_sha": "0d86b39fb707731000d06482034af0f87b7412e8",
+    "ci": "https://github.com/TechWisard/desktop-pilot/actions/runs/40506420118",
+    "os": [
+      "windows-2022",
+      "windows-2025"
+    ],
+    "rust_tests_passed_per_runner": 242,
+    "rust_tests_failed": 0,
+    "native_checks_per_runner": 28,
+    "publication_guards_per_runner": 9,
+    "readme_instructions": "pass",
+    "format": "pass",
+    "clippy_warnings_denied": "pass",
+    "build_locked": "pass",
+    "intentional_test_hook_excluded_from_release_build": true
+  },
+  "verification_limits": [
+    "No physical Windows 11 Explorer interaction or user input timings",
+    "No multiweek habit measurements",
+    "Final merged main CI, release tag/assets and public downloads require independent verification"
+  ],
+  "sources": [
+    "https://www.sqlite.org/wal.html",
+    "https://github.com/Flow-Launcher/Flow.Launcher/issues/4484",
+    "https://www.cs.ubc.ca/labs/imager/tr/2004/findlater04menus/"
+  ]
+}

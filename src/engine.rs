@@ -378,6 +378,15 @@ pub(crate) fn preview_loaded(
     })
 }
 
+#[cfg(test)]
+type RefreshCommitHook = Box<dyn FnOnce(&Store)>;
+
+#[cfg(test)]
+thread_local! {
+    static BEFORE_REFRESH_COMMIT: std::cell::RefCell<Option<RefreshCommitHook>> =
+        std::cell::RefCell::new(None);
+}
+
 pub fn refresh_apps(store: &Store) -> Result<()> {
     ensure_no_unfinished(store)?;
     let real = real_desktop(store)?;
@@ -403,6 +412,13 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
     let state: State = store.get("state")?;
     let scanned_at = now();
     let mut known = store.apps()?;
+    // A long filesystem scan can overlap a user's explicit shortcut import.
+    // Record only the sources seen at scan start; the import transaction may
+    // select a different original before these results are ready to persist.
+    let scanned_sources: HashMap<_, _> = known
+        .iter()
+        .map(|app| (app.id.clone(), norm(&app.source)))
+        .collect();
     for app in &mut known {
         match native::read_link(Path::new(&app.source)) {
             Ok(actual) if actual.identity() != app.identity() => {
@@ -643,13 +659,31 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
             }
         }
     }
+    #[cfg(test)]
+    BEFORE_REFRESH_COMMIT.with(|callback| {
+        if let Some(callback) = callback.borrow_mut().take() {
+            callback(store);
+        }
+    });
     store.transaction(|| {
+        // A placement may have entered its prepared state while scanning.
+        // Recheck under the writer before changing any catalog row.
+        ensure_no_unfinished(store)?;
         let pins_verified = !real || !config.respect_taskbar_pins || pins.is_some();
         if store.get::<bool>("pins_verified")? != pins_verified {
             store.set("pins_verified", &pins_verified)?;
         }
         for mut app in known {
             if let Ok(latest) = store.app(&app.id) {
+                // A newer import wins over a stale scanner snapshot. This also
+                // protects an app first discovered during the scan: if it was
+                // imported meanwhile, it did not exist in scanned_sources.
+                if scanned_sources
+                    .get(&app.id)
+                    .is_none_or(|source| source != &norm(&latest.source))
+                {
+                    continue;
+                }
                 // A policy changed while the filesystem scan was running belongs to
                 // the user; refresh only filesystem-derived fields.
                 app.policy = latest.policy.clone();
@@ -3387,3 +3421,6 @@ pub(crate) use import_guard::imported_quick_copy;
 
 #[cfg(test)]
 mod manual_mode_tests;
+
+#[cfg(test)]
+mod catalog_race_tests;
