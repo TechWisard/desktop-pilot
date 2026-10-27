@@ -815,16 +815,21 @@ impl Settings {
         // A command result and the state it changed must come from one snapshot.
         // A worker may finish between individual SELECTs while Settings is open.
         let snapshot = self.store.db.unchecked_transaction()?;
+        // Keep the Store's ID order for selection before sorting the on-screen
+        // list by name. Manual anchors and equal-score tie breaks must not move.
         let mut apps = self.store.apps()?;
-        apps.sort_by_key(|a| a.name.to_lowercase());
         let state: State = self.store.get("state")?;
         let learning = self.store.get("learning")?;
         let saved_config = self.store.get("config")?;
-        let preview = engine::preview(&self.store, !state.initialized);
+        let days = self.store.days()?;
+        let at = now();
+        let preview =
+            engine::preview_loaded(&saved_config, &apps, &days, &state, !state.initialized, at);
         let ranking = match &preview {
             Ok(preview) => preview.ranking.clone(),
-            Err(_) => rank(&apps, &self.store.days()?, &saved_config, now()),
+            Err(_) => rank(&apps, &days, &saved_config, at),
         };
+        apps.sort_by_key(|a| a.name.to_lowercase());
         let status = self.store.get("status")?;
         let catalog_warning = self.store.get("catalog_warning")?;
         let autostart_warning = self.store.get("autostart_warning")?;
@@ -5046,3 +5051,6 @@ mod import_ownership_tests;
 
 #[cfg(test)]
 mod clock_health_tests;
+
+#[cfg(test)]
+mod catalog_snapshot_tests;

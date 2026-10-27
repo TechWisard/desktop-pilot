@@ -12,6 +12,13 @@ pub struct Store {
     pub home: PathBuf,
 }
 
+// Test-only, thread-local query count: measures actual Store::apps calls
+// during one Settings render without adding production instrumentation.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static CATALOG_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 // Do not confuse a large wall-clock correction with verified inactivity.
 // The seven-day observation window is a conservative policy, not a timing
 // claim about users; a normal seven-day absence only delays cleanup.
@@ -181,6 +188,8 @@ impl Store {
         Ok(())
     }
     pub fn apps(&self) -> Result<Vec<App>> {
+        #[cfg(test)]
+        CATALOG_READS.with(|reads| reads.set(reads.get().saturating_add(1)));
         let mut q = self.db.prepare("SELECT data FROM apps ORDER BY id")?;
         let rows = q.query_map([], |r| r.get::<_, String>(0))?;
         rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()

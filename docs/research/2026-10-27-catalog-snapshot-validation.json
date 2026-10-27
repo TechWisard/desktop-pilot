@@ -1,0 +1,47 @@
+{
+  "base_commit": "74a4d810a64357d7204f839daf3bc4f3a88c454b",
+  "baseline_fixture_commit": "4d754c437212a69e0d3d67cb2b4bad72e8cbb4d1",
+  "baseline_ci": "https://github.com/TechWisard/desktop-pilot/actions/runs/40475164510",
+  "baseline_windows_2022_2025": {
+    "passed": 228,
+    "failed": 2,
+    "expected_failure": "Opening saved catalog should parse each SQLite app row only once",
+    "observed_reads": 2,
+    "required_reads": 1
+  },
+  "fixed_candidate_commit": "7da0fc36ac58deada48de9cd1ace3acb1efd7695",
+  "candidate_ci": "https://github.com/TechWisard/desktop-pilot/actions/runs/40474998997",
+  "fixed_windows_2022_2025": {
+    "rust_tests_passed": 230,
+    "rust_tests_failed": 0,
+    "native_integration_checks_passed": 28,
+    "publication_guards_passed": 9,
+    "format": "passed",
+    "strict_clippy": "passed",
+    "build": "passed",
+    "catalog_reads_per_settings_open_or_reload": 1
+  },
+  "fixture_sizes": [
+    100,
+    1000,
+    5000
+  ],
+  "source_and_preview_order": "SQLite ID order before visual name sort",
+  "source_checks": [
+    "real Store SQLite",
+    "Settings::new",
+    "Settings::reload",
+    "CatalogCache::update",
+    "engine::preview parity",
+    "one native .url source",
+    "synthetic unavailable optional drive",
+    "Always/Never",
+    "invalid settings fallback"
+  ],
+  "limitations": [
+    "No physical Windows 11 first interaction measurements",
+    "No full custom directory rescans under network stalls",
+    "No human productivity estimate",
+    "Full PR, main and public release must be validated separately"
+  ]
+}
