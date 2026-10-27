@@ -36,7 +36,11 @@ fn manual_mode_does_not_add_old_high_score_apps_without_an_explicit_choice() {
     let ranked = rank(&apps, &[], &cfg, now());
     assert!(ranked.iter().any(|r| r.id == "old-activity" && r.eligible));
     let selected = select(&apps, &ranked, &State::default(), &cfg, true);
-    assert_eq!(selected, ["chosen"], "Manual Apply should add only explicitly selected apps");
+    assert_eq!(
+        selected,
+        ["chosen"],
+        "Manual Apply should add only explicitly selected apps"
+    );
 }
 
 #[test]
@@ -103,7 +107,13 @@ fn observe_only_and_paused_automatic_mode_still_allow_saved_recommendations() {
     ] {
         let apps = vec![app("recommended", Policy::Auto, 25.0)];
         assert_eq!(
-            select(&apps, &rank(&apps, &[], &cfg, now()), &State::default(), &cfg, true),
+            select(
+                &apps,
+                &rank(&apps, &[], &cfg, now()),
+                &State::default(),
+                &cfg,
+                true
+            ),
             ["recommended"],
         );
     }

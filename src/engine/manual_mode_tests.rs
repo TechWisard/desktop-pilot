@@ -14,7 +14,9 @@ fn with_profile(test: impl FnOnce(&Store)) {
     let desktop = home.join("Desktop");
     std::fs::create_dir_all(&desktop).unwrap();
     let store = Store::open(&home).unwrap();
-    store.set("test_desktop", &desktop.to_string_lossy()).unwrap();
+    store
+        .set("test_desktop", &desktop.to_string_lossy())
+        .unwrap();
     store.set("setup_complete", &true).unwrap();
     store
         .set(
@@ -55,7 +57,12 @@ fn real_preview_apply_and_undo_respect_manual_then_observe_modes() {
         let frequent = original(store, "FrequentlyUsed", Policy::Auto, true);
         let saved = store.get::<Config>("config").unwrap();
         let ranking = preview(store, true).unwrap();
-        assert!(ranking.ranking.iter().any(|r| r.id == frequent.id && r.eligible));
+        assert!(
+            ranking
+                .ranking
+                .iter()
+                .any(|r| r.id == frequent.id && r.eligible)
+        );
         assert_eq!(
             ranking.selected,
             [chosen.id.clone()],
@@ -66,8 +73,10 @@ fn real_preview_apply_and_undo_respect_manual_then_observe_modes() {
         assert_eq!(first.owned.len(), 1);
         assert_eq!(first.owned[0].app, chosen.id);
         assert!(std::path::Path::new(&first.owned[0].path).exists());
-        assert_eq!(std::fs::read(&chosen.source).unwrap(),
-            std::fs::read(&first.owned[0].path).unwrap());
+        assert_eq!(
+            std::fs::read(&chosen.source).unwrap(),
+            std::fs::read(&first.owned[0].path).unwrap()
+        );
 
         // Observe only can propose and apply usage recommendations,
         // but returning to Manual must not quietly add another app.
@@ -90,8 +99,16 @@ fn real_preview_apply_and_undo_respect_manual_then_observe_modes() {
         apply(store, false).unwrap();
         let stable: State = store.get("state").unwrap();
         assert_eq!(
-            stable.owned.iter().map(|o| (&o.app, &o.path, &o.position)).collect::<Vec<_>>(),
-            second.owned.iter().map(|o| (&o.app, &o.path, &o.position)).collect::<Vec<_>>(),
+            stable
+                .owned
+                .iter()
+                .map(|o| (&o.app, &o.path, &o.position))
+                .collect::<Vec<_>>(),
+            second
+                .owned
+                .iter()
+                .map(|o| (&o.app, &o.path, &o.position))
+                .collect::<Vec<_>>(),
         );
         assert!(!stable.owned.iter().any(|o| o.app == more.id));
 
