@@ -64,8 +64,8 @@ fn real_preview_apply_and_undo_respect_manual_then_observe_modes() {
                 .any(|r| r.id == frequent.id && r.eligible)
         );
         assert_eq!(
-            ranking.selected,
-            [chosen.id.clone()],
+            ranking.selected.as_slice(),
+            std::slice::from_ref(&chosen.id),
             "Manual mode must not silently add usage-ranked shortcuts",
         );
         apply(store, true).unwrap();
