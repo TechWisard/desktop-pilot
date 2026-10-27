@@ -1937,9 +1937,9 @@ pub fn monitor(home: PathBuf) -> Result<()> {
             let finished = match worker.receiver.try_recv() {
                 Ok(result) => Some(result),
                 Err(std::sync::mpsc::TryRecvError::Empty) => None,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    Some(Err(anyhow::anyhow!("Background shortcut scanner stopped unexpectedly")))
-                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err(anyhow::anyhow!(
+                    "Background shortcut scanner stopped unexpectedly"
+                ))),
             };
             if let Some(result) = finished {
                 let requested = std::mem::take(&mut worker.requests);
@@ -1959,10 +1959,7 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                         maintenance = None;
                     }
                     Err(error) => {
-                        store.set(
-                            "status",
-                            &format!("Изменения приостановлены: {error:#}"),
-                        )?;
+                        store.set("status", &format!("Изменения приостановлены: {error:#}"))?;
                         // Retry a failed periodic scan on the next maintenance
                         // interval, not in an uncontrolled two-second loop.
                         maintenance = Some(Instant::now());
@@ -1977,10 +1974,14 @@ pub fn monitor(home: PathBuf) -> Result<()> {
             if action == "rescan" {
                 if store.claim_command(id)? {
                     let _ = publish_heartbeat_if_due(
-                        &store, &mut last_heartbeat, Instant::now(), true,
+                        &store,
+                        &mut last_heartbeat,
+                        Instant::now(),
+                        true,
                     )?;
                     scan.get_or_insert_with(|| scan_worker::start(&store.home))
-                        .requests.push(id);
+                        .requests
+                        .push(id);
                 }
                 continue;
             }
@@ -2083,8 +2084,7 @@ pub fn monitor(home: PathBuf) -> Result<()> {
         let _ = publish_heartbeat_if_due(&store, &mut last_heartbeat, Instant::now(), false)?;
         if maintenance.is_none_or(|at| at.elapsed() >= Duration::from_secs(60)) {
             maintenance = Some(Instant::now());
-            if scan.is_none()
-                && scanned.is_none_or(|at| at.elapsed() >= Duration::from_secs(21600))
+            if scan.is_none() && scanned.is_none_or(|at| at.elapsed() >= Duration::from_secs(21600))
             {
                 scan = Some(scan_worker::start(&store.home));
             }

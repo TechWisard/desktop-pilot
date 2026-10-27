@@ -1,8 +1,8 @@
 use super::*;
 use std::sync::{
+    Arc,
     atomic::{AtomicBool, Ordering},
     mpsc,
-    Arc,
 };
 
 /// A verified catalog scan has its own SQLite connection and COM apartment.
