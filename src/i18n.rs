@@ -393,6 +393,10 @@ fn translate(value: &str, russian: bool) -> String {
             "Not enough independent days of observations",
         ),
         (
+            "Пока мало активности для нового быстрого ярлыка",
+            "Not enough usage yet for a new quick shortcut",
+        ),
+        (
             "Повторяемое использование; есть польза прямого входа",
             "Repeated use; eligible for a direct shortcut",
         ),
@@ -932,3 +936,16 @@ mod offline_tests;
 
 #[cfg(test)]
 mod import_ownership_tests;
+
+#[cfg(test)]
+mod cold_start_tests {
+    use super::translate;
+
+    #[test]
+    fn early_candidate_explains_why_no_shortcut_was_added() {
+        let russian = "Пока мало активности для нового быстрого ярлыка";
+        let english = "Not enough usage yet for a new quick shortcut";
+        assert_eq!(translate(russian, false), english);
+        assert_eq!(translate(english, true), russian);
+    }
+}
