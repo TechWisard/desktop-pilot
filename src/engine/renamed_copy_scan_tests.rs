@@ -138,3 +138,32 @@ fn independent_byte_identical_alias_remains_valid_after_original_outage() {
         );
     });
 }
+
+#[test]
+fn replacing_a_saved_copy_path_does_not_make_its_renamed_file_an_original() {
+    with_managed_shortcut(|store, app, owned| {
+        let original_bytes = std::fs::read(&app.source).unwrap();
+        let renamed = root(store).unwrap().join("Original moved by user.url");
+        std::fs::rename(&owned.path, &renamed).unwrap();
+        let unrelated = b"[InternetShortcut]\r\nURL=https://example.invalid/Unrelated\r\n";
+        std::fs::write(&owned.path, unrelated).unwrap();
+        assert_ne!(file_identity(Path::new(&owned.path)).unwrap(), owned.file_id);
+        let offline = store.home.join("Original.offline");
+        std::fs::rename(&app.source, &offline).unwrap();
+
+        refresh_apps(store).unwrap();
+        let saved = store.app(&app.id).unwrap();
+        assert_eq!(saved.source, app.source);
+        assert!(!saved.valid);
+        assert_eq!(saved.policy, Policy::Always);
+        assert_eq!(store.apps().unwrap().len(), 1);
+        assert_eq!(std::fs::read(&renamed).unwrap(), original_bytes);
+        assert_eq!(std::fs::read(&owned.path).unwrap(), unrelated);
+        assert_eq!(std::fs::read(&offline).unwrap(), original_bytes);
+        reconcile_manual(store).unwrap();
+        assert!(store.get::<State>("state").unwrap().owned.is_empty());
+        assert_eq!(store.app(&app.id).unwrap().policy, Policy::Never);
+        assert!(renamed.exists());
+    });
+}
+
