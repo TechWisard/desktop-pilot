@@ -641,3 +641,6 @@ mod retention_tests;
 
 #[cfg(test)]
 mod contention_tests;
+
+#[cfg(test)]
+mod catalog_rescan_tests;
