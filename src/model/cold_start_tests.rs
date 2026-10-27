@@ -215,6 +215,7 @@ fn weaker_first_placement_gate_does_not_loosen_replacement_stability() {
     let incumbent = app("incumbent", 20.0, time);
     let config = Config {
         slots: 1,
+        advantage: 1.1,
         ..Default::default()
     };
     let state = State {
