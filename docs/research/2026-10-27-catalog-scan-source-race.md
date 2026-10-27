@@ -23,3 +23,7 @@ Issue [#27](https://github.com/TechWisard/desktop-pilot/issues/27) documents obs
 ## Validation boundaries
 
 CI is a controlled Windows Server runner and deterministic interleaving, not a physical Windows 11 desktop, multiweek human habit study, or measured task-time saving. Existing catalog, metadata, import, desktop-copy, rollback and release checks remain mandatory. Record test failures on unchanged production logic before applying the fix, then verify the entire unchanged CI suite. No release should be published unless the final merge's CI and public archive checks pass.
+
+## Intended measurable outcomes (pending independent CI)
+
+The new cases must fail against released 0.2.25 but pass against 0.2.26 while exercising the real \`refresh_apps\` and SQLite transaction. In an interleaved source import, the selected source, Always/Never, original bytes and managed-copy state must not be overwritten by stale filesystem findings. In an interrupted placement, no scan write may occur after a new prepared operation. Stable rescans must still be no-ops and metadata updates must still succeed. Runner execution evidence belongs in a separate validation record; neither elapsed seconds nor real-user time savings are inferred.
