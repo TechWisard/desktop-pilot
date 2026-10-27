@@ -1,0 +1,29 @@
+{
+  "baseline_release": "v0.2.18",
+  "main_baseline_commit": "c78b6b8cf55b4501037c96d1acc4f32418d03df4",
+  "previous_branch": "fix/cold-start-confidence-20261027",
+  "previous_head": "8a4f55623ea12e5187a48629d6b6abbdbb4d45e9",
+  "previous_ci": "https://github.com/TechWisard/desktop-pilot/actions/runs/40433840999",
+  "previous_failure": "existing real Shell shortcut one 600-second session incorrectly ineligible, both Windows runners",
+  "tested_candidate": "e824c1b4fc96aaf8c3281d0d140ba1dabd7b41da",
+  "validated_ci": "https://github.com/TechWisard/desktop-pilot/actions/runs/40436887407",
+  "validated_systems": [
+    "GitHub Windows Server 2022",
+    "GitHub Windows Server 2025"
+  ],
+  "rust_tests_passed": 219,
+  "native_checks_passed_per_runner": 28,
+  "release_guards_passed_per_runner": 9,
+  "format": true,
+  "clippy_warnings_denied": true,
+  "debug_build": true,
+  "policy": {
+    "new_candidate_min_score": 2.5,
+    "unchanged_replacement_margin": 3
+  },
+  "limitations": [
+    "No human time-saving measurement",
+    "No physical Windows 11 Explorer inspection",
+    "Version bump and final main-tag release must be revalidated"
+  ]
+}

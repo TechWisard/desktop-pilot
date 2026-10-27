@@ -17,3 +17,9 @@ The existing nine cold-start tests and two added tests run the production `rank`
 ## Required verification and continuation
 
 Before release, run unmodified full Windows 2022 and 2025 CI: cargo formatting, locked Rust tests, strict Clippy, build, native integrations and publication guards. Verify candidate, main tag, Windows executable and public archives independently. Remain to study multi-week changing projects, weekend effects, real Windows 11 GUI at 200%, cloud-disconnected profiles and quantitative real-user outcomes.
+
+## Completed candidate verification
+
+[Windows checks run 40436887407](https://github.com/TechWisard/desktop-pilot/actions/runs/40436887407) completed successfully for both Windows Server 2022 and 2025: 219 Rust unit/integration tests (zero failures), 28 native integration checks per runner, nine publication guards per runner, `cargo fmt --check`, strict `cargo clippy --locked --all-targets -- -D warnings` and `cargo build --locked`. A prior run failed strict Clippy on four new test-only clones; these were corrected without relaxing assertions or lint rules. Earlier formatting failure was corrected as well. The previously failing actual packaged-Shell shortcut regression passes under the separate initial-placement threshold.
+
+These runner checks are synthetic/isolated Windows tests, not a real user desktop session. Merging, final main CI, the version-tagged build and public assets require independent verification.
