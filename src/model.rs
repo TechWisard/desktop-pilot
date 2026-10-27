@@ -1207,3 +1207,6 @@ mod tests {
         assert!(owned.file_id.is_none());
     }
 }
+
+#[cfg(test)]
+mod cold_start_tests;
