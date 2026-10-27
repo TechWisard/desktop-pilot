@@ -1,0 +1,57 @@
+{
+  "baseline": {
+    "version": "0.2.26",
+    "commit": "19772ad147223b96da8954bc7ab27fb4bf3e0293",
+    "test_only_commit": "917463578ce74d339099f05d6d924c9e057cc7d0",
+    "run": "https://github.com/TechWisard/desktop-pilot/actions/runs/40543195730",
+    "windows": [
+      "windows-2022",
+      "windows-2025"
+    ],
+    "format": "passed",
+    "rust_passed": 243,
+    "rust_failed": 2,
+    "failed_tests": [
+      "renamed_quick_copy_during_original_outage_preserves_source_rule_and_position",
+      "renamed_and_edited_managed_file_is_not_discovered_as_another_application"
+    ],
+    "independent_alias_control": "passed",
+    "note": "Original production source was unchanged; only test files were added."
+  },
+  "corrected": {
+    "candidate_commit": "e654512dc733ac758dee1595807d14c216512d55",
+    "version": "0.2.27",
+    "run": "https://github.com/TechWisard/desktop-pilot/actions/runs/40544229621",
+    "windows": [
+      "windows-2022",
+      "windows-2025"
+    ],
+    "rust_passed": 246,
+    "rust_failed": 0,
+    "new_regressions_passed": 4,
+    "native_checks_passed": 28,
+    "publication_guards_passed": 9,
+    "format": "passed",
+    "clippy_warnings_denied": "passed",
+    "locked_build": "passed",
+    "bilingual_readme_guard": "passed"
+  },
+  "scenarios": [
+    "renamed owned quick copy plus missing original, restored original, explicit Never",
+    "renamed and edited managed quick copy never silently becomes another catalog original",
+    "independent byte-identical shortcut remains usable as a genuine alias",
+    "saved quick-copy filename replaced by unrelated file while original quick copy is renamed"
+  ],
+  "safety": [
+    "Original source file bytes preserved",
+    "Manual Always/Never and position preserved where ownership remains valid",
+    "Edited user shortcut left untouched",
+    "Unchanged scans avoid per-candidate file-ID checks unless a managed copy is displaced"
+  ],
+  "limits": [
+    "Synthetic Windows Server fixture, not a physical Windows 11 session",
+    "No user activity or human time-saving measured",
+    "Legacy profiles lacking stable file ID cannot reliably identify arbitrary renames",
+    "Final main/merge/tag/asset provenance verification is separate"
+  ]
+}

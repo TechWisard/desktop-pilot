@@ -574,6 +574,22 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
     }
     paths.sort_by_key(|p| norm(&p.to_string_lossy()));
     paths.dedup_by(|a, b| norm(&a.to_string_lossy()) == norm(&b.to_string_lossy()));
+    // A user may rename a managed quick copy before manual reconciliation.
+    // A missing or replaced saved path alone does not mean the copy became
+    // an independent original. Its filesystem identity remains authoritative.
+    // The common case (all managed files still at their saved paths) performs
+    // no identity checks on discovered shortcuts.
+    let displaced_owned_ids: HashSet<_> = state
+        .owned
+        .iter()
+        .filter_map(|owned| {
+            let expected = owned.file_id.as_ref()?;
+            match file_identity(Path::new(&owned.path)) {
+                Ok(Some(actual)) if &actual == expected => None,
+                _ => Some(expected.clone()),
+            }
+        })
+        .collect();
     let executable = norm(&std::env::current_exe()?.to_string_lossy());
     let installed = norm(&store.home.join("desktop-pilot.exe").to_string_lossy());
     for path in paths {
@@ -583,6 +599,21 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
             .any(|o| norm(&o.path) == norm(&path.to_string_lossy()))
         {
             continue;
+        }
+        if !displaced_owned_ids.is_empty() {
+            match file_identity(&path) {
+                Ok(Some(id)) if displaced_owned_ids.contains(&id) => continue,
+                Ok(_) => {}
+                Err(error) => {
+                    // Unverifiable ownership must not silently be promoted to
+                    // a new source while a managed file is displaced.
+                    warnings.push(format!(
+                        "Shortcut identity could not be checked: {}: {error:#}",
+                        path.display()
+                    ));
+                    continue;
+                }
+            }
         }
         if let Ok(mut app) = native::read_link(&path) {
             if [executable.as_str(), installed.as_str()].contains(&norm(&app.target).as_str()) {
@@ -3424,3 +3455,6 @@ mod manual_mode_tests;
 
 #[cfg(test)]
 mod catalog_race_tests;
+
+#[cfg(test)]
+mod renamed_copy_scan_tests;
