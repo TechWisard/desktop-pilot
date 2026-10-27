@@ -147,7 +147,10 @@ fn replacing_a_saved_copy_path_does_not_make_its_renamed_file_an_original() {
         std::fs::rename(&owned.path, &renamed).unwrap();
         let unrelated = b"[InternetShortcut]\r\nURL=https://example.invalid/Unrelated\r\n";
         std::fs::write(&owned.path, unrelated).unwrap();
-        assert_ne!(file_identity(Path::new(&owned.path)).unwrap(), owned.file_id);
+        assert_ne!(
+            file_identity(Path::new(&owned.path)).unwrap(),
+            owned.file_id
+        );
         let offline = store.home.join("Original.offline");
         std::fs::rename(&app.source, &offline).unwrap();
 
@@ -166,4 +169,3 @@ fn replacing_a_saved_copy_path_does_not_make_its_renamed_file_an_original() {
         assert!(renamed.exists());
     });
 }
-
