@@ -14,7 +14,9 @@ fn with_profile(test: impl FnOnce(&Store)) {
     let desktop = home.join("Desktop");
     std::fs::create_dir_all(&desktop).unwrap();
     let store = Store::open(&home).unwrap();
-    store.set("test_desktop", &desktop.to_string_lossy()).unwrap();
+    store
+        .set("test_desktop", &desktop.to_string_lossy())
+        .unwrap();
     store
         .set(
             "config",
@@ -151,20 +153,25 @@ fn a_transaction_started_during_scan_blocks_stale_catalog_changes() {
         });
         let before = store.app(&app.id).unwrap();
         let changed = refresh_apps(store);
-        assert!(changed.is_err(), "A newly prepared placement must block the commit");
+        assert!(
+            changed.is_err(),
+            "A newly prepared placement must block the commit"
+        );
         assert_eq!(
             serde_json::to_value(store.app(&app.id).unwrap()).unwrap(),
             serde_json::to_value(before).unwrap()
         );
-        assert!(store
-            .db
-            .query_row(
-                "SELECT COUNT(*) FROM transactions WHERE status='prepared'",
-                [],
-                |row| row.get::<_, i64>(0)
-            )
-            .unwrap()
-            > 0);
+        assert!(
+            store
+                .db
+                .query_row(
+                    "SELECT COUNT(*) FROM transactions WHERE status='prepared'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap()
+                > 0
+        );
         assert!(Path::new(&app.source).exists());
     });
 }
