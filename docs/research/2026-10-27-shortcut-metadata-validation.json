@@ -1,0 +1,40 @@
+{
+  "baseline_commit": "a2be9635d1e6c7abe0d369f8f0c27b53c3df8e9f",
+  "prior_investigation_branch": "fix/shortcut-metadata-refresh-20261027",
+  "baseline_failure_first": {
+    "run": "https://github.com/TechWisard/desktop-pilot/actions/runs/40450707805",
+    "rust_passed": 219,
+    "rust_failed": 2,
+    "failures": [
+      "changing_existing_internet_shortcut_icon_refreshes_catalog_but_not_manual_choices",
+      "changing_existing_windows_link_icon_refreshes_metadata_without_moving_its_copy"
+    ],
+    "cause": "Validated source retained outdated icon path and index when launch identity stayed unchanged"
+  },
+  "verified_candidate": "c215e265b1f2cc55388665f16328de6878ff23f6",
+  "corrected_ci": "https://github.com/TechWisard/desktop-pilot/actions/runs/40451139638",
+  "systems": [
+    "GitHub Windows Server 2022",
+    "GitHub Windows Server 2025"
+  ],
+  "rust_tests_passed_per_runner": 223,
+  "native_checks_passed_per_runner": 28,
+  "release_guards_passed_per_runner": 9,
+  "formatting": "passed",
+  "strict_clippy": "passed",
+  "debug_build": "passed",
+  "behaviors": {
+    "stale_icon_after_same_identity_rescan": "fixed",
+    "original_missing_then_restored_icon": "tested",
+    "changed_launch_target_never_inherits_previous_rule": "tested",
+    "unexpected_placement_changes": 0,
+    "original_shortcut_bytes_rewritten": 0,
+    "undo_preserves_original": true
+  },
+  "limitations": [
+    "No physical Windows 11 Explorer test",
+    "No real user task timing",
+    "No automatic rewrite of owned icon bytes",
+    "Main CI/public release not yet proven by this branch run"
+  ]
+}

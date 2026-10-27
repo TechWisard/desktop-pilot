@@ -396,6 +396,12 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
                 app.unavailable_since = 0;
             }
             Ok(actual) if actual.valid => {
+                // Launch identity is unchanged. Refresh only the non-identity
+                // metadata read from the original file. Never rewrite the
+                // independently managed desktop copy or its user's position.
+                app.name = actual.name;
+                app.icon = actual.icon;
+                app.icon_index = actual.icon_index;
                 app.valid = true;
                 app.unavailable_since = 0;
             }
@@ -3332,6 +3338,9 @@ mod session_retention_tests;
 
 #[cfg(test)]
 mod heartbeat_tests;
+
+#[cfg(test)]
+mod source_metadata_tests;
 
 mod import_guard;
 pub(crate) use import_guard::imported_quick_copy;
