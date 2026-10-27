@@ -1,0 +1,31 @@
+{
+  "baseline_version": "0.2.24",
+  "baseline_commit": "ee9d41e0844cccf535e40424c3457f89c3959ae4",
+  "baseline_test_commit": "3c73b5d1afcebe45a03937cb6eb5bb0a4183502a",
+  "baseline_ci": "https://github.com/TechWisard/desktop-pilot/actions/runs/40486243265",
+  "baseline_rust_passed": 238,
+  "baseline_rust_failed": 1,
+  "baseline_failure": "Store::open returned SQLITE_BUSY (database is locked) when the verified WAL profile was reopened with another connection's BEGIN IMMEDIATE held",
+  "baseline_format_check": "passed",
+  "baseline_hosted_windows": [
+    "2022",
+    "2025"
+  ],
+  "corrected_candidate_commit": "b78d9139c0901dd616aaf17552596bffa8dab42d",
+  "corrected_branch_ci": "https://github.com/TechWisard/desktop-pilot/actions/runs/40486489502",
+  "corrected_rust_passed": 239,
+  "corrected_rust_failed": 0,
+  "native_checks_per_runner": 28,
+  "publication_guards_per_runner": 9,
+  "format_clippy_build": "passed on both Windows CI runners",
+  "boundaries": [
+    "Real production Store::open, SQLite WAL and a held uncommitted writer; not a modeled DB",
+    "Reopening sees committed config but not uncommitted event",
+    "Existing foreign-profile, interrupted first initialization, parallel first-open and atomicity checks remain enabled"
+  ],
+  "limitations": [
+    "No physical Windows 11 Explorer interaction",
+    "No measured real-user cold-start duration or task-time savings",
+    "Release tag/download verification to be performed after final main CI"
+  ]
+}
