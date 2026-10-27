@@ -82,7 +82,7 @@ fn healthy_protocol_shortcut_remains_launchable_by_the_guard_without_network_acc
     let _com = native::Com::new().unwrap();
     with_profile(|store, home| {
         let source = home.join("Documentation.url");
-        std::fs::write(&source, b"[InternetShortcut]\\r\\nURL=https://example.invalid/guide\\r\\n").unwrap();
+        std::fs::write(&source, b"[InternetShortcut]\r\nURL=https://example.invalid/guide\r\n").unwrap();
         let app = native::read_link(&source).unwrap();
         assert!(app.valid);
         store.put_app(&app).unwrap();
