@@ -72,10 +72,7 @@ fn renamed_quick_copy_during_original_outage_preserves_source_rule_and_position(
         reconcile_manual(store).unwrap();
         let next: State = store.get("state").unwrap();
         assert_eq!(next.owned.len(), 1);
-        assert_eq!(
-            norm(&next.owned[0].path),
-            norm(&renamed.to_string_lossy())
-        );
+        assert_eq!(norm(&next.owned[0].path), norm(&renamed.to_string_lossy()));
         assert_eq!(next.owned[0].file_id, owned.file_id);
         assert_eq!(next.owned[0].position, owned.position);
         assert!(next.owned[0].manual);
@@ -135,6 +132,9 @@ fn independent_byte_identical_alias_remains_valid_after_original_outage() {
         assert_eq!(current.policy, Policy::Always);
         assert!(current.valid);
         assert_eq!(store.apps().unwrap().len(), 1);
-        assert_eq!(std::fs::read(&owned.path).unwrap(), std::fs::read(&offline).unwrap());
+        assert_eq!(
+            std::fs::read(&owned.path).unwrap(),
+            std::fs::read(&offline).unwrap()
+        );
     });
 }
