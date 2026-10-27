@@ -652,10 +652,10 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
             if let Ok(latest) = store.app(&app.id) {
                 // A policy changed while the filesystem scan was running belongs to
                 // the user; refresh only filesystem-derived fields.
-                app.policy = latest.policy;
+                app.policy = latest.policy.clone();
                 app.seed = latest.seed;
                 app.seed_at = latest.seed_at;
-                app.note = latest.note;
+                app.note = latest.note.clone();
                 // Do not rewrite unchanged catalog rows during routine rescans.
                 if app == latest {
                     continue;
