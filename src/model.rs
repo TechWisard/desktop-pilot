@@ -267,6 +267,11 @@ pub struct Ranked {
     pub reason: String,
 }
 
+// New automatic shortcuts need meaningful evidence. Match the three-point
+// absolute margin already required to replace an existing shortcut. Manual
+// choices remain immediate; this does not evict existing managed copies.
+const MIN_AUTOMATIC_SCORE: f64 = 3.0;
+
 pub fn rank(apps: &[App], days: &[Day], cfg: &Config, time: i64) -> Vec<Ranked> {
     // Group retained rows once. Scanning every day's history for every shortcut
     // made a large catalog quadratic and blocked regular Settings refreshes.
@@ -314,6 +319,8 @@ pub fn rank(apps: &[App], days: &[Day], cfg: &Config, time: i64) -> Vec<Ranked> 
             (false, "Уже закреплено на панели задач")
         } else if !enough {
             (false, "Пока мало независимых дней наблюдений")
+        } else if score < MIN_AUTOMATIC_SCORE {
+            (false, "Пока мало активности для нового быстрого ярлыка")
         } else {
             (true, "Повторяемое использование; есть польза прямого входа")
         };
@@ -448,7 +455,7 @@ pub fn select(
             .map(|(i, id)| (i, score(id)));
         if let Some((i, value)) = worst
             && candidate.score >= value * cfg.advantage
-            && candidate.score - value >= 3.0
+            && candidate.score - value >= MIN_AUTOMATIC_SCORE
         {
             result[i] = candidate.id.clone();
             replacements += 1;
