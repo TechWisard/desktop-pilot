@@ -3424,3 +3424,6 @@ mod manual_mode_tests;
 
 #[cfg(test)]
 mod catalog_race_tests;
+
+#[cfg(test)]
+mod renamed_copy_scan_tests;
