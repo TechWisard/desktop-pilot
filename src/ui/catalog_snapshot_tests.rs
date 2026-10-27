@@ -94,10 +94,7 @@ fn reopening_large_saved_catalog_keeps_immediate_search_and_one_catalog_read() {
             assert!(preview.added.contains(&rare.id));
             assert!(preview.removed.is_empty());
             assert!(settings.state.owned.is_empty());
-            assert!(settings
-                .apps
-                .iter()
-                .any(|app| app.policy == Policy::Never));
+            assert!(settings.apps.iter().any(|app| app.policy == Policy::Never));
 
             // Real Settings catalog query and profile differentiation while
             // the synthetic optional drive is still unavailable.
@@ -134,7 +131,10 @@ fn reopening_large_saved_catalog_keeps_immediate_search_and_one_catalog_read() {
                 assert_eq!(reads.get(), 1, "Refresh must reuse its catalog snapshot")
             });
             assert_eq!(settings.apps.len(), size + 1);
-            assert_eq!(settings.preview.as_ref().unwrap().selected, reference.selected);
+            assert_eq!(
+                settings.preview.as_ref().unwrap().selected,
+                reference.selected
+            );
         });
     }
 }
