@@ -186,7 +186,7 @@ fn recovering_original_icon_after_a_temporary_outage_keeps_managed_position() {
 #[test]
 fn changing_launch_target_does_not_silently_inherit_originals_manual_rule() {
     with_profile(|store| {
-        let source = store.home.join("Separate.url");
+        let source = store.home.join("Desktop").join("Separate.url");
         std::fs::write(
             &source,
             b"[InternetShortcut]\r\nURL=https://example.invalid/Original\r\nIconFile=C:\\Icons\\old.ico\r\nIconIndex=1\r\n",
@@ -201,7 +201,14 @@ fn changing_launch_target_does_not_silently_inherit_originals_manual_rule() {
             b"[InternetShortcut]\r\nURL=https://example.invalid/Different\r\nIconFile=C:\\Icons\\other.ico\r\nIconIndex=7\r\n",
         )
         .unwrap();
+        let updated = native::read_link(&source).unwrap();
+        assert_ne!(updated.id, app.id);
         refresh_apps(store).unwrap();
+        let discovered = store.app(&updated.id).unwrap();
+        assert!(discovered.valid);
+        assert_eq!(discovered.policy, Policy::Auto);
+        assert!(discovered.note.is_empty());
+        assert_eq!(discovered.seed, 0.0);
         let original = store.app(&app.id).unwrap();
         assert!(!original.valid);
         assert_eq!(original.icon, r"C:\Icons\old.ico");
@@ -209,6 +216,6 @@ fn changing_launch_target_does_not_silently_inherit_originals_manual_rule() {
         assert_eq!(original.policy, Policy::Always);
         assert_eq!(original.note, app.note);
         assert_eq!(original.target, app.target);
-        assert_eq!(store.apps().unwrap().len(), 1);
+        assert_eq!(store.apps().unwrap().len(), 2);
     });
 }
