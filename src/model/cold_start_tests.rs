@@ -49,7 +49,7 @@ fn a_weak_legacy_seed_alone_does_not_fill_a_new_slot() {
     let time = 100 * 86400 + 12 * 3600;
     let candidate = app("old-signal", 1.0, time);
     let cfg = Config::default();
-    let ranking = rank(&[candidate.clone()], &[], &cfg, time);
+    let ranking = rank(std::slice::from_ref(&candidate), &[], &cfg, time);
     assert!(!ranking[0].eligible);
     assert!(select(&[candidate], &ranking, &State::default(), &cfg, true).is_empty());
 }
@@ -152,7 +152,7 @@ fn actual_store_preview_apply_and_undo_wait_for_repeated_demand() {
 
         store.observe(&app.id, 180, true, false).unwrap();
         let meaningful = engine::preview(store, true).unwrap();
-        assert_eq!(meaningful.added, [app.id.clone()]);
+        assert_eq!(meaningful.added.as_slice(), std::slice::from_ref(&app.id));
         engine::apply(store, true).unwrap();
         let before = store.get::<State>("state").unwrap();
         assert_eq!(before.owned.len(), 1);
@@ -180,7 +180,7 @@ fn an_explicit_manual_choice_bypasses_the_cold_start_gate() {
     with_profile(|store, app, _desktop| {
         store.policy(&app.id, Policy::Always).unwrap();
         let choice = engine::preview(store, true).unwrap();
-        assert_eq!(choice.added, [app.id.clone()]);
+        assert_eq!(choice.added.as_slice(), std::slice::from_ref(&app.id));
         engine::apply(store, true).unwrap();
         assert_eq!(store.get::<State>("state").unwrap().owned.len(), 1);
         engine::command(store, "rollback").unwrap();
@@ -194,7 +194,7 @@ fn recent_five_minute_work_qualifies_but_an_isolated_stale_visit_fades() {
     let candidate = app("focused", 0.0, time);
     let config = Config::default();
     let recent = rank(
-        &[candidate.clone()],
+        std::slice::from_ref(&candidate),
         &[day("focused", time - 86400, 1, 300)],
         &config,
         time,
