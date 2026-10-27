@@ -32,7 +32,16 @@ fn one_short_first_visit_is_not_a_confident_automatic_recommendation() {
     let ranking = rank(&[candidate], &evidence, &cfg, time);
     assert!(ranking[0].score > 0.0);
     assert!(!ranking[0].eligible);
-    assert!(select(&[app("incidental", 0.0, time)], &ranking, &State::default(), &cfg, true).is_empty());
+    assert!(
+        select(
+            &[app("incidental", 0.0, time)],
+            &ranking,
+            &State::default(),
+            &cfg,
+            true
+        )
+        .is_empty()
+    );
 }
 
 #[test]
@@ -79,10 +88,7 @@ fn manual_rare_app_and_explicit_limits_take_precedence() {
         select(&apps, &ranking, &State::default(), &cfg, true),
         ["rare"]
     );
-    let cfg = Config {
-        min_days: 3,
-        ..cfg
-    };
+    let cfg = Config { min_days: 3, ..cfg };
     let regular = app("regular", 0.0, time);
     let evidence = [day("regular", time - 12 * 3600, 12, 3600)];
     assert!(!rank(&[regular], &evidence, &cfg, time)[0].eligible);
@@ -101,22 +107,27 @@ fn with_profile(test: impl FnOnce(&Store, &App, &std::path::Path)) {
     let desktop = root.join("Desktop");
     std::fs::create_dir_all(&desktop).unwrap();
     let store = Store::open(&root).unwrap();
-    store.set("test_desktop", &desktop.to_string_lossy()).unwrap();
+    store
+        .set("test_desktop", &desktop.to_string_lossy())
+        .unwrap();
     store.set("setup_complete", &true).unwrap();
-    store.set(
-        "config",
-        &Config {
-            slots: 2,
-            min_days: 1,
-            learning_enabled: false,
-            ..Default::default()
-        },
-    ).unwrap();
+    store
+        .set(
+            "config",
+            &Config {
+                slots: 2,
+                min_days: 1,
+                learning_enabled: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
     let original = root.join("Original.url");
     std::fs::write(
         &original,
         b"[InternetShortcut]\r\nURL=https://example.invalid/Catalog\r\n",
-    ).unwrap();
+    )
+    .unwrap();
     let app = crate::native::read_link(&original).unwrap();
     store.put_app(&app).unwrap();
     test(&store, &app, &desktop);
@@ -130,7 +141,10 @@ fn actual_store_preview_apply_and_undo_wait_for_repeated_demand() {
         let original = std::fs::read(&app.source).unwrap();
         store.observe(&app.id, 12, true, false).unwrap();
         let early = engine::preview(store, true).unwrap();
-        assert!(early.selected.is_empty(), "one incidental visit must not occupy a desktop slot");
+        assert!(
+            early.selected.is_empty(),
+            "one incidental visit must not occupy a desktop slot"
+        );
         engine::apply(store, true).unwrap();
         assert!(store.get::<State>("state").unwrap().owned.is_empty());
         assert!(!store.get::<State>("state").unwrap().initialized);
