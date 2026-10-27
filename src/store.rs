@@ -644,3 +644,6 @@ mod contention_tests;
 
 #[cfg(test)]
 mod catalog_rescan_tests;
+
+#[cfg(test)]
+mod open_writer_tests;
