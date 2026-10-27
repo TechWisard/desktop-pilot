@@ -64,6 +64,10 @@ fn checked_launch_source(store: &Store, id: &str) -> Result<App> {
         actual.identity() == app.identity(),
         "Исходный ярлык изменён. Обновите список в настройках перед запуском."
     );
+    ensure!(
+        actual.valid,
+        "Цель ярлыка или рабочая папка недоступны. Восстановите приложение или подключите диск."
+    );
     Ok(actual)
 }
 fn run(error_profile: &mut Option<PathBuf>) -> Result<()> {
@@ -240,15 +244,10 @@ fn run(error_profile: &mut Option<PathBuf>) -> Result<()> {
         }
         "--validate-launch" => {
             let id = args.get(1).context("Нет id")?;
-            let a = s.app(id)?;
-            let actual = native::read_link(Path::new(&a.source))?;
-            ensure!(
-                actual.valid && actual.identity() == a.identity(),
-                "Цель запуска изменилась"
-            );
+            let actual = checked_launch_source(&s, id)?;
             emit(
                 &args,
-                &serde_json::json!({"original":a.source,"target":actual.target,"arguments":actual.arguments,"cwd":actual.cwd,"valid":true,"launched":false}),
+                &serde_json::json!({"original":actual.source,"target":actual.target,"arguments":actual.arguments,"cwd":actual.cwd,"valid":true,"launched":false}),
             )
         }
         "--background" => {

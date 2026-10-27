@@ -26,6 +26,10 @@ fn translate(value: &str, russian: bool) -> String {
     };
     let translations = [
         (
+            "Цель ярлыка или рабочая папка недоступны. Восстановите приложение или подключите диск.",
+            "The shortcut target or working folder is unavailable. Restore the app or reconnect the drive.",
+        ),
+        (
             "Этот быстрый ярлык был изменён. Добавьте его исходный ярлык вместо быстрой копии.",
             "This quick shortcut was changed. Add its original shortcut instead.",
         ),
@@ -936,6 +940,9 @@ mod offline_tests;
 
 #[cfg(test)]
 mod import_ownership_tests;
+
+#[cfg(test)]
+mod launch_validity_tests;
 
 #[cfg(test)]
 mod cold_start_tests {
