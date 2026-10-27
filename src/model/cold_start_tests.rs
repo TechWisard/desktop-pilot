@@ -232,7 +232,10 @@ fn weaker_first_placement_gate_does_not_loosen_replacement_stability() {
     };
     let near = [incumbent.clone(), app("challenger", 22.8, time)];
     let near_rank = rank(&near, &[], &config, time);
-    assert_eq!(select(&near, &near_rank, &state, &config, false), ["incumbent"]);
+    assert_eq!(
+        select(&near, &near_rank, &state, &config, false),
+        ["incumbent"]
+    );
     let strong = [incumbent, app("challenger", 23.5, time)];
     let strong_rank = rank(&strong, &[], &config, time);
     assert_eq!(
