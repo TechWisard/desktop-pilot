@@ -132,7 +132,6 @@ fn changing_existing_windows_link_icon_refreshes_metadata_without_moving_its_cop
     });
 }
 
-
 #[test]
 fn recovering_original_icon_after_a_temporary_outage_keeps_managed_position() {
     with_profile(|store| {
@@ -155,7 +154,10 @@ fn recovering_original_icon_after_a_temporary_outage_keeps_managed_position() {
         let unavailable = store.app(&app.id).unwrap();
         assert!(!unavailable.valid);
         assert_eq!(unavailable.icon, r"C:\Icons\before.ico");
-        assert_eq!(store.get::<State>("state").unwrap().owned[0].path, quick.path);
+        assert_eq!(
+            store.get::<State>("state").unwrap().owned[0].path,
+            quick.path
+        );
 
         std::fs::rename(&parked, &source).unwrap();
         std::fs::write(
