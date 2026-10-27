@@ -3333,5 +3333,8 @@ mod session_retention_tests;
 #[cfg(test)]
 mod heartbeat_tests;
 
+#[cfg(test)]
+mod source_metadata_tests;
+
 mod import_guard;
 pub(crate) use import_guard::imported_quick_copy;
