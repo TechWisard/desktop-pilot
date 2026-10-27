@@ -375,8 +375,11 @@ fn health(
     if heartbeat <= 0 {
         return Health::Starting;
     }
-    // Maintenance reports every minute. Allow two missed reports before warning.
-    if at.saturating_sub(heartbeat) > 150 {
+    // The worker normally publishes every 15 seconds. A stale heartbeat
+    // is unverified in either direction: after a backward Windows clock
+    // correction, a frozen worker may leave a checkpoint far in the future.
+    // Keep the existing 150-second tolerance for ordinary clock drift.
+    if heartbeat.abs_diff(at) > 150 {
         return Health::Unresponsive;
     }
     if status.starts_with("Изменения приостановлены")
@@ -2088,10 +2091,17 @@ impl Settings {
                     }
                 }
                 Health::Unresponsive => {
-                    ui.label(t(
-                        "Программа ещё запущена, но давно не обновляла состояние. Текущая операция может занимать больше времени.",
-                        "The process is still running, but has not reported recently. The current operation may be taking longer."
-                    ));
+                    if self.heartbeat.saturating_sub(now()) > 150 {
+                        ui.label(t(
+                            "Время последнего ответа позже текущего времени Windows. Часы могли быть переведены назад. Пока не придёт новый ответ, работа фонового процесса не подтверждена.",
+                            "The last response is later than the current Windows time. The clock may have moved back. Background activity cannot be confirmed until a fresh response arrives."
+                        ));
+                    } else {
+                        ui.label(t(
+                            "Программа ещё запущена, но давно не обновляла состояние. Текущая операция может занимать больше времени.",
+                            "The process is still running, but has not reported recently. The current operation may be taking longer."
+                        ));
+                    }
                     ui.small(format!(
                         "{}: {}",
                         t("Последний ответ", "Last response"),
