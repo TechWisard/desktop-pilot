@@ -22,12 +22,8 @@ fn a_verified_profile_opens_while_another_connection_holds_the_writer() {
 
     // This is the real Store::open path, not a mock of the database. The held
     // writer is intentionally not released until after the second open.
-    let opened = Store::open(&home);
-    assert!(
-        opened.is_ok(),
-        "A verified existing profile must open for reading during a WAL writer: {opened:?}",
-    );
-    let opened = opened.unwrap();
+    let opened = Store::open(&home)
+        .expect("An existing WAL profile must reopen while another writer is active");
     assert_eq!(opened.get::<Config>("config").unwrap(), Config::default());
     let visible: i64 = opened.db.query_row(
         "SELECT COUNT(*) FROM events",
