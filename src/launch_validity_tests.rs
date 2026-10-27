@@ -44,11 +44,17 @@ fn removed_launch_target_is_rejected_then_recovers_without_losing_history() {
             checked_launch_source(store, &app.id).is_err(),
             "The actual legacy launch guard must reject an unavailable target before ShellExecute"
         );
-        assert_eq!(serde_json::to_value(store.days().unwrap()).unwrap(), days_before);
+        assert_eq!(
+            serde_json::to_value(store.days().unwrap()).unwrap(),
+            days_before
+        );
         assert_eq!(store.app(&app.id).unwrap().policy, app.policy);
         std::fs::write(&executable, b"inert fixture: never executed").unwrap();
         assert!(checked_launch_source(store, &app.id).unwrap().valid);
-        assert_eq!(serde_json::to_value(store.days().unwrap()).unwrap(), days_before);
+        assert_eq!(
+            serde_json::to_value(store.days().unwrap()).unwrap(),
+            days_before
+        );
     });
 }
 
@@ -82,7 +88,11 @@ fn healthy_protocol_shortcut_remains_launchable_by_the_guard_without_network_acc
     let _com = native::Com::new().unwrap();
     with_profile(|store, home| {
         let source = home.join("Documentation.url");
-        std::fs::write(&source, b"[InternetShortcut]\r\nURL=https://example.invalid/guide\r\n").unwrap();
+        std::fs::write(
+            &source,
+            b"[InternetShortcut]\r\nURL=https://example.invalid/guide\r\n",
+        )
+        .unwrap();
         let app = native::read_link(&source).unwrap();
         assert!(app.valid);
         store.put_app(&app).unwrap();

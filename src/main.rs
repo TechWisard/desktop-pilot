@@ -3,9 +3,9 @@ mod activity;
 mod cli;
 mod engine;
 mod i18n;
-mod learning;
 #[cfg(test)]
 mod launch_validity_tests;
+mod learning;
 mod model;
 mod native;
 mod profile;
