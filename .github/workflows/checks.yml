@@ -21,6 +21,8 @@ jobs:
         with:
           toolchain: '1.93.1'
           components: rustfmt, clippy
+      - name: README installation instructions
+        run: python scripts/test-readmes.py
       - name: Release publication guards
         shell: pwsh
         run: ./scripts/test-release-workflow.ps1

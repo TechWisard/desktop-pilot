@@ -378,6 +378,12 @@ pub(crate) fn preview_loaded(
     })
 }
 
+#[cfg(test)]
+thread_local! {
+    static BEFORE_REFRESH_COMMIT: std::cell::RefCell<Option<Box<dyn FnOnce(&Store)>>> =
+        std::cell::RefCell::new(None);
+}
+
 pub fn refresh_apps(store: &Store) -> Result<()> {
     ensure_no_unfinished(store)?;
     let real = real_desktop(store)?;
@@ -643,6 +649,12 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
             }
         }
     }
+    #[cfg(test)]
+    BEFORE_REFRESH_COMMIT.with(|callback| {
+        if let Some(callback) = callback.borrow_mut().take() {
+            callback(store);
+        }
+    });
     store.transaction(|| {
         let pins_verified = !real || !config.respect_taskbar_pins || pins.is_some();
         if store.get::<bool>("pins_verified")? != pins_verified {
@@ -3387,3 +3399,6 @@ pub(crate) use import_guard::imported_quick_copy;
 
 #[cfg(test)]
 mod manual_mode_tests;
+
+#[cfg(test)]
+mod catalog_race_tests;
