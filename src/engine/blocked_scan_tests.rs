@@ -1,5 +1,8 @@
 use super::*;
-use std::sync::{atomic::{AtomicU64, Ordering}, mpsc};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    mpsc,
+};
 
 /// A scanner stuck on slow I/O must not monopolize foreground-use collection,
 /// manual commands or shutdown. The test holds the actual production refresh
@@ -21,16 +24,28 @@ fn slow_catalog_read_cannot_delay_manual_policy_heartbeat_or_shutdown() {
     std::fs::write(
         &source,
         b"[InternetShortcut]\r\nURL=https://example.invalid/Original\r\n",
-    ).unwrap();
+    )
+    .unwrap();
     let _com = native::Com::new().unwrap();
     let app = native::read_link(&source).unwrap();
     let store = Store::open(&home).unwrap();
-    store.set("test_desktop", &desktop.to_string_lossy()).unwrap();
+    store
+        .set("test_desktop", &desktop.to_string_lossy())
+        .unwrap();
     store.set("setup_complete", &true).unwrap();
-    store.set("config", &Config {
-        slots: 2, learning_enabled: false, automatic: false,
-        collect: false, autostart: false, ..Default::default()
-    }).unwrap();
+    store
+        .set(
+            "config",
+            &Config {
+                slots: 2,
+                learning_enabled: false,
+                automatic: false,
+                collect: false,
+                autostart: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
     store.put_app(&app).unwrap();
 
     let (entered_tx, entered_rx) = mpsc::channel();
@@ -40,8 +55,10 @@ fn slow_catalog_read_cannot_delay_manual_policy_heartbeat_or_shutdown() {
         let mut gate = TEST_SCAN_GATE.lock().unwrap();
         assert!(gate.is_none());
         *gate = Some(TestScanGate {
-            home: home.clone(), entered: entered_tx,
-            release: release_rx, completed: completed_tx,
+            home: home.clone(),
+            entered: entered_tx,
+            release: release_rx,
+            completed: completed_tx,
         });
     }
     let (worker_tx, worker_rx) = mpsc::channel();
@@ -49,20 +66,28 @@ fn slow_catalog_read_cannot_delay_manual_policy_heartbeat_or_shutdown() {
     let worker = std::thread::spawn(move || {
         let _ = worker_tx.send(monitor(worker_home));
     });
-    entered_rx.recv_timeout(Duration::from_secs(15))
+    entered_rx
+        .recv_timeout(Duration::from_secs(15))
         .expect("Worker must reach its real catalog scan");
 
     let first_heartbeat: i64 = store.get("heartbeat").unwrap();
-    assert!(first_heartbeat > 0, "Worker must publish readiness before scanning");
+    assert!(
+        first_heartbeat > 0,
+        "Worker must publish readiness before scanning"
+    );
     store.command(&format!("policy:{}:Never", app.id)).unwrap();
     let command_id = store.db.last_insert_rowid();
     let started = Instant::now();
     let mut policy_done_in_time = false;
     while started.elapsed() < Duration::from_secs(7) {
-        let status: String = store.db.query_row(
-            "SELECT status FROM commands WHERE id=?1",
-            [command_id], |row| row.get(0)
-        ).unwrap();
+        let status: String = store
+            .db
+            .query_row(
+                "SELECT status FROM commands WHERE id=?1",
+                [command_id],
+                |row| row.get(0),
+            )
+            .unwrap();
         if status == "done" {
             policy_done_in_time = true;
             break;
@@ -83,10 +108,12 @@ fn slow_catalog_read_cannot_delay_manual_policy_heartbeat_or_shutdown() {
     store.set("shutdown", &true).unwrap();
     let stopped_while_scan_waited = worker_rx.recv_timeout(Duration::from_secs(5)).is_ok();
     let _ = release_tx.send(());
-    completed_rx.recv_timeout(Duration::from_secs(10))
+    completed_rx
+        .recv_timeout(Duration::from_secs(10))
         .expect("The blocked scan must eventually finish");
     if !stopped_while_scan_waited {
-        worker_rx.recv_timeout(Duration::from_secs(8))
+        worker_rx
+            .recv_timeout(Duration::from_secs(8))
             .expect("Worker must exit after the scan resumes");
     }
     worker.join().unwrap();
@@ -98,10 +125,28 @@ fn slow_catalog_read_cannot_delay_manual_policy_heartbeat_or_shutdown() {
     drop(store);
     std::fs::remove_dir_all(&home).unwrap();
 
-    assert!(policy_done_in_time, "A slow catalog scan blocked the user's policy command");
-    assert!(heartbeat_advanced, "A slow catalog scan stopped normal heartbeat updates");
-    assert!(stopped_while_scan_waited, "Shutdown waited for an unrelated slow catalog scan");
-    assert!(rule_kept, "Explicit Never rule must survive a concurrent scan");
-    assert!(original_kept, "An abandoned old scan must not commit stale catalog changes");
-    assert!(original_bytes_kept, "Desktop Pilot must not edit an original shortcut");
+    assert!(
+        policy_done_in_time,
+        "A slow catalog scan blocked the user's policy command"
+    );
+    assert!(
+        heartbeat_advanced,
+        "A slow catalog scan stopped normal heartbeat updates"
+    );
+    assert!(
+        stopped_while_scan_waited,
+        "Shutdown waited for an unrelated slow catalog scan"
+    );
+    assert!(
+        rule_kept,
+        "Explicit Never rule must survive a concurrent scan"
+    );
+    assert!(
+        original_kept,
+        "An abandoned old scan must not commit stale catalog changes"
+    );
+    assert!(
+        original_bytes_kept,
+        "Desktop Pilot must not edit an original shortcut"
+    );
 }
