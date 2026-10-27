@@ -407,6 +407,14 @@ impl Drop for TestScanCompletion {
 }
 
 pub fn refresh_apps(store: &Store) -> Result<()> {
+    refresh_apps_guarded(store, || false)
+}
+
+/// A background scan may outlive its originating monitor after shutdown.
+/// Check cancellation on the *actual* Store/catalog path, including before
+/// committing, so late filesystem results cannot overwrite a newer session.
+fn refresh_apps_guarded(store: &Store, cancelled: impl Fn() -> bool) -> Result<()> {
+    ensure!(!cancelled(), "Background catalog scan cancelled");
     ensure_no_unfinished(store)?;
     let real = real_desktop(store)?;
     let config: Config = store.get("config")?;
@@ -456,6 +464,7 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
         None
     };
     for app in &mut known {
+        ensure!(!cancelled(), "Background catalog scan cancelled");
         match native::read_link(Path::new(&app.source)) {
             Ok(actual) if actual.identity() != app.identity() => {
                 // A different launch identity is an actual change, not a temporary
@@ -629,6 +638,7 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
     let executable = norm(&std::env::current_exe()?.to_string_lossy());
     let installed = norm(&store.home.join("desktop-pilot.exe").to_string_lossy());
     for path in paths {
+        ensure!(!cancelled(), "Background catalog scan cancelled");
         if state
             .owned
             .iter()
@@ -733,6 +743,7 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
         }
     });
     store.transaction(|| {
+        ensure!(!cancelled(), "Background catalog scan cancelled");
         // A placement may have entered its prepared state while scanning.
         // Recheck under the writer before changing any catalog row.
         ensure_no_unfinished(store)?;
@@ -741,6 +752,7 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
             store.set("pins_verified", &pins_verified)?;
         }
         for mut app in known {
+            ensure!(!cancelled(), "Background catalog scan cancelled");
             if let Ok(latest) = store.app(&app.id) {
                 // A newer import wins over a stale scanner snapshot. This also
                 // protects an app first discovered during the scan: if it was
@@ -764,6 +776,7 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
             }
             store.put_app(&app)?;
         }
+        ensure!(!cancelled(), "Background catalog scan cancelled");
         let warning = warnings.join("\n");
         if store.get::<String>("catalog_warning")? != warning {
             store.set("catalog_warning", &warning)?;
@@ -1908,6 +1921,7 @@ pub fn monitor(home: PathBuf) -> Result<()> {
     let mut last_heartbeat = None;
     let mut maintenance: Option<Instant> = None;
     let mut scanned: Option<Instant> = None;
+    let mut scan: Option<scan_worker::ScanWorker> = None;
     let mut last_autostart = None;
     let mut autostart_retry: Option<Instant> = None;
     let mut previous_collect = None;
@@ -1917,9 +1931,58 @@ pub fn monitor(home: PathBuf) -> Result<()> {
         if store.get::<bool>("shutdown")? {
             return Ok(());
         }
+        // Filesystem enumeration runs separately from the polling/command loop.
+        // The UI can still change rules or stop monitoring while one source hangs.
+        if let Some(worker) = &mut scan {
+            let finished = match worker.receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    Some(Err(anyhow::anyhow!("Background shortcut scanner stopped unexpectedly")))
+                }
+            };
+            if let Some(result) = finished {
+                let requested = std::mem::take(&mut worker.requests);
+                scan = None;
+                let completed: Result<String> =
+                    result.map(|_| "Список ярлыков и закрепления обновлены".into());
+                for id in requested {
+                    store.finish(id, &completed)?;
+                }
+                match completed {
+                    Ok(_) => {
+                        apps = store.apps()?;
+                        scanned = Some(Instant::now());
+                        housekeeping_sessions(&store, &mut session_times)?;
+                        // Apply manual reconciliation and automatic review only
+                        // after the complete verified scan has been committed.
+                        maintenance = None;
+                    }
+                    Err(error) => {
+                        store.set(
+                            "status",
+                            &format!("Изменения приостановлены: {error:#}"),
+                        )?;
+                        // Retry a failed periodic scan on the next maintenance
+                        // interval, not in an uncontrolled two-second loop.
+                        maintenance = Some(Instant::now());
+                    }
+                }
+            }
+        }
         for (id, action) in store.pending()? {
             if store.get::<bool>("shutdown")? {
                 return Ok(());
+            }
+            if action == "rescan" {
+                if store.claim_command(id)? {
+                    let _ = publish_heartbeat_if_due(
+                        &store, &mut last_heartbeat, Instant::now(), true,
+                    )?;
+                    scan.get_or_insert_with(|| scan_worker::start(&store.home))
+                        .requests.push(id);
+                }
+                continue;
             }
             if !store.claim_command(id)? {
                 continue;
@@ -2020,33 +2083,34 @@ pub fn monitor(home: PathBuf) -> Result<()> {
         let _ = publish_heartbeat_if_due(&store, &mut last_heartbeat, Instant::now(), false)?;
         if maintenance.is_none_or(|at| at.elapsed() >= Duration::from_secs(60)) {
             maintenance = Some(Instant::now());
-            let result = (|| -> Result<()> {
-                if scanned.is_none_or(|at| at.elapsed() >= Duration::from_secs(21600)) {
-                    refresh_apps(&store)?;
-                    apps = store.apps()?;
-                    scanned = Some(Instant::now());
-                    housekeeping_sessions(&store, &mut session_times)?;
-                }
-                reconcile_manual(&store)?;
-                automatic_review(&store, native::quiet_for_changes())?;
-                Ok(())
-            })();
-            let mut status = match result {
-                Ok(()) if config.collect => "Фоновый учёт работает".into(),
-                Ok(()) => "Учёт использования приостановлен".into(),
-                Err(e) => format!("Изменения приостановлены: {e:#}"),
-            };
-            for key in [
-                "autostart_warning",
-                "tray_warning",
-                "settings_shortcut_warning",
-            ] {
-                let warning: String = store.get(key)?;
-                if !warning.is_empty() {
-                    status.push_str(&format!("\n{warning}"));
-                }
+            if scan.is_none()
+                && scanned.is_none_or(|at| at.elapsed() >= Duration::from_secs(21600))
+            {
+                scan = Some(scan_worker::start(&store.home));
             }
-            store.set("status", &status)?;
+            if scan.is_none() {
+                let result = (|| -> Result<()> {
+                    reconcile_manual(&store)?;
+                    automatic_review(&store, native::quiet_for_changes())?;
+                    Ok(())
+                })();
+                let mut status = match result {
+                    Ok(()) if config.collect => "Фоновый учёт работает".into(),
+                    Ok(()) => "Учёт использования приостановлен".into(),
+                    Err(e) => format!("Изменения приостановлены: {e:#}"),
+                };
+                for key in [
+                    "autostart_warning",
+                    "tray_warning",
+                    "settings_shortcut_warning",
+                ] {
+                    let warning: String = store.get(key)?;
+                    if !warning.is_empty() {
+                        status.push_str(&format!("\n{warning}"));
+                    }
+                }
+                store.set("status", &status)?;
+            }
         }
         std::thread::sleep(Duration::from_secs(2));
     }
@@ -3497,3 +3561,5 @@ mod renamed_copy_scan_tests;
 
 #[cfg(test)]
 mod blocked_scan_tests;
+
+mod scan_worker;
