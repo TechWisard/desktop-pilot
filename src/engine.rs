@@ -337,8 +337,24 @@ pub fn preview(store: &Store, initial: bool) -> Result<Preview> {
     cfg.validate()?;
     let apps = store.apps()?;
     let state: State = store.get("state")?;
-    let ranking = rank(&apps, &store.days()?, &cfg, now());
-    let selected = select(&apps, &ranking, &state, &cfg, initial);
+    let days = store.days()?;
+    preview_loaded(&cfg, &apps, &days, &state, initial, now())
+}
+
+/// Compute the exact production selection from one already-loaded Store snapshot.
+/// Settings uses this after its initial catalog read, avoiding a second SQLite
+/// SELECT and JSON parse of the complete catalog on every window refresh.
+pub(crate) fn preview_loaded(
+    cfg: &Config,
+    apps: &[App],
+    days: &[Day],
+    state: &State,
+    initial: bool,
+    time: i64,
+) -> Result<Preview> {
+    cfg.validate()?;
+    let ranking = rank(apps, days, cfg, time);
+    let selected = select(apps, &ranking, state, cfg, initial);
     ensure!(
         selected.len() <= cfg.slots,
         "Ручных закреплений больше доступных мест. Увеличьте число мест или снимите закрепления."
