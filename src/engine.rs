@@ -387,6 +387,25 @@ thread_local! {
         std::cell::RefCell::new(None);
 }
 
+#[cfg(test)]
+pub(crate) struct TestScanGate {
+    pub home: PathBuf,
+    pub entered: std::sync::mpsc::Sender<()>,
+    pub release: std::sync::mpsc::Receiver<()>,
+    pub completed: std::sync::mpsc::Sender<()>,
+}
+#[cfg(test)]
+pub(crate) static TEST_SCAN_GATE: std::sync::Mutex<Option<TestScanGate>> =
+    std::sync::Mutex::new(None);
+#[cfg(test)]
+struct TestScanCompletion(std::sync::mpsc::Sender<()>);
+#[cfg(test)]
+impl Drop for TestScanCompletion {
+    fn drop(&mut self) {
+        let _ = self.0.send(());
+    }
+}
+
 pub fn refresh_apps(store: &Store) -> Result<()> {
     ensure_no_unfinished(store)?;
     let real = real_desktop(store)?;
@@ -419,6 +438,23 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
         .iter()
         .map(|app| (app.id.clone(), norm(&app.source)))
         .collect();
+    // This test-only boundary recreates a blocked shortcut filesystem read.
+    // The rest of the scan, command queue and Store are production paths.
+    #[cfg(test)]
+    let _scan_completion = if let Some(gate) = {
+        let mut slot = TEST_SCAN_GATE.lock().unwrap();
+        if slot.as_ref().is_some_and(|gate| gate.home == store.home) {
+            slot.take()
+        } else {
+            None
+        }
+    } {
+        let _ = gate.entered.send(());
+        let _ = gate.release.recv_timeout(Duration::from_secs(45));
+        Some(TestScanCompletion(gate.completed))
+    } else {
+        None
+    };
     for app in &mut known {
         match native::read_link(Path::new(&app.source)) {
             Ok(actual) if actual.identity() != app.identity() => {
@@ -3458,3 +3494,6 @@ mod catalog_race_tests;
 
 #[cfg(test)]
 mod renamed_copy_scan_tests;
+
+#[cfg(test)]
+mod blocked_scan_tests;
