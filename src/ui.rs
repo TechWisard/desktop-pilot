@@ -5033,3 +5033,6 @@ mod tests {
 
 #[cfg(test)]
 mod import_ownership_tests;
+
+#[cfg(test)]
+mod clock_health_tests;
