@@ -3,6 +3,8 @@ mod activity;
 mod cli;
 mod engine;
 mod i18n;
+#[cfg(test)]
+mod launch_validity_tests;
 mod learning;
 mod model;
 mod native;
@@ -48,6 +50,25 @@ fn prepare_report(args: &[String]) -> Result<()> {
 }
 fn background_running(home: &Path) -> Result<bool> {
     native::is_running("background", home)
+}
+// Validate the original link on each legacy launch, rather than trusting
+// catalog data that could predate a drive removal or an application update.
+fn checked_launch_source(store: &Store, id: &str) -> Result<App> {
+    let app = store.app(id)?;
+    ensure!(
+        Path::new(&app.source).is_file(),
+        "Исходный ярлык перемещён или удалён. Откройте настройки и обновите список."
+    );
+    let actual = native::read_link(Path::new(&app.source))?;
+    ensure!(
+        actual.identity() == app.identity(),
+        "Исходный ярлык изменён. Обновите список в настройках перед запуском."
+    );
+    ensure!(
+        actual.valid,
+        "Цель ярлыка или рабочая папка недоступны. Восстановите приложение или подключите диск."
+    );
+    Ok(actual)
 }
 fn run(error_profile: &mut Option<PathBuf>) -> Result<()> {
     let args = cli::parse(&std::env::args().skip(1).collect::<Vec<_>>())?;
@@ -208,23 +229,14 @@ fn run(error_profile: &mut Option<PathBuf>) -> Result<()> {
         }
         "--launch" => {
             let id = args.get(1).context("Нет идентификатора ярлыка")?;
-            let app = s.app(id)?;
-            ensure!(
-                Path::new(&app.source).is_file(),
-                "Исходный ярлык перемещён или удалён. Откройте настройки и обновите список."
-            );
-            let actual = native::read_link(Path::new(&app.source))?;
-            ensure!(
-                actual.identity() == app.identity(),
-                "Исходный ярлык изменён. Обновите список в настройках перед запуском."
-            );
+            let actual = checked_launch_source(&s, id)?;
             ensure!(
                 model::norm(&actual.target)
                     != model::norm(&std::env::current_exe()?.to_string_lossy())
                     || actual.arguments.starts_with("--probe "),
                 "Обнаружен цикл запуска"
             );
-            native::open_file(Path::new(&app.source))?;
+            native::open_file(Path::new(&actual.source))?;
             if s.get::<Config>("config")?.collect {
                 s.observe(id, 0, false, true)?;
             }
@@ -232,15 +244,10 @@ fn run(error_profile: &mut Option<PathBuf>) -> Result<()> {
         }
         "--validate-launch" => {
             let id = args.get(1).context("Нет id")?;
-            let a = s.app(id)?;
-            let actual = native::read_link(Path::new(&a.source))?;
-            ensure!(
-                actual.valid && actual.identity() == a.identity(),
-                "Цель запуска изменилась"
-            );
+            let actual = checked_launch_source(&s, id)?;
             emit(
                 &args,
-                &serde_json::json!({"original":a.source,"target":actual.target,"arguments":actual.arguments,"cwd":actual.cwd,"valid":true,"launched":false}),
+                &serde_json::json!({"original":actual.source,"target":actual.target,"arguments":actual.arguments,"cwd":actual.cwd,"valid":true,"launched":false}),
             )
         }
         "--background" => {
