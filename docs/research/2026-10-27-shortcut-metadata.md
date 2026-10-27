@@ -28,3 +28,10 @@ Before the implementation change, both assertions on icon metadata should fail o
 Full Windows checks, native integration, release verification and physical Windows 11 Explorer/Settings inspection are separately required. Long-horizon project-switch adaptation remains a higher-level separate task.
 
 A separate 2026 user report about edited shortcut names and locations disappearing from an existing customization tool is recorded at https://github.com/Jonno12345/TileIconifier/issues/447 (2026-07-16). It supports inspecting metadata refresh as a usability boundary, but is not evidence of an identical Desktop Pilot defect.
+
+
+## Follow-up scenarios and safety boundaries
+
+Windows Shell's own IShellLinkW::GetIconLocation contract returns a path and icon index (Microsoft documentation: https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ishelllinkw-geticonlocation). Only these source-derived, non-launch fields and the canonical filename-derived display name are refreshed when launch identity is unchanged. A missing original does not cause its icon to be replaced by stale or unverified data; when the original returns with a new icon, the catalog catches up without rewriting any owned desktop file. An original changed to another launch identity is invalidated instead of inheriting the prior user's manual rule. Both scenarios are verified against the real Store and Windows shortcut reader.
+
+The copied shortcut on the desktop intentionally retains its existing bytes and icon until the user authorizes a placement change; automatic rewriting could overwrite user customization. This is a metadata-consistency change, not a promise to update the appearance of an existing desktop icon or to save time in measured user tasks.

@@ -131,3 +131,82 @@ fn changing_existing_windows_link_icon_refreshes_metadata_without_moving_its_cop
         check_refresh_without_replacing_quick_copy(store, &app, r"C:\Icons\two.ico", 4);
     });
 }
+
+
+#[test]
+fn recovering_original_icon_after_a_temporary_outage_keeps_managed_position() {
+    with_profile(|store| {
+        let source = store.home.join("Rare.url");
+        std::fs::write(
+            &source,
+            b"[InternetShortcut]\r\nURL=https://example.invalid/Rare\r\nIconFile=C:\\Icons\\before.ico\r\nIconIndex=1\r\n",
+        )
+        .unwrap();
+        let mut app = native::read_link(&source).unwrap();
+        app.policy = Policy::Always;
+        store.put_app(&app).unwrap();
+        apply(store, true).unwrap();
+        let before: State = store.get("state").unwrap();
+        let quick = &before.owned[0];
+        let quick_bytes = std::fs::read(&quick.path).unwrap();
+        let parked = store.home.join("Rare.offline");
+        std::fs::rename(&source, &parked).unwrap();
+        refresh_apps(store).unwrap();
+        let unavailable = store.app(&app.id).unwrap();
+        assert!(!unavailable.valid);
+        assert_eq!(unavailable.icon, r"C:\Icons\before.ico");
+        assert_eq!(store.get::<State>("state").unwrap().owned[0].path, quick.path);
+
+        std::fs::rename(&parked, &source).unwrap();
+        std::fs::write(
+            &source,
+            b"[InternetShortcut]\r\nURL=https://example.invalid/Rare\r\nIconFile=C:\\Icons\\after.ico\r\nIconIndex=5\r\n",
+        )
+        .unwrap();
+        refresh_apps(store).unwrap();
+        let restored = store.app(&app.id).unwrap();
+        assert!(restored.valid);
+        assert_eq!(restored.icon, r"C:\Icons\after.ico");
+        assert_eq!(restored.icon_index, 5);
+        let plan = preview(store, false).unwrap();
+        assert!(plan.added.is_empty() && plan.removed.is_empty());
+        assert_eq!(std::fs::read(&quick.path).unwrap(), quick_bytes);
+        assert_eq!(
+            serde_json::to_value(store.get::<State>("state").unwrap()).unwrap(),
+            serde_json::to_value(&before).unwrap()
+        );
+        rollback(store).unwrap();
+        assert!(!Path::new(&quick.path).exists());
+        assert!(source.exists());
+    });
+}
+
+#[test]
+fn changing_launch_target_does_not_silently_inherit_originals_manual_rule() {
+    with_profile(|store| {
+        let source = store.home.join("Separate.url");
+        std::fs::write(
+            &source,
+            b"[InternetShortcut]\r\nURL=https://example.invalid/Original\r\nIconFile=C:\\Icons\\old.ico\r\nIconIndex=1\r\n",
+        )
+        .unwrap();
+        let mut app = native::read_link(&source).unwrap();
+        app.policy = Policy::Always;
+        app.note = "Keep this original rule".into();
+        store.put_app(&app).unwrap();
+        std::fs::write(
+            &source,
+            b"[InternetShortcut]\r\nURL=https://example.invalid/Different\r\nIconFile=C:\\Icons\\other.ico\r\nIconIndex=7\r\n",
+        )
+        .unwrap();
+        refresh_apps(store).unwrap();
+        let original = store.app(&app.id).unwrap();
+        assert!(!original.valid);
+        assert_eq!(original.icon, r"C:\Icons\old.ico");
+        assert_eq!(original.icon_index, 1);
+        assert_eq!(original.policy, Policy::Always);
+        assert_eq!(original.note, app.note);
+        assert_eq!(original.target, app.target);
+        assert_eq!(store.apps().unwrap().len(), 1);
+    });
+}
