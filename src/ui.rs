@@ -823,14 +823,8 @@ impl Settings {
         let saved_config = self.store.get("config")?;
         let days = self.store.days()?;
         let at = now();
-        let preview = engine::preview_loaded(
-            &saved_config,
-            &apps,
-            &days,
-            &state,
-            !state.initialized,
-            at,
-        );
+        let preview =
+            engine::preview_loaded(&saved_config, &apps, &days, &state, !state.initialized, at);
         let ranking = match &preview {
             Ok(preview) => preview.ranking.clone(),
             Err(_) => rank(&apps, &days, &saved_config, at),
