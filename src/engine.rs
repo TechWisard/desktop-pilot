@@ -2030,6 +2030,11 @@ mod tests {
     #[test]
     fn empty_apply_keeps_first_fill_available_when_evidence_arrives() {
         with_store(|store| {
+            // This fixture tests user-applied recommendations in Observe mode.
+            // Manual control intentionally never adds ranked Auto candidates.
+            let mut cfg: Config = store.get("config").unwrap();
+            cfg.collect = true;
+            store.set("config", &cfg).unwrap();
             apply(store, false).unwrap();
             assert!(!store.get::<State>("state").unwrap().initialized);
             for (name, target) in [
@@ -2140,6 +2145,10 @@ mod tests {
     #[test]
     fn unfinished_transactions_are_not_interpreted_as_manual_deletions() {
         with_store(|store| {
+            // This fixture exercises usage-guided placement in Observe mode.
+            let mut cfg: Config = store.get("config").unwrap();
+            cfg.collect = true;
+            store.set("config", &cfg).unwrap();
             let mut app = add_test_app(store, "Prepared", "steam://rungameid/105");
             app.policy = Policy::Auto;
             app.seed = 20.0;
@@ -2352,6 +2361,10 @@ mod tests {
     #[test]
     fn missing_and_changed_originals_are_still_invalidated() {
         with_store(|store| {
+            // This fixture exercises usage-guided placement in Observe mode.
+            let mut cfg: Config = store.get("config").unwrap();
+            cfg.collect = true;
+            store.set("config", &cfg).unwrap();
             let mut missing = add_test_app(store, "Missing", "steam://rungameid/706");
             // This fixture tests the 72-hour grace expiry for automatic
             // placement, not a shortcut the user explicitly pinned.
@@ -2657,6 +2670,7 @@ mod tests {
     fn manually_pinned_rare_shortcut_survives_long_absence_then_obeys_release() {
         with_store(|store| {
             let mut config: Config = store.get("config").unwrap();
+            config.collect = true;
             config.slots = 1;
             store.set("config", &config).unwrap();
 
@@ -2726,6 +2740,7 @@ mod tests {
     fn reducing_slots_removes_an_unavailable_copy_not_a_working_one() {
         with_store(|store| {
             let mut config: Config = store.get("config").unwrap();
+            config.collect = true;
             config.slots = 2;
             config.max_changes = 1;
             store.set("config", &config).unwrap();
@@ -2816,6 +2831,7 @@ mod tests {
     fn offline_clock_rollback_preview_matches_safe_apply_and_manual_release() {
         with_store(|store| {
             let mut cfg: Config = store.get("config").unwrap();
+            cfg.collect = true;
             cfg.slots = 1;
             store.set("config", &cfg).unwrap();
 
@@ -3143,6 +3159,10 @@ mod tests {
     #[test]
     fn valid_shell_shortcuts_can_be_learned_without_overriding_manual_rules() {
         with_store(|store| {
+            // This fixture exercises usage-guided placement in Observe mode.
+            let mut cfg: Config = store.get("config").unwrap();
+            cfg.collect = true;
+            store.set("config", &cfg).unwrap();
             let desktop: String = store.get("test_desktop").unwrap();
             let source = Path::new(&desktop).join("Packaged App.url");
             std::fs::write(
@@ -3360,3 +3380,6 @@ mod source_metadata_tests;
 
 mod import_guard;
 pub(crate) use import_guard::imported_quick_copy;
+
+#[cfg(test)]
+mod manual_mode_tests;

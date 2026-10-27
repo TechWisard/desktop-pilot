@@ -57,7 +57,10 @@ fn a_weak_legacy_seed_alone_does_not_fill_a_new_slot() {
 #[test]
 fn repeated_short_visits_or_one_long_work_session_still_qualify() {
     let time = 100 * 86400 + 12 * 3600;
-    let cfg = Config::default();
+    let cfg = Config {
+        collect: true,
+        ..Default::default()
+    };
     let apps = [app("repeated", 0.0, time), app("focused", 0.0, time)];
     let days = [
         day("repeated", time - 12 * 3600, 2, 80),
@@ -138,6 +141,10 @@ fn with_profile(test: impl FnOnce(&Store, &App, &std::path::Path)) {
 #[test]
 fn actual_store_preview_apply_and_undo_wait_for_repeated_demand() {
     with_profile(|store, app, desktop| {
+        // Observe mode permits an explicit Apply of usage-driven suggestions.
+        let mut config: Config = store.get("config").unwrap();
+        config.collect = true;
+        store.set("config", &config).unwrap();
         let original = std::fs::read(&app.source).unwrap();
         store.observe(&app.id, 12, true, false).unwrap();
         let early = engine::preview(store, true).unwrap();
@@ -214,6 +221,7 @@ fn weaker_first_placement_gate_does_not_loosen_replacement_stability() {
     let time = 100 * 86400 + 12 * 3600;
     let incumbent = app("incumbent", 20.0, time);
     let config = Config {
+        collect: true,
         slots: 1,
         advantage: 1.1,
         ..Default::default()

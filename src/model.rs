@@ -433,6 +433,13 @@ pub fn select(
     // Filling genuinely vacant places does not displace a familiar shortcut.
     // The per-review change budget protects existing positions from churn, not
     // recovery from missing, excluded or unavailable shortcuts.
+    // In manual control (no collection and no automatic reviews), applying
+    // changes must only carry out explicit Always/Never choices and capacity
+    // changes. Keep previously managed copies stable; stored usage may still
+    // be displayed as guidance, but cannot insert or displace a shortcut.
+    if !cfg.automatic && !cfg.collect {
+        return result;
+    }
     let mut replacements = 0;
     for candidate in ranking
         .iter()
@@ -530,6 +537,7 @@ mod tests {
         offline.unavailable_since = now();
         let apps = vec![offline, app("available", 200.0)];
         let cfg = Config {
+            collect: true,
             slots: 1,
             ..Default::default()
         };
@@ -556,6 +564,7 @@ mod tests {
         let frequent = app("frequent", 300.0);
         let apps = vec![rare.clone(), frequent];
         let cfg = Config {
+            collect: true,
             slots: 1,
             ..Default::default()
         };
@@ -642,6 +651,7 @@ mod tests {
         missing.policy = Policy::Always;
         let frequent = app("frequent", 300.0);
         let cfg = Config {
+            collect: true,
             slots: 1,
             ..Default::default()
         };
@@ -683,6 +693,7 @@ mod tests {
         offline.unavailable_since = now() - UNAVAILABLE_GRACE_SECONDS - 10;
         let apps = vec![offline.clone(), app("available", 100.0)];
         let cfg = Config {
+            collect: true,
             slots: 1,
             ..Default::default()
         };
@@ -761,6 +772,7 @@ mod tests {
     fn no_churn_below_threshold() {
         let apps = vec![app("a", 10.0), app("b", 14.0)];
         let cfg = Config {
+            collect: true,
             slots: 1,
             ..Default::default()
         };
@@ -784,6 +796,7 @@ mod tests {
             app("terminal", 10.0),
         ];
         let cfg = Config {
+            collect: true,
             slots: 4,
             max_changes: 1,
             ..Default::default()
@@ -810,6 +823,7 @@ mod tests {
             app("extra", 60.0),
         ];
         let cfg = Config {
+            collect: true,
             slots: 4,
             max_changes: 1,
             ..Default::default()
@@ -829,6 +843,7 @@ mod tests {
     fn at_most_one_replacement() {
         let apps = vec![app("a", 2.0), app("b", 3.0), app("c", 40.0), app("d", 50.0)];
         let cfg = Config {
+            collect: true,
             slots: 2,
             ..Default::default()
         };
@@ -941,6 +956,7 @@ mod tests {
         let mut pinned = app("pinned", 20.0);
         pinned.pinned = true;
         let cfg = Config {
+            collect: true,
             respect_taskbar_pins: false,
             ..Default::default()
         };
@@ -1095,6 +1111,7 @@ mod tests {
     fn old_duplicate_ownership_does_not_consume_extra_slots() {
         let apps = [app("a", 10.0), app("b", 20.0)];
         let cfg = Config {
+            collect: true,
             slots: 2,
             ..Default::default()
         };
@@ -1218,3 +1235,6 @@ mod tests {
 
 #[cfg(test)]
 mod cold_start_tests;
+
+#[cfg(test)]
+mod manual_mode_tests;
