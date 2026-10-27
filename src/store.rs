@@ -47,7 +47,7 @@ impl Drop for NestedTransaction<'_> {
     }
 }
 
-fn verify_profile_schema(db: &Connection) -> Result<()> {
+fn verify_profile_schema(db: &Connection) -> Result<bool> {
     let objects: i64 = db.query_row(
         "SELECT COUNT(*) FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'",
         [],
@@ -63,7 +63,7 @@ fn verify_profile_schema(db: &Connection) -> Result<()> {
             application_id == 0 && user_version == 0,
             "This folder contains a database that is not a Desktop Pilot profile; it was not changed"
         );
-        return Ok(());
+        return Ok(false);
     }
     for (table, required) in [
         ("kv", &["k", "v"][..]),
@@ -93,7 +93,7 @@ fn verify_profile_schema(db: &Connection) -> Result<()> {
             "This folder contains a database that is not a Desktop Pilot profile; it was not changed"
         );
     }
-    Ok(())
+    Ok(true)
 }
 
 fn initialize_schema(db: &Connection) -> Result<()> {
@@ -128,16 +128,31 @@ impl Store {
     pub fn open(home: &Path) -> Result<Self> {
         std::fs::create_dir_all(home)?;
         let path = home.join("usage.sqlite");
-        if path.try_exists()? && std::fs::metadata(&path)?.len() > 0 {
-            // Never initialize our tables inside an unrelated database selected by
-            // an accidental --home path. Inspect without enabling WAL or writing.
+        let verified_existing = if path.try_exists()? && std::fs::metadata(&path)?.len() > 0 {
+            // Reject unrelated profiles before opening writable. A complete
+            // existing schema can be reused without acquiring a writer lock.
             let existing = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
             existing.busy_timeout(Duration::from_secs(5))?;
-            verify_profile_schema(&existing)?;
-        }
+            verify_profile_schema(&existing)?
+        } else {
+            false
+        };
         let db = Connection::open(path)?;
         db.busy_timeout(Duration::from_secs(5))?;
-        initialize_schema(&db)?;
+        if verified_existing {
+            // Recheck on the connection we actually opened: the path could
+            // have been replaced since the read-only preflight. Never create
+            // tables inside that replacement on the existing-profile path.
+            ensure!(
+                verify_profile_schema(&db)?,
+                "The existing Desktop Pilot profile changed during opening; no data was modified"
+            );
+        } else {
+            // Only first creation (or a verified empty retry) needs a writer.
+            // Keep the original BEGIN IMMEDIATE and transactional schema guard
+            // for concurrent first opens and interrupted initialization.
+            initialize_schema(&db)?;
+        }
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
         Ok(Self {
             db,
@@ -644,3 +659,6 @@ mod contention_tests;
 
 #[cfg(test)]
 mod catalog_rescan_tests;
+
+#[cfg(test)]
+mod open_writer_tests;
