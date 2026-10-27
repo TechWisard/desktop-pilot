@@ -17,14 +17,16 @@ fn with_profile(test: impl FnOnce(&Store)) {
     store
         .set("test_desktop", &desktop.to_string_lossy())
         .unwrap();
-    store.set(
-        "config",
-        &Config {
-            learning_enabled: false,
-            respect_taskbar_pins: false,
-            ..Default::default()
-        },
-    ).unwrap();
+    store
+        .set(
+            "config",
+            &Config {
+                learning_enabled: false,
+                respect_taskbar_pins: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
     test(&store);
     drop(store);
     std::fs::remove_dir_all(home).unwrap();
