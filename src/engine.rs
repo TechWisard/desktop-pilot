@@ -379,8 +379,11 @@ pub(crate) fn preview_loaded(
 }
 
 #[cfg(test)]
+type RefreshCommitHook = Box<dyn FnOnce(&Store)>;
+
+#[cfg(test)]
 thread_local! {
-    static BEFORE_REFRESH_COMMIT: std::cell::RefCell<Option<Box<dyn FnOnce(&Store)>>> =
+    static BEFORE_REFRESH_COMMIT: std::cell::RefCell<Option<RefreshCommitHook>> =
         std::cell::RefCell::new(None);
 }
 
