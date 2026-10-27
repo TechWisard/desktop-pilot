@@ -187,3 +187,56 @@ fn an_explicit_manual_choice_bypasses_the_cold_start_gate() {
         assert!(std::path::Path::new(&app.source).exists());
     });
 }
+
+#[test]
+fn recent_five_minute_work_qualifies_but_an_isolated_stale_visit_fades() {
+    let time = 100 * 86400 + 12 * 3600;
+    let candidate = app("focused", 0.0, time);
+    let config = Config::default();
+    let recent = rank(
+        &[candidate.clone()],
+        &[day("focused", time - 86400, 1, 300)],
+        &config,
+        time,
+    );
+    assert!(recent[0].eligible);
+    let stale = rank(
+        &[candidate],
+        &[day("focused", time - 3 * 86400, 1, 300)],
+        &config,
+        time,
+    );
+    assert!(!stale[0].eligible);
+}
+
+#[test]
+fn weaker_first_placement_gate_does_not_loosen_replacement_stability() {
+    let time = 100 * 86400 + 12 * 3600;
+    let incumbent = app("incumbent", 20.0, time);
+    let config = Config {
+        slots: 1,
+        ..Default::default()
+    };
+    let state = State {
+        owned: vec![Owned {
+            app: incumbent.id.clone(),
+            path: String::new(),
+            sha: String::new(),
+            position: Point::default(),
+            manual: false,
+            since: 0,
+            file_id: None,
+        }],
+        initialized: true,
+        ..Default::default()
+    };
+    let near = [incumbent.clone(), app("challenger", 22.8, time)];
+    let near_rank = rank(&near, &[], &config, time);
+    assert_eq!(select(&near, &near_rank, &state, &config, false), ["incumbent"]);
+    let strong = [incumbent, app("challenger", 23.5, time)];
+    let strong_rank = rank(&strong, &[], &config, time);
+    assert_eq!(
+        select(&strong, &strong_rank, &state, &config, false),
+        ["challenger"]
+    );
+}

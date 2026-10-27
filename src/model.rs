@@ -267,10 +267,11 @@ pub struct Ranked {
     pub reason: String,
 }
 
-// New automatic shortcuts need meaningful evidence. Match the three-point
-// absolute margin already required to replace an existing shortcut. Manual
-// choices remain immediate; this does not evict existing managed copies.
-const MIN_AUTOMATIC_SCORE: f64 = 3.0;
+// Filling an empty slot needs more than one incidental foreground visit.
+// A confirmed five-minute session can qualify; a single ten-second visit
+// cannot. Displacing a familiar shortcut keeps the stronger three-point margin.
+const MIN_NEW_SHORTCUT_SCORE: f64 = 2.5;
+const MIN_REPLACEMENT_MARGIN: f64 = 3.0;
 
 pub fn rank(apps: &[App], days: &[Day], cfg: &Config, time: i64) -> Vec<Ranked> {
     // Group retained rows once. Scanning every day's history for every shortcut
@@ -319,7 +320,7 @@ pub fn rank(apps: &[App], days: &[Day], cfg: &Config, time: i64) -> Vec<Ranked> 
             (false, "Уже закреплено на панели задач")
         } else if !enough {
             (false, "Пока мало независимых дней наблюдений")
-        } else if score < MIN_AUTOMATIC_SCORE {
+        } else if score < MIN_NEW_SHORTCUT_SCORE {
             (false, "Пока мало активности для нового быстрого ярлыка")
         } else {
             (true, "Повторяемое использование; есть польза прямого входа")
@@ -455,7 +456,7 @@ pub fn select(
             .map(|(i, id)| (i, score(id)));
         if let Some((i, value)) = worst
             && candidate.score >= value * cfg.advantage
-            && candidate.score - value >= MIN_AUTOMATIC_SCORE
+            && candidate.score - value >= MIN_REPLACEMENT_MARGIN
         {
             result[i] = candidate.id.clone();
             replacements += 1;
