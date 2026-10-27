@@ -77,9 +77,19 @@ fn repeated_unchanged_real_shortcut_rescans_do_not_rewrite_the_catalog() {
             let plan = engine::preview(store, false).unwrap();
             assert!(plan.added.is_empty() && plan.removed.is_empty());
         }
-        assert_eq!(writes(store) - before, 0, "No-op rescans must not write SQLite rows");
-        assert_eq!(serde_json::to_value(store.apps().unwrap()).unwrap(), catalog_before);
-        assert_eq!(serde_json::to_value(store.days().unwrap()).unwrap(), days_before);
+        assert_eq!(
+            writes(store) - before,
+            0,
+            "No-op rescans must not write SQLite rows"
+        );
+        assert_eq!(
+            serde_json::to_value(store.apps().unwrap()).unwrap(),
+            catalog_before
+        );
+        assert_eq!(
+            serde_json::to_value(store.days().unwrap()).unwrap(),
+            days_before
+        );
         assert_eq!(
             serde_json::to_value(store.get::<State>("state").unwrap()).unwrap(),
             serde_json::to_value(state_before).unwrap()
@@ -109,14 +119,21 @@ fn one_updated_icon_writes_only_its_catalog_row_and_preserves_undo() {
         std::fs::write(&important.source, changed).unwrap();
         let before = writes(store);
         engine::refresh_apps(store).unwrap();
-        assert_eq!(writes(store) - before, 1, "Only the changed app row should be written");
+        assert_eq!(
+            writes(store) - before,
+            1,
+            "Only the changed app row should be written"
+        );
         let updated = store.app(&important.id).unwrap();
         assert_eq!(updated.icon, r"C:\Icons\updated.ico");
         assert_eq!(updated.icon_index, 7);
         assert_eq!(updated.policy, Policy::Always);
         assert_eq!(updated.source, important.source);
         assert_eq!(updated.id, important.id);
-        assert_eq!(serde_json::to_value(store.days().unwrap()).unwrap(), days_before);
+        assert_eq!(
+            serde_json::to_value(store.days().unwrap()).unwrap(),
+            days_before
+        );
         assert_eq!(
             serde_json::to_value(store.get::<State>("state").unwrap()).unwrap(),
             serde_json::to_value(state_before).unwrap()
@@ -149,9 +166,16 @@ fn vanished_source_has_one_transition_then_stays_quiet_until_recovery() {
         for _ in 0..3 {
             engine::refresh_apps(store).unwrap();
         }
-        assert_eq!(writes(store) - quiet, 0, "An unchanged outage is not a new change");
+        assert_eq!(
+            writes(store) - quiet,
+            0,
+            "An unchanged outage is not a new change"
+        );
         assert_eq!(std::fs::read(&quick.path).unwrap(), quick_bytes);
-        assert_eq!(store.app(&important.id).unwrap().unavailable_since, missing.unavailable_since);
+        assert_eq!(
+            store.app(&important.id).unwrap().unavailable_since,
+            missing.unavailable_since
+        );
         std::fs::write(&important.source, original).unwrap();
         engine::refresh_apps(store).unwrap();
         assert!(store.app(&important.id).unwrap().valid);
