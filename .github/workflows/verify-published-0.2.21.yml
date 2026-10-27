@@ -1,0 +1,33 @@
+name: Verify public 0.2.21 downloads
+on:
+  push:
+    branches: [maintenance/verify-public-0.2.21-20261027]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      EXPECTED_RELEASE_VERSION: 0.2.21
+      EXPECTED_RELEASE_COMMIT: 74a4d810a64357d7204f839daf3bc4f3a88c454b
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Verify unauthenticated downloads and exact source provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/verify-public-release.py
+      - name: Save public download verification
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: public-release-verification-0.2.21
+          path: release-download-verification.json
+          if-no-files-found: error
+          retention-days: 30
