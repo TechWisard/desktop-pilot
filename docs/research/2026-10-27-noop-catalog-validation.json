@@ -1,0 +1,26 @@
+{
+  "baseline_version": "0.2.22",
+  "baseline_commit": "3aa53990ecec1c5b398697f6e92285b5eb3b72ce",
+  "baseline_ci": "https://github.com/TechWisard/desktop-pilot/actions/runs/40482113734",
+  "baseline_existing_rust_passed": 230,
+  "baseline_new_tests_failed": 3,
+  "baseline_sqlite_row_writes": {
+    "five_unchanged_512_rescans": 2565,
+    "one_icon_edit_64_sources": 65,
+    "three_unchanged_offline_rescans": 99
+  },
+  "fixed_candidate_ci": "https://github.com/TechWisard/desktop-pilot/actions/runs/40482976982",
+  "fixed_branch_rust_passed": 233,
+  "fixed_branch_native_checks": 28,
+  "fixed_branch_publication_guards": 9,
+  "expected_fixed_sqlite_row_writes": {
+    "five_unchanged_512_rescans": 0,
+    "one_icon_edit_64_sources": 1,
+    "three_unchanged_offline_rescans": 0
+  },
+  "candidate_origin_commit": "8011db7c33feb612214d1f3c22b5130ad8e388c6",
+  "ported_baseline_commit": "76c1db6bc268e24ff7d36d09aabc735a5c07f8a3",
+  "testing": "Production refresh_apps, Store, real Windows .url shortcuts, preview, apply and undo; Windows Server 2022 and 2025",
+  "human_task_time_gain": "Not measured",
+  "final_pr_main_release_verification": "Not yet run at writing; required"
+}

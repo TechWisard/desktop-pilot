@@ -174,7 +174,7 @@ impl Config {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 pub struct App {
     pub id: String,
     pub name: String,

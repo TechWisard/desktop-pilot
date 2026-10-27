@@ -644,18 +644,22 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
         }
     }
     store.transaction(|| {
-        store.set(
-            "pins_verified",
-            &(!real || !config.respect_taskbar_pins || pins.is_some()),
-        )?;
+        let pins_verified = !real || !config.respect_taskbar_pins || pins.is_some();
+        if store.get::<bool>("pins_verified")? != pins_verified {
+            store.set("pins_verified", &pins_verified)?;
+        }
         for mut app in known {
             if let Ok(latest) = store.app(&app.id) {
                 // A policy changed while the filesystem scan was running belongs to
                 // the user; refresh only filesystem-derived fields.
-                app.policy = latest.policy;
+                app.policy = latest.policy.clone();
                 app.seed = latest.seed;
                 app.seed_at = latest.seed_at;
-                app.note = latest.note;
+                app.note = latest.note.clone();
+                // Do not rewrite unchanged catalog rows during routine rescans.
+                if app == latest {
+                    continue;
+                }
             }
             store.put_app(&app)?;
         }
