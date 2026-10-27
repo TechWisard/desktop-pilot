@@ -103,23 +103,12 @@ fn a_clock_correction_is_healed_by_the_actual_bounded_sqlite_writer() {
         let start = Instant::now();
         let mut last = Some(start);
         assert!(
-            !publish_heartbeat_if_due(
-                store,
-                &mut last,
-                start + Duration::from_secs(2),
-                false
-            )
-            .unwrap()
+            !publish_heartbeat_if_due(store, &mut last, start + Duration::from_secs(2), false)
+                .unwrap()
         );
         assert_eq!(store.get::<i64>("heartbeat").unwrap(), future);
         assert!(
-            publish_heartbeat_if_due(
-                store,
-                &mut last,
-                start + HEARTBEAT_INTERVAL,
-                false
-            )
-            .unwrap()
+            publish_heartbeat_if_due(store, &mut last, start + HEARTBEAT_INTERVAL, false).unwrap()
         );
         assert!(store.get::<i64>("heartbeat").unwrap().abs_diff(now()) <= 2);
         assert!(

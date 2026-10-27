@@ -74,20 +74,42 @@ fn offline_startup_manual_and_observation_states_keep_their_priority() {
         ..Config::default()
     };
     let future = wall + 30 * 86_400;
-    assert_eq!(health(false, future, wall, "", &config, &progress), Health::Offline);
-    assert_eq!(health(true, 0, wall, "", &config, &progress), Health::Starting);
-    assert_eq!(health(true, wall, wall, "", &config, &progress), Health::Manual);
-    assert_eq!(health(true, future, wall, "", &config, &progress), Health::Unresponsive);
+    assert_eq!(
+        health(false, future, wall, "", &config, &progress),
+        Health::Offline
+    );
+    assert_eq!(
+        health(true, 0, wall, "", &config, &progress),
+        Health::Starting
+    );
+    assert_eq!(
+        health(true, wall, wall, "", &config, &progress),
+        Health::Manual
+    );
+    assert_eq!(
+        health(true, future, wall, "", &config, &progress),
+        Health::Unresponsive
+    );
     config.collect = true;
     config.learning_enabled = true;
-    assert_eq!(health(true, wall, wall, "", &config, &progress), Health::Observing);
+    assert_eq!(
+        health(true, wall, wall, "", &config, &progress),
+        Health::Observing
+    );
     config.collect = false;
     assert_eq!(
         health(true, wall, wall, "", &config, &progress),
         Health::ObservationPaused
     );
     assert_eq!(
-        health(true, wall, wall, "Changes paused: source offline", &config, &progress),
+        health(
+            true,
+            wall,
+            wall,
+            "Changes paused: source offline",
+            &config,
+            &progress
+        ),
         Health::Attention
     );
 }
