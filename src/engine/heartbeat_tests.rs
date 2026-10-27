@@ -93,3 +93,32 @@ fn startup_long_absence_and_explicit_commands_never_lose_readiness() {
         assert_eq!(sql_writes(store) - before, 4);
     });
 }
+
+#[test]
+fn a_clock_correction_is_healed_by_the_actual_bounded_sqlite_writer() {
+    in_temporary_profile(|store| {
+        let observed = now();
+        let future = observed + 30 * 86_400;
+        store.set("heartbeat", &future).unwrap();
+        let start = Instant::now();
+        let mut last = Some(start);
+        assert!(
+            !publish_heartbeat_if_due(store, &mut last, start + Duration::from_secs(2), false)
+                .unwrap()
+        );
+        assert_eq!(store.get::<i64>("heartbeat").unwrap(), future);
+        assert!(
+            publish_heartbeat_if_due(store, &mut last, start + HEARTBEAT_INTERVAL, false).unwrap()
+        );
+        assert!(store.get::<i64>("heartbeat").unwrap().abs_diff(now()) <= 2);
+        assert!(
+            !publish_heartbeat_if_due(
+                store,
+                &mut last,
+                start + HEARTBEAT_INTERVAL + Duration::from_secs(2),
+                false
+            )
+            .unwrap()
+        );
+    });
+}
