@@ -106,7 +106,16 @@ fn slow_catalog_read_cannot_delay_manual_policy_heartbeat_or_shutdown() {
     let updated = b"[InternetShortcut]\r\nURL=https://example.invalid/UserChanged\r\n";
     std::fs::write(&source, updated).unwrap();
     store.set("shutdown", &true).unwrap();
-    let stopped_while_scan_waited = worker_rx.recv_timeout(Duration::from_secs(5)).is_ok();
+    let stopped_while_scan_waited = match worker_rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(outcome) => {
+            outcome.expect("Background monitor must stop successfully");
+            true
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => false,
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("Background monitor exited without reporting its result")
+        }
+    };
     let _ = release_tx.send(());
     completed_rx
         .recv_timeout(Duration::from_secs(10))
@@ -114,7 +123,8 @@ fn slow_catalog_read_cannot_delay_manual_policy_heartbeat_or_shutdown() {
     if !stopped_while_scan_waited {
         worker_rx
             .recv_timeout(Duration::from_secs(8))
-            .expect("Worker must exit after the scan resumes");
+            .expect("Worker must exit after the scan resumes")
+            .expect("Background monitor must stop successfully");
     }
     worker.join().unwrap();
 
