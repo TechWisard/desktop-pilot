@@ -1218,3 +1218,6 @@ mod tests {
 
 #[cfg(test)]
 mod cold_start_tests;
+
+#[cfg(test)]
+mod manual_mode_tests;

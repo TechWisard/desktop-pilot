@@ -3360,3 +3360,6 @@ mod source_metadata_tests;
 
 mod import_guard;
 pub(crate) use import_guard::imported_quick_copy;
+
+#[cfg(test)]
+mod manual_mode_tests;
