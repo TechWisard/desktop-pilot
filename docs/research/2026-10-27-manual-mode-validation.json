@@ -1,0 +1,37 @@
+{
+  "base_release": "v0.2.22",
+  "base_commit": "3aa53990ecec1c5b398697f6e92285b5eb3b72ce",
+  "baseline_red_ci": "https://github.com/TechWisard/desktop-pilot/actions/runs/40478366553",
+  "baseline_windows_2022": {
+    "tests_passed": 232,
+    "new_assertions_failed": 3,
+    "compiler": "passed",
+    "format": "passed",
+    "scenarios": [
+      "unexpected new Auto candidate in Manual",
+      "replacement of owned Auto in Manual",
+      "real Store preview automatically selecting in Manual"
+    ]
+  },
+  "pre_final_checks": [
+    {
+      "run": "40478783398",
+      "result": "failed: historical tests depended on manual-default placement"
+    },
+    {
+      "run": "40479290097",
+      "result": "unit tests passed, strict Clippy rejected a redundant test-only clone; corrected without disabling lint"
+    }
+  ],
+  "new_regressions": {
+    "model": 4,
+    "engine_real_store": 1
+  },
+  "human_time_saved": "not measured",
+  "public_release_verified": false,
+  "remaining": [
+    "Windows 11 physical GUI",
+    "longitudinal changing-project habits",
+    "full custom source-drive outages"
+  ]
+}
