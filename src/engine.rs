@@ -2030,6 +2030,11 @@ mod tests {
     #[test]
     fn empty_apply_keeps_first_fill_available_when_evidence_arrives() {
         with_store(|store| {
+            // This fixture tests user-applied recommendations in Observe mode.
+            // Manual control intentionally never adds ranked Auto candidates.
+            let mut cfg: Config = store.get("config").unwrap();
+            cfg.collect = true;
+            store.set("config", &cfg).unwrap();
             apply(store, false).unwrap();
             assert!(!store.get::<State>("state").unwrap().initialized);
             for (name, target) in [
