@@ -1,0 +1,28 @@
+{
+  "baseline_commit": "fa4a27509adb0c904e9ab460e844b2ff9b9ac723",
+  "candidate_before_release": "be00eb878b928c9d608a94f669c230454e2ac8d7",
+  "change": "Replace per-discovered-shortcut Vec::position identity scan with first-match HashMap index",
+  "scenario_sizes": [
+    100,
+    1000
+  ],
+  "identity_evaluations_upper_bounds": {
+    "100": 1100,
+    "1000": 10100
+  },
+  "measurement": "Actual production-path test counter asserts an upper bound; no exact per-run count or measured human-time claim",
+  "rust_tests_per_runner": 254,
+  "native_checks_per_runner": 28,
+  "publication_guards_per_runner": 9,
+  "runners": [
+    "windows-2022",
+    "windows-2025"
+  ],
+  "branch_validation": "https://github.com/TechWisard/desktop-pilot/actions/runs/40633937947",
+  "branch_validation_result": "success both runners; fmt, strict clippy, build, README, native and publication guards",
+  "limitations": [
+    "No independently completed failure-first red baseline",
+    "Physical Windows 11 and network latency untested",
+    "Final main release and unauthenticated download verification separate"
+  ]
+}
