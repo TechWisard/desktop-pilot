@@ -251,7 +251,7 @@ fn weaker_first_placement_gate_does_not_loosen_replacement_stability() {
         select(&strong, &strong_rank, &state, &config, false),
         ["challenger"]
     );
-} 
+}
 
 #[test]
 fn changing_projects_after_a_gap_keeps_the_rare_manual_shortcut_and_undo_is_respected() {
