@@ -10,7 +10,10 @@ fn import_through_settings(settings: &mut Settings, path: &Path) {
         if settings.job.is_none() {
             break;
         }
-        assert!(Instant::now() < deadline, "real asynchronous import did not complete");
+        assert!(
+            Instant::now() < deadline,
+            "real asynchronous import did not complete"
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(
@@ -31,7 +34,12 @@ fn visible_last_import(settings: &mut Settings) -> Vec<String> {
         settings.app_sort,
         &settings.highlighted_apps,
     );
-    settings.catalog.indices.iter().map(|&index| settings.apps[index].id.clone()).collect()
+    settings
+        .catalog
+        .indices
+        .iter()
+        .map(|&index| settings.apps[index].id.clone())
+        .collect()
 }
 
 #[test]
@@ -46,8 +54,12 @@ fn consecutive_noop_imports_display_the_actual_last_selection_without_a_database
         let original = std::fs::read(&anchor.source).unwrap();
         let anchor_before = settings.store.app(&anchor.id).unwrap();
         let history_before = serde_json::to_value(settings.store.days().unwrap()).unwrap();
-        let state_before = serde_json::to_value(settings.store.get::<State>("state").unwrap()).unwrap();
-        let quick_copy: PathBuf = settings.store.get::<State>("state").unwrap().owned[0].path.clone().into();
+        let state_before =
+            serde_json::to_value(settings.store.get::<State>("state").unwrap()).unwrap();
+        let quick_copy: PathBuf = settings.store.get::<State>("state").unwrap().owned[0]
+            .path
+            .clone()
+            .into();
 
         import_through_settings(settings, &first);
         assert_eq!(visible_last_import(settings), vec![first_id.clone()]);
@@ -73,8 +85,14 @@ fn consecutive_noop_imports_display_the_actual_last_selection_without_a_database
             "Reimporting a managed quick copy must show its existing app"
         );
         assert_eq!(settings.store.app(&anchor.id).unwrap(), anchor_before);
-        assert_eq!(serde_json::to_value(settings.store.days().unwrap()).unwrap(), history_before);
-        assert_eq!(serde_json::to_value(settings.store.get::<State>("state").unwrap()).unwrap(), state_before);
+        assert_eq!(
+            serde_json::to_value(settings.store.days().unwrap()).unwrap(),
+            history_before
+        );
+        assert_eq!(
+            serde_json::to_value(settings.store.get::<State>("state").unwrap()).unwrap(),
+            state_before
+        );
         assert_eq!(std::fs::read(&anchor.source).unwrap(), original);
         let preview = engine::preview(&settings.store, false).unwrap();
         assert!(preview.added.is_empty() && preview.removed.is_empty());
