@@ -36,7 +36,8 @@ fn clearing_large_unseeded_catalog_does_not_rewrite_every_shortcut() {
             }
             settings.store.put_app(&app).unwrap();
         }
-        let before_state = serde_json::to_value(settings.store.get::<State>("state").unwrap()).unwrap();
+        let before_state =
+            serde_json::to_value(settings.store.get::<State>("state").unwrap()).unwrap();
         let before_config = settings.store.get::<Config>("config").unwrap();
         let anchor_original = std::fs::read(&anchor.source).unwrap();
         let owned = settings.store.get::<State>("state").unwrap().owned[0].clone();
@@ -54,7 +55,10 @@ fn clearing_large_unseeded_catalog_does_not_rewrite_every_shortcut() {
         assert!(settings.store.days().unwrap().is_empty());
         assert_eq!(settings.store.apps().unwrap().len(), 1_001);
         assert_eq!(settings.store.app(&excluded_id).unwrap(), excluded);
-        assert_eq!(settings.store.get::<Config>("config").unwrap(), before_config);
+        assert_eq!(
+            settings.store.get::<Config>("config").unwrap(),
+            before_config
+        );
         assert_eq!(
             serde_json::to_value(settings.store.get::<State>("state").unwrap()).unwrap(),
             before_state
@@ -95,7 +99,8 @@ fn failed_clear_history_keeps_existing_usage_and_allows_safe_retry() {
     with_profile(|settings, anchor| {
         let original = std::fs::read(&anchor.source).unwrap();
         let owned = settings.store.get::<State>("state").unwrap().owned[0].clone();
-        let before_state = serde_json::to_value(settings.store.get::<State>("state").unwrap()).unwrap();
+        let before_state =
+            serde_json::to_value(settings.store.get::<State>("state").unwrap()).unwrap();
         let before_config = settings.store.get::<Config>("config").unwrap();
         let before_days = serde_json::to_value(settings.store.days().unwrap()).unwrap();
         let before_app = settings.store.app(&anchor.id).unwrap();
@@ -105,20 +110,33 @@ fn failed_clear_history_keeps_existing_usage_and_allows_safe_retry() {
         )).unwrap();
 
         assert!(engine::command(&settings.store, "clear_stats").is_err());
-        assert_eq!(serde_json::to_value(settings.store.days().unwrap()).unwrap(), before_days);
+        assert_eq!(
+            serde_json::to_value(settings.store.days().unwrap()).unwrap(),
+            before_days
+        );
         assert_eq!(settings.store.app(&anchor.id).unwrap(), before_app);
         assert_eq!(
             serde_json::to_value(settings.store.get::<State>("state").unwrap()).unwrap(),
             before_state
         );
-        assert_eq!(settings.store.get::<Config>("config").unwrap(), before_config);
+        assert_eq!(
+            settings.store.get::<Config>("config").unwrap(),
+            before_config
+        );
         assert_eq!(std::fs::read(&anchor.source).unwrap(), original);
         assert!(std::path::Path::new(&owned.path).is_file());
 
-        settings.store.db.execute_batch("DROP TRIGGER block_history_clear;").unwrap();
+        settings
+            .store
+            .db
+            .execute_batch("DROP TRIGGER block_history_clear;")
+            .unwrap();
         engine::command(&settings.store, "clear_stats").unwrap();
         assert!(settings.store.days().unwrap().is_empty());
-        assert_eq!(settings.store.app(&anchor.id).unwrap().policy, Policy::Always);
+        assert_eq!(
+            settings.store.app(&anchor.id).unwrap().policy,
+            Policy::Always
+        );
         assert_eq!(std::fs::read(&anchor.source).unwrap(), original);
         engine::command(&settings.store, "rollback").unwrap();
         assert!(!std::path::Path::new(&owned.path).exists());
