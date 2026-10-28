@@ -176,7 +176,6 @@ fn a_transaction_started_during_scan_blocks_stale_catalog_changes() {
     });
 }
 
-
 fn at_discovery(callback: impl FnOnce(&Store) + 'static) {
     BEFORE_REFRESH_DISCOVERY.with(|slot| {
         assert!(slot.borrow().is_none());
@@ -204,7 +203,10 @@ fn a_new_quick_copy_during_scan_cannot_replace_its_offline_original() {
 
         refresh_apps(store).unwrap();
         let saved = store.app(&original.id).unwrap();
-        assert_eq!(saved.source, original.source, "A stale source scan adopted a newly managed desktop copy as its original");
+        assert_eq!(
+            saved.source, original.source,
+            "A stale source scan adopted a newly managed desktop copy as its original"
+        );
         assert!(!saved.valid, "An offline original must remain unavailable");
         assert_eq!(saved.policy, Policy::Always);
         assert_eq!(saved.note, original.note);
@@ -250,7 +252,10 @@ fn a_renamed_new_quick_copy_cannot_be_promoted_during_source_outage() {
 
         refresh_apps(store).unwrap();
         let saved = store.app(&original.id).unwrap();
-        assert_eq!(saved.source, original.source, "Renaming after the ownership snapshot must not create a new original");
+        assert_eq!(
+            saved.source, original.source,
+            "Renaming after the ownership snapshot must not create a new original"
+        );
         assert!(!saved.valid);
         assert_eq!(saved.policy, Policy::Always);
         assert_eq!(saved.note, original.note);
