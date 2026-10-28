@@ -576,13 +576,16 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
         }
     }
     // A locked or inaccessible unrelated subfolder must not stop the catalog.
+    // Keep discovery bounded, but include the documented 5,000-entry catalog
+    // workflow; the previous 3,000-link ceiling silently hid later shortcuts.
+    const MAX_DISCOVERED_SHORTCUTS: usize = 6_000;
     fn visit(
         path: &Path,
         depth: usize,
         out: &mut Vec<PathBuf>,
         warnings: &mut Vec<String>,
     ) -> Result<()> {
-        if depth > 5 || out.len() >= 3000 {
+        if depth > 5 || out.len() >= MAX_DISCOVERED_SHORTCUTS {
             return Ok(());
         }
         for entry in std::fs::read_dir(path)? {
@@ -626,8 +629,8 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
                     .is_some_and(|e| e.eq_ignore_ascii_case("lnk") || e.eq_ignore_ascii_case("url"))
             {
                 out.push(p);
-                if out.len() >= 3000 {
-                    warnings.push("Shortcut scan limit reached (3000); existing catalog entries were retained".into());
+                if out.len() >= MAX_DISCOVERED_SHORTCUTS {
+                    warnings.push(format!("Shortcut scan limit reached ({MAX_DISCOVERED_SHORTCUTS}); existing catalog entries were retained"));
                     break;
                 }
             }
@@ -3676,3 +3679,6 @@ mod profile_attribution_tests;
 
 #[cfg(test)]
 mod identity_index_tests;
+
+#[cfg(test)]
+mod discovery_limit_tests;
