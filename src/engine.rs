@@ -3596,3 +3596,6 @@ mod scan_worker;
 
 #[cfg(test)]
 mod live_import_tests;
+
+#[cfg(test)]
+mod profile_attribution_tests;
