@@ -252,3 +252,158 @@ fn weaker_first_placement_gate_does_not_loosen_replacement_stability() {
         ["challenger"]
     );
 }
+
+#[test]
+fn changing_projects_after_a_gap_keeps_the_rare_manual_shortcut_and_undo_is_respected() {
+    with_profile(|store, rare, _desktop| {
+        // Real inert Internet shortcuts, the production SQLite Store, review,
+        // placement and Undo. Days are synthetic historical records, not a
+        // replay of human interactions or simulated filesystem operations.
+        let mut cfg: Config = store.get("config").unwrap();
+        cfg.automatic = true;
+        cfg.collect = true;
+        cfg.learning_enabled = false;
+        cfg.respect_taskbar_pins = false;
+        cfg.slots = 2;
+        cfg.max_changes = 1;
+        cfg.advantage = 1.5;
+        store.set("config", &cfg).unwrap();
+        store.policy(&rare.id, Policy::Always).unwrap();
+        let make = |name: &str, score: f64, policy: Policy| {
+            let path = store.home.join(format!("{name}.url"));
+            std::fs::write(
+                &path,
+                format!("[InternetShortcut]\r\nURL=https://example.invalid/{name}\r\n"),
+            )
+            .unwrap();
+            let mut app = crate::native::read_link(&path).unwrap();
+            app.seed = score;
+            app.seed_at = if score > 0.0 { now() } else { 0 };
+            app.policy = policy;
+            store.put_app(&app).unwrap();
+            app
+        };
+        let old = make("FormerProject", 50.0, Policy::Auto);
+        let recent = make("CurrentProject", 0.0, Policy::Auto);
+        let excluded = make("ExplicitlyExcluded", 500.0, Policy::Never);
+        let source_bytes: Vec<_> = [rare, &old, &recent, &excluded]
+            .iter()
+            .map(|app| std::fs::read(&app.source).unwrap())
+            .collect();
+
+        engine::apply(store, true).unwrap();
+        let first: State = store.get("state").unwrap();
+        assert_eq!(first.owned.len(), 2);
+        let rare_copy = first
+            .owned
+            .iter()
+            .find(|o| o.app == rare.id)
+            .unwrap()
+            .clone();
+        let old_copy = first
+            .owned
+            .iter()
+            .find(|o| o.app == old.id)
+            .unwrap()
+            .clone();
+        assert!(std::path::Path::new(&rare_copy.path).is_file());
+        assert!(!first.owned.iter().any(|o| o.app == excluded.id));
+
+        // A weekend / project gap with no new observations must not generate
+        // fresh copies or move the protected file.
+        for _ in 0..4 {
+            let unchanged = engine::preview(store, false).unwrap();
+            assert!(unchanged.added.is_empty() && unchanged.removed.is_empty());
+        }
+
+        // Four distinct historical work days on a different project; each
+        // uses the actual daily-history table read by engine::preview.
+        for age_days in (1_i64..=4).rev() {
+            store
+                .db
+                .execute(
+                    "INSERT INTO days(app,date,sessions,launches,seconds) VALUES(?1,?2,12,12,600)",
+                    rusqlite::params![recent.id, now() - age_days * 86400],
+                )
+                .unwrap();
+            let proposal = engine::preview(store, false).unwrap();
+            assert!(proposal.selected.contains(&rare.id));
+            assert!(!proposal.selected.contains(&excluded.id));
+            if age_days == 4 {
+                assert!(
+                    proposal.added.is_empty(),
+                    "one historical day must not churn"
+                );
+            }
+        }
+        let proposal = engine::preview(store, false).unwrap();
+        assert_eq!(proposal.added, vec![recent.id.clone()]);
+        assert_eq!(proposal.removed, vec![old.id.clone()]);
+        assert!(proposal.selected.contains(&rare.id));
+
+        // Quiet-time scheduling is a real gate, even when a change is ready.
+        let mut due: State = store.get("state").unwrap();
+        due.last_review = now() - 8 * 86400;
+        store.set("state", &due).unwrap();
+        assert!(!engine::automatic_review(store, false).unwrap());
+        assert_eq!(store.get::<State>("state").unwrap().owned, due.owned);
+        assert!(engine::automatic_review(store, true).unwrap());
+        let changed: State = store.get("state").unwrap();
+        assert_eq!(changed.owned.len(), 2);
+        let held = changed.owned.iter().find(|o| o.app == rare.id).unwrap();
+        assert_eq!(held.path, rare_copy.path);
+        assert_eq!(held.position, rare_copy.position);
+        assert_eq!(held.file_id, rare_copy.file_id);
+        assert!(changed.owned.iter().any(|o| o.app == recent.id));
+        assert!(!std::path::Path::new(&old_copy.path).exists());
+
+        // The real Undo pauses automation. Repeated quiet reviews must not
+        // immediately replay a decision the user explicitly rejected.
+        engine::command(store, "rollback").unwrap();
+        let restored: State = store.get("state").unwrap();
+        assert!(restored.owned.iter().any(|o| o.app == old.id));
+        assert_eq!(
+            restored
+                .owned
+                .iter()
+                .find(|o| o.app == rare.id)
+                .unwrap()
+                .path,
+            rare_copy.path
+        );
+        assert!(!store.get::<Config>("config").unwrap().automatic);
+        let added_path = changed
+            .owned
+            .iter()
+            .find(|o| o.app == recent.id)
+            .unwrap()
+            .path
+            .clone();
+        for _ in 0..4 {
+            assert!(!engine::automatic_review(store, true).unwrap());
+            assert!(!std::path::Path::new(&added_path).exists());
+        }
+
+        // An unavailable source must not sacrifice a manually protected copy.
+        let offline = store.home.join("RareSource.offline");
+        std::fs::rename(&rare.source, &offline).unwrap();
+        engine::refresh_apps(store).unwrap();
+        let unavailable = store.app(&rare.id).unwrap();
+        assert!(!unavailable.valid);
+        let offline_choice = engine::preview(store, false).unwrap();
+        assert!(offline_choice.selected.contains(&rare.id));
+        assert!(!offline_choice.removed.contains(&rare.id));
+        // Explicit Apply still works while automatic adaptation remains paused.
+        engine::command(store, "apply").unwrap();
+        let offline_state: State = store.get("state").unwrap();
+        assert!(offline_state.owned.iter().any(|o| o.app == rare.id));
+        engine::command(store, "rollback").unwrap();
+        std::fs::rename(&offline, &rare.source).unwrap();
+        engine::refresh_apps(store).unwrap();
+        assert!(store.app(&rare.id).unwrap().valid);
+        assert_eq!(store.app(&rare.id).unwrap().policy, Policy::Always);
+        for (app, original) in [rare, &old, &recent, &excluded].iter().zip(source_bytes) {
+            assert_eq!(std::fs::read(&app.source).unwrap(), original);
+        }
+    });
+}
