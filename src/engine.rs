@@ -423,6 +423,16 @@ impl Drop for TestScanCompletion {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static SCAN_SHORTCUT_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+fn catalog_link(path: &Path) -> Result<App> {
+    #[cfg(test)]
+    SCAN_SHORTCUT_READS.with(|calls| calls.set(calls.get().saturating_add(1)));
+    native::read_link(path)
+}
+
 pub fn refresh_apps(store: &Store) -> Result<()> {
     refresh_apps_guarded(store, || false)
 }
@@ -473,6 +483,12 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
     let state: State = store.get("state")?;
     let scanned_at = now();
     let mut known = store.apps()?;
+    // These originals were already fully parsed and verified on this scan.
+    // Reopening the very same file during folder discovery doubles Shell/URL
+    // parsing for a warm catalog, without contributing different information.
+    // Other aliases, changed targets and unreadable sources still take the
+    // existing discovery and recovery paths below.
+    let mut verified_saved_sources = HashSet::new();
     // A long filesystem scan can overlap a user's explicit shortcut import.
     // Record only the sources seen at scan start; the import transaction may
     // select a different original before these results are ready to persist.
@@ -506,7 +522,7 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
     };
     for app in &mut known {
         ensure!(!cancelled(), "Background catalog scan cancelled");
-        match native::read_link(Path::new(&app.source)) {
+        match catalog_link(Path::new(&app.source)) {
             Ok(actual) if actual.identity() != app.identity() => {
                 // A different launch identity is an actual change, not a temporary
                 // unavailable drive. Do not keep managing the obsolete copy.
@@ -514,6 +530,7 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
                 app.unavailable_since = 0;
             }
             Ok(actual) if actual.valid => {
+                verified_saved_sources.insert(norm(&app.source));
                 // Launch identity is unchanged. Refresh only the non-identity
                 // metadata read from the original file. Never rewrite the
                 // independently managed desktop copy or its user's position.
@@ -692,6 +709,9 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
     }
     for path in paths {
         ensure!(!cancelled(), "Background catalog scan cancelled");
+        if verified_saved_sources.contains(&norm(&path.to_string_lossy())) {
+            continue;
+        }
         if state
             .owned
             .iter()
@@ -714,7 +734,7 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
                 }
             }
         }
-        if let Ok(mut app) = native::read_link(&path) {
+        if let Ok(mut app) = catalog_link(&path) {
             if [executable.as_str(), installed.as_str()].contains(&norm(&app.target).as_str()) {
                 continue;
             }
