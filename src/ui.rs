@@ -5127,3 +5127,6 @@ mod clock_health_tests;
 
 #[cfg(test)]
 mod catalog_snapshot_tests;
+
+#[cfg(test)]
+mod catalog_relevance_tests;
