@@ -270,7 +270,11 @@ fn a_renamed_new_quick_copy_cannot_be_promoted_during_source_outage() {
         std::fs::rename(&offline, &original.source).unwrap();
         refresh_apps(store).unwrap();
         rollback(store).unwrap();
-        assert!(!renamed.exists());
+        // The renamed shortcut is a user-controlled file. Undo intentionally
+        // releases ownership without deleting the user's renamed copy.
+        assert!(renamed.exists());
+        assert!(store.get::<State>("state").unwrap().owned.is_empty());
+        assert_eq!(std::fs::read(&renamed).unwrap(), original_bytes);
         assert_eq!(std::fs::read(&original.source).unwrap(), original_bytes);
     });
 }
