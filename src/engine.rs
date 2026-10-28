@@ -646,6 +646,15 @@ fn refresh_apps_guarded(store: &Store, cancelled: impl Fn() -> bool) -> Result<(
         .collect();
     let executable = norm(&std::env::current_exe()?.to_string_lossy());
     let installed = norm(&store.home.join("desktop-pilot.exe").to_string_lossy());
+    // Scan discovery used to compare every parsed shortcut against the entire
+    // saved catalog, repeatedly rebuilding each identity (quadratic work for
+    // large custom directories). Keep the first matching row just as the
+    // original Vec::position did, including old profiles with duplicate IDs.
+    // Every new identity is indexed as it enters the live discovered catalog.
+    let mut by_identity: HashMap<String, usize> = HashMap::with_capacity(known.len());
+    for (index, saved) in known.iter().enumerate() {
+        by_identity.entry(saved.identity()).or_insert(index);
+    }
     for path in paths {
         ensure!(!cancelled(), "Background catalog scan cancelled");
         if state
@@ -676,7 +685,8 @@ fn refresh_apps_guarded(store: &Store, cancelled: impl Fn() -> bool) -> Result<(
             }
             // Match logical identities as well as IDs so legacy URL identities keep
             // their statistics and policies after correcting URL case handling.
-            let old = known.iter().position(|a| a.identity() == app.identity());
+            let identity = app.identity();
+            let old = by_identity.get(&identity).copied();
             if let Some(index) = old {
                 // Keep a stable verified source, but do not let its cached
                 // validity hide a readable alias during a lock or partial write.
@@ -741,6 +751,7 @@ fn refresh_apps_guarded(store: &Store, cancelled: impl Fn() -> bool) -> Result<(
                 }
                 known[index] = app;
             } else {
+                by_identity.entry(identity).or_insert(known.len());
                 known.push(app);
             }
         }
