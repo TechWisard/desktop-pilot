@@ -18,7 +18,9 @@ fn with_store(check: impl FnOnce(&Store)) {
 fn write_count(store: &Store) -> i64 {
     store
         .db
-        .query_row("SELECT COUNT(*) FROM learning_write_audit", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM learning_write_audit", [], |row| {
+            row.get(0)
+        })
         .unwrap()
 }
 
@@ -64,7 +66,11 @@ fn idle_review_does_not_rewrite_unchanged_learning_progress_across_modes() {
         for _ in 0..5 {
             assert!(!automatic_review(store, false).unwrap());
         }
-        assert_eq!(write_count(store), 0, "idle reviews must not touch the writer");
+        assert_eq!(
+            write_count(store),
+            0,
+            "idle reviews must not touch the writer"
+        );
         let saved: Progress = store.get("learning").unwrap();
         assert_eq!(saved.sessions, progress.sessions);
         assert_eq!(saved.completed_at, 0);
@@ -104,7 +110,11 @@ fn learning_completion_is_persisted_once_and_survives_repeated_reviews() {
         for _ in 0..6 {
             assert!(!automatic_review(store, false).unwrap());
         }
-        assert_eq!(write_count(store), 1, "completed progress must not be rewritten");
+        assert_eq!(
+            write_count(store),
+            1,
+            "completed progress must not be rewritten"
+        );
         assert_eq!(
             store.get::<Progress>("learning").unwrap().completed_at,
             completed.completed_at
