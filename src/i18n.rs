@@ -548,6 +548,10 @@ fn translate(value: &str, russian: bool) -> String {
             "Shortcut scan limit reached (3000); existing catalog entries were retained",
         ),
         (
+            "Достигнут предел поиска в 6000 ярлыков; прежние записи сохранены",
+            "Shortcut scan limit reached (6000); existing catalog entries were retained",
+        ),
+        (
             "Закрепления панели задач не проверены. Обновите список или отключите их учёт в настройках.",
             "Taskbar pins could not be verified. Refresh the list or turn off taskbar pin filtering in Settings.",
         ),
@@ -878,6 +882,24 @@ mod tests {
             "Slots must be between 1 and 8"
         );
         assert_eq!(translate("Sample app", false), "Sample app");
+    }
+
+    #[test]
+    fn current_and_historical_scan_limit_messages_translate_both_ways() {
+        let messages = [
+            (
+                "Shortcut scan limit reached (3000); existing catalog entries were retained",
+                "Достигнут предел поиска в 3000 ярлыков; прежние записи сохранены",
+            ),
+            (
+                "Shortcut scan limit reached (6000); existing catalog entries were retained",
+                "Достигнут предел поиска в 6000 ярлыков; прежние записи сохранены",
+            ),
+        ];
+        for (english, russian) in messages {
+            assert_eq!(translate(english, true), russian);
+            assert_eq!(translate(russian, false), english);
+        }
     }
 
     #[test]
