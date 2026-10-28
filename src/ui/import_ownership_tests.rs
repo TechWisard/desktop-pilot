@@ -254,6 +254,60 @@ fn changed_managed_copy_is_rejected_without_blocking_other_imports() {
 }
 
 #[test]
+fn changing_only_a_quick_copys_icon_cannot_be_silently_reimported() {
+    // Both the original path and a just-renamed copy must be recognized as
+    // managed even when their launch target and arguments are unchanged.
+    for renamed in [false, true] {
+        with_profile(|settings, app| {
+            let copy = owned(settings);
+            let original_bytes = std::fs::read(&app.source).unwrap();
+            let before = data(settings, app);
+            let changed = b"[InternetShortcut]\r\nURL=https://example.invalid/Work\r\nIconFile=C:\\Icons\\Personal.ico\r\nIconIndex=4\r\n";
+            let changed_path = if renamed {
+                let path = settings.store.home.join("Desktop").join("My icon.url");
+                std::fs::rename(&copy.path, &path).unwrap();
+                path
+            } else {
+                PathBuf::from(&copy.path)
+            };
+            std::fs::write(&changed_path, changed).unwrap();
+            let parsed = native::read_link(&changed_path).unwrap();
+            assert_eq!(
+                parsed.identity(),
+                app.identity(),
+                "This fixture changes icon bytes, not launch identity"
+            );
+            let other = settings.store.home.join("Unrelated original.url");
+            std::fs::write(
+                &other,
+                b"[InternetShortcut]\r\nURL=https://example.invalid/Unrelated\r\n",
+            )
+            .unwrap();
+            let unrelated = native::read_link(&other).unwrap();
+
+            let result = import(settings, vec![changed_path.clone(), other.clone()]).unwrap();
+            assert_eq!(result.failed.len(), 1, "Edited managed shortcut must not be accepted");
+            assert_eq!(norm(&result.failed[0].0.to_string_lossy()), norm(&changed_path.to_string_lossy()));
+            assert!(result.failed[0].1.contains("This quick shortcut was changed"));
+            assert_eq!(result.added.len(), 1, "Unrelated valid import must still work");
+            assert_eq!(result.added[0].0, unrelated.id);
+            assert_eq!(data(settings, app), before);
+            assert_eq!(settings.store.apps().unwrap().len(), 2);
+            assert_eq!(std::fs::read(&app.source).unwrap(), original_bytes);
+            assert_eq!(std::fs::read(&changed_path).unwrap(), changed);
+
+            // The existing reconciliation is still responsible for releasing
+            // a manually edited copy, never for overwriting the user's bytes.
+            engine::reconcile_manual(&settings.store).unwrap();
+            assert!(settings.store.get::<State>("state").unwrap().owned.is_empty());
+            assert_eq!(settings.store.app(&app.id).unwrap().policy, Policy::Never);
+            assert_eq!(std::fs::read(&changed_path).unwrap(), changed);
+            assert_eq!(std::fs::read(&app.source).unwrap(), original_bytes);
+        });
+    }
+}
+
+#[test]
 fn unfinished_changes_block_import_without_mutating_the_catalog() {
     with_profile(|settings, app| {
         settings
