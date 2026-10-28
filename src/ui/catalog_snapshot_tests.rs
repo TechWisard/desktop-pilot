@@ -165,7 +165,6 @@ fn invalid_preview_settings_preserve_saved_search_without_a_second_catalog_read(
     });
 }
 
-
 #[test]
 fn unchanged_settings_refreshes_do_not_reparse_a_large_saved_catalog() {
     with_saved_catalog(1_000, |settings, rare| {
@@ -188,7 +187,12 @@ fn unchanged_settings_refreshes_do_not_reparse_a_large_saved_catalog() {
         });
         assert_eq!(settings.apps.len(), 1_001);
         assert_eq!(
-            settings.preview.as_ref().unwrap().selected.contains(&rare.id),
+            settings
+                .preview
+                .as_ref()
+                .unwrap()
+                .selected
+                .contains(&rare.id),
             original
         );
     });
@@ -207,10 +211,22 @@ fn settings_refresh_detects_both_external_and_same_connection_changes() {
         writer.put_app(&changed).unwrap();
         settings.reload().unwrap();
         assert_eq!(
-            settings.apps.iter().find(|app| app.id == rare.id).unwrap().policy,
+            settings
+                .apps
+                .iter()
+                .find(|app| app.id == rare.id)
+                .unwrap()
+                .policy,
             Policy::Never
         );
-        assert!(!settings.preview.as_ref().unwrap().selected.contains(&rare.id));
+        assert!(
+            !settings
+                .preview
+                .as_ref()
+                .unwrap()
+                .selected
+                .contains(&rare.id)
+        );
         crate::store::CATALOG_READS.with(|reads| assert_eq!(reads.get(), 1));
 
         // PRAGMA data_version does not change for writes on the same connection.
@@ -218,10 +234,22 @@ fn settings_refresh_detects_both_external_and_same_connection_changes() {
         settings.store.policy(&rare.id, Policy::Always).unwrap();
         settings.reload().unwrap();
         assert_eq!(
-            settings.apps.iter().find(|app| app.id == rare.id).unwrap().policy,
+            settings
+                .apps
+                .iter()
+                .find(|app| app.id == rare.id)
+                .unwrap()
+                .policy,
             Policy::Always
         );
-        assert!(settings.preview.as_ref().unwrap().selected.contains(&rare.id));
+        assert!(
+            settings
+                .preview
+                .as_ref()
+                .unwrap()
+                .selected
+                .contains(&rare.id)
+        );
         crate::store::CATALOG_READS.with(|reads| assert_eq!(reads.get(), 2));
     });
 }
@@ -234,7 +262,9 @@ fn settings_refresh_keeps_worker_status_and_completed_command_feedback_current()
         for _ in 0..3 {
             settings.reload().unwrap();
         }
-        worker.set("status", &"Changes paused: source unavailable").unwrap();
+        worker
+            .set("status", &"Changes paused: source unavailable")
+            .unwrap();
         settings.reload().unwrap();
         assert_eq!(settings.status, "Changes paused: source unavailable");
 
