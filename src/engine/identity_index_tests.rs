@@ -63,10 +63,16 @@ fn large_saved_catalog_rescans_require_linear_identity_work_and_preserve_manual_
         let history_before = serde_json::to_value(store.days().unwrap()).unwrap();
 
         IDENTITY_EVALUATIONS.with(|calls| calls.set(0));
+        SCAN_SHORTCUT_READS.with(|calls| calls.set(0));
         let started = Instant::now();
         refresh_apps(&store).unwrap();
         let elapsed = started.elapsed();
         let evaluations = IDENTITY_EVALUATIONS.with(|calls| calls.get());
+        let parses = SCAN_SHORTCUT_READS.with(|calls| calls.get());
+        assert!(
+            parses <= size + 8,
+            "Stable saved originals should be parsed once per rescan, not twice: {parses} for {size}"
+        );
         println!(
             "saved_catalog={} identity_evaluations={} rescan_ms={} (CI fixture, not human latency)",
             size,

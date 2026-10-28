@@ -423,6 +423,16 @@ impl Drop for TestScanCompletion {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static SCAN_SHORTCUT_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+fn catalog_link(path: &Path) -> Result<App> {
+    #[cfg(test)]
+    SCAN_SHORTCUT_READS.with(|calls| calls.set(calls.get().saturating_add(1)));
+    native::read_link(path)
+}
+
 pub fn refresh_apps(store: &Store) -> Result<()> {
     refresh_apps_guarded(store, || false)
 }
@@ -506,7 +516,7 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
     };
     for app in &mut known {
         ensure!(!cancelled(), "Background catalog scan cancelled");
-        match native::read_link(Path::new(&app.source)) {
+        match catalog_link(Path::new(&app.source)) {
             Ok(actual) if actual.identity() != app.identity() => {
                 // A different launch identity is an actual change, not a temporary
                 // unavailable drive. Do not keep managing the obsolete copy.
@@ -714,7 +724,7 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
                 }
             }
         }
-        if let Ok(mut app) = native::read_link(&path) {
+        if let Ok(mut app) = catalog_link(&path) {
             if [executable.as_str(), installed.as_str()].contains(&norm(&app.target).as_str()) {
                 continue;
             }
