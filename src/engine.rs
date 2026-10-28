@@ -3702,3 +3702,6 @@ mod identity_index_tests;
 
 #[cfg(test)]
 mod discovery_limit_tests;
+
+#[cfg(test)]
+mod idle_review_tests;
