@@ -286,10 +286,25 @@ fn changing_only_a_quick_copys_icon_cannot_be_silently_reimported() {
             let unrelated = native::read_link(&other).unwrap();
 
             let result = import(settings, vec![changed_path.clone(), other.clone()]).unwrap();
-            assert_eq!(result.failed.len(), 1, "Edited managed shortcut must not be accepted");
-            assert_eq!(norm(&result.failed[0].0.to_string_lossy()), norm(&changed_path.to_string_lossy()));
-            assert!(result.failed[0].1.contains("This quick shortcut was changed"));
-            assert_eq!(result.added.len(), 1, "Unrelated valid import must still work");
+            assert_eq!(
+                result.failed.len(),
+                1,
+                "Edited managed shortcut must not be accepted"
+            );
+            assert_eq!(
+                norm(&result.failed[0].0.to_string_lossy()),
+                norm(&changed_path.to_string_lossy())
+            );
+            assert!(
+                result.failed[0]
+                    .1
+                    .contains("This quick shortcut was changed")
+            );
+            assert_eq!(
+                result.added.len(),
+                1,
+                "Unrelated valid import must still work"
+            );
             assert_eq!(result.added[0].0, unrelated.id);
             assert_eq!(data(settings, app), before);
             assert_eq!(settings.store.apps().unwrap().len(), 2);
@@ -299,7 +314,14 @@ fn changing_only_a_quick_copys_icon_cannot_be_silently_reimported() {
             // The existing reconciliation is still responsible for releasing
             // a manually edited copy, never for overwriting the user's bytes.
             engine::reconcile_manual(&settings.store).unwrap();
-            assert!(settings.store.get::<State>("state").unwrap().owned.is_empty());
+            assert!(
+                settings
+                    .store
+                    .get::<State>("state")
+                    .unwrap()
+                    .owned
+                    .is_empty()
+            );
             assert_eq!(settings.store.app(&app.id).unwrap().policy, Policy::Never);
             assert_eq!(std::fs::read(&changed_path).unwrap(), changed);
             assert_eq!(std::fs::read(&app.source).unwrap(), original_bytes);
