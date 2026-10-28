@@ -136,7 +136,7 @@ fn a_truly_unambiguous_plain_shortcut_still_learns_and_undoes_safely() {
         sample_and_store(store, observed);
         assert_eq!(store.days().unwrap().len(), 1);
         let choice = preview(store, true).unwrap();
-        assert_eq!(choice.selected, [plain.id.clone()]);
+        assert_eq!(choice.selected.as_slice(), std::slice::from_ref(&plain.id));
         apply(store, true).unwrap();
         let state: State = store.get("state").unwrap();
         assert_eq!(state.owned.len(), 1);
