@@ -22,20 +22,29 @@ fn large_saved_catalog_rescans_require_linear_identity_work_and_preserve_manual_
         let desktop = home.join("Desktop");
         let sources = desktop.join("Projects");
         let store = Store::open(&home).unwrap();
-        store.set("test_desktop", &desktop.to_string_lossy()).unwrap();
-        store.set("config", &Config {
-            slots: 2,
-            collect: false,
-            automatic: false,
-            learning_enabled: false,
-            respect_taskbar_pins: false,
-            ..Default::default()
-        }).unwrap();
+        store
+            .set("test_desktop", &desktop.to_string_lossy())
+            .unwrap();
+        store
+            .set(
+                "config",
+                &Config {
+                    slots: 2,
+                    collect: false,
+                    automatic: false,
+                    learning_enabled: false,
+                    respect_taskbar_pins: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         for i in 0..size {
             let path = sources.join(format!("Project-{i:04}.url"));
-            std::fs::write(path, format!(
-                "[InternetShortcut]\r\nURL=https://example.invalid/projects/{i:04}\r\n"
-            )).unwrap();
+            std::fs::write(
+                path,
+                format!("[InternetShortcut]\r\nURL=https://example.invalid/projects/{i:04}\r\n"),
+            )
+            .unwrap();
         }
         refresh_apps(&store).unwrap();
         let apps = store.apps().unwrap();
@@ -60,7 +69,9 @@ fn large_saved_catalog_rescans_require_linear_identity_work_and_preserve_manual_
         let evaluations = IDENTITY_EVALUATIONS.with(|calls| calls.get());
         println!(
             "saved_catalog={} identity_evaluations={} rescan_ms={} (CI fixture, not human latency)",
-            size, evaluations, elapsed.as_millis()
+            size,
+            evaluations,
+            elapsed.as_millis()
         );
         assert!(
             evaluations <= size * 10 + 100,
@@ -74,7 +85,10 @@ fn large_saved_catalog_rescans_require_linear_identity_work_and_preserve_manual_
             serde_json::to_value(store.get::<State>("state").unwrap()).unwrap(),
             serde_json::to_value(&owned_before).unwrap()
         );
-        assert_eq!(serde_json::to_value(store.days().unwrap()).unwrap(), history_before);
+        assert_eq!(
+            serde_json::to_value(store.days().unwrap()).unwrap(),
+            history_before
+        );
         let plan = preview(&store, false).unwrap();
         assert!(plan.added.is_empty() && plan.removed.is_empty());
         assert_eq!(std::fs::read(&important.source).unwrap(), original_bytes);
