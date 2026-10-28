@@ -251,8 +251,7 @@ fn weaker_first_placement_gate_does_not_loosen_replacement_stability() {
         select(&strong, &strong_rank, &state, &config, false),
         ["challenger"]
     );
-}
-
+} 
 
 #[test]
 fn changing_projects_after_a_gap_keeps_the_rare_manual_shortcut_and_undo_is_respected() {
@@ -295,8 +294,18 @@ fn changing_projects_after_a_gap_keeps_the_rare_manual_shortcut_and_undo_is_resp
         engine::apply(store, true).unwrap();
         let first: State = store.get("state").unwrap();
         assert_eq!(first.owned.len(), 2);
-        let rare_copy = first.owned.iter().find(|o| o.app == rare.id).unwrap().clone();
-        let old_copy = first.owned.iter().find(|o| o.app == old.id).unwrap().clone();
+        let rare_copy = first
+            .owned
+            .iter()
+            .find(|o| o.app == rare.id)
+            .unwrap()
+            .clone();
+        let old_copy = first
+            .owned
+            .iter()
+            .find(|o| o.app == old.id)
+            .unwrap()
+            .clone();
         assert!(std::path::Path::new(&rare_copy.path).is_file());
         assert!(!first.owned.iter().any(|o| o.app == excluded.id));
 
@@ -310,15 +319,21 @@ fn changing_projects_after_a_gap_keeps_the_rare_manual_shortcut_and_undo_is_resp
         // Four distinct historical work days on a different project; each
         // uses the actual daily-history table read by engine::preview.
         for age_days in (1_i64..=4).rev() {
-            store.db.execute(
-                "INSERT INTO days(app,date,sessions,launches,seconds) VALUES(?1,?2,12,12,600)",
-                rusqlite::params![recent.id, now() - age_days * 86400],
-            ).unwrap();
+            store
+                .db
+                .execute(
+                    "INSERT INTO days(app,date,sessions,launches,seconds) VALUES(?1,?2,12,12,600)",
+                    rusqlite::params![recent.id, now() - age_days * 86400],
+                )
+                .unwrap();
             let proposal = engine::preview(store, false).unwrap();
             assert!(proposal.selected.contains(&rare.id));
             assert!(!proposal.selected.contains(&excluded.id));
             if age_days == 4 {
-                assert!(proposal.added.is_empty(), "one historical day must not churn");
+                assert!(
+                    proposal.added.is_empty(),
+                    "one historical day must not churn"
+                );
             }
         }
         let proposal = engine::preview(store, false).unwrap();
@@ -347,11 +362,26 @@ fn changing_projects_after_a_gap_keeps_the_rare_manual_shortcut_and_undo_is_resp
         engine::command(store, "rollback").unwrap();
         let restored: State = store.get("state").unwrap();
         assert!(restored.owned.iter().any(|o| o.app == old.id));
-        assert_eq!(restored.owned.iter().find(|o| o.app == rare.id).unwrap().path, rare_copy.path);
+        assert_eq!(
+            restored
+                .owned
+                .iter()
+                .find(|o| o.app == rare.id)
+                .unwrap()
+                .path,
+            rare_copy.path
+        );
         assert!(!store.get::<Config>("config").unwrap().automatic);
+        let added_path = changed
+            .owned
+            .iter()
+            .find(|o| o.app == recent.id)
+            .unwrap()
+            .path
+            .clone();
         for _ in 0..4 {
             assert!(!engine::automatic_review(store, true).unwrap());
-            assert!(!std::path::Path::new(&changed.owned.iter().find(|o| o.app == recent.id).unwrap().path).exists());
+            assert!(!std::path::Path::new(&added_path).exists());
         }
 
         // An unavailable source must not sacrifice a manually protected copy.
