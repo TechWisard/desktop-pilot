@@ -303,7 +303,7 @@ pub fn rank(apps: &[App], days: &[Day], cfg: &Config, time: i64) -> Vec<Ranked> 
             0.0
         };
         let mut active_days = HashSet::new();
-        let (mut launches, mut seconds) = (0u32, 0u32);
+        let (mut launches, mut seconds, mut sessions) = (0u32, 0u32, 0u32);
         for d in history.get(app.id.as_str()).into_iter().flatten() {
             let age = time.saturating_sub(d.date) as f64 / 86400.0;
             let value = 2.0 * f64::from(d.sessions.min(12))
@@ -314,6 +314,7 @@ pub fn rank(apps: &[App], days: &[Day], cfg: &Config, time: i64) -> Vec<Ranked> 
             }
             launches = launches.saturating_add(d.launches);
             seconds = seconds.saturating_add(d.seconds);
+            sessions = sessions.saturating_add(d.sessions);
         }
         let enough = active_days.len() >= cfg.min_days
             || (seed_is_valid && time.saturating_sub(app.seed_at) <= 30 * 86400);
@@ -330,7 +331,21 @@ pub fn rank(apps: &[App], days: &[Day], cfg: &Config, time: i64) -> Vec<Ranked> 
         } else if score < MIN_NEW_SHORTCUT_SCORE {
             (false, "Пока мало активности для нового быстрого ярлыка")
         } else {
-            (true, "Повторяемое использование; есть польза прямого входа")
+            // Explain the evidence actually observed, not an assumed pattern.
+            // Imported historical seed scores can qualify without any new
+            // sessions; one focused visit is not repeated usage.
+            let evidence = if active_days.len() > 1 {
+                "Использование в разные дни; быстрый ярлык может быть полезен"
+            } else if sessions > 1 {
+                "Несколько сеансов за день; быстрый ярлык может быть полезен"
+            } else if seconds >= 300 {
+                "Продолжительная работа за день; быстрый ярлык может быть полезен"
+            } else if seed_is_valid {
+                "Сохранённый исторический приоритет; свежих наблюдений пока мало"
+            } else {
+                "Наблюдалась работа с приложением; быстрый ярлык может быть полезен"
+            };
+            (true, evidence)
         };
         output.push(Ranked {
             id: app.id.clone(),
@@ -1245,3 +1260,6 @@ mod cold_start_tests;
 
 #[cfg(test)]
 mod manual_mode_tests;
+
+#[cfg(test)]
+mod evidence_reason_tests;
