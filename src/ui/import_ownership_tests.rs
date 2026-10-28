@@ -456,7 +456,6 @@ fn importing_a_new_source_signals_the_live_catalog_once_without_reimport_noise()
     });
 }
 
-
 /// An import is an explicit user action. An unchanged managed quick copy is
 /// already in the catalog, not a newly added application. Exercise the actual
 /// asynchronous Settings entry and the notice users see after completion.
@@ -469,7 +468,10 @@ fn import_via_settings_with_notice(
     for _ in 0..200 {
         settings.poll_jobs(&context);
         if settings.job.is_none() {
-            let notice = settings.notice.as_ref().expect("import must report its result");
+            let notice = settings
+                .notice
+                .as_ref()
+                .expect("import must report its result");
             return (notice.kind, notice.text.clone());
         }
         std::thread::sleep(Duration::from_millis(25));
@@ -482,10 +484,8 @@ fn reimporting_an_existing_copy_must_not_claim_a_new_shortcut() {
     with_profile(|settings, app| {
         let quick = owned(settings);
         let before = data(settings, app);
-        let (kind, notice) = import_via_settings_with_notice(
-            settings,
-            vec![PathBuf::from(&quick.path)],
-        );
+        let (kind, notice) =
+            import_via_settings_with_notice(settings, vec![PathBuf::from(&quick.path)]);
         assert!(
             matches!(kind, NoticeKind::Info),
             "An unchanged quick-copy import is not a new addition: {notice}"
@@ -509,7 +509,8 @@ fn mixed_new_and_existing_imports_must_report_only_one_new_shortcut() {
         std::fs::write(
             &fresh,
             b"[InternetShortcut]\r\nURL=https://example.invalid/ActuallyNew\r\n",
-        ).unwrap();
+        )
+        .unwrap();
         let fresh_id = native::read_link(&fresh).unwrap().id;
         let (kind, notice) = import_via_settings_with_notice(
             settings,
@@ -526,8 +527,10 @@ fn mixed_new_and_existing_imports_must_report_only_one_new_shortcut() {
         );
         assert_eq!(settings.store.apps().unwrap().len(), 2);
         assert_eq!(settings.store.app(&app.id).unwrap().source, app.source);
-        assert_eq!(settings.store.app(&fresh_id).unwrap().source,
-            native::read_link(&fresh).unwrap().source);
+        assert_eq!(
+            settings.store.app(&fresh_id).unwrap().source,
+            native::read_link(&fresh).unwrap().source
+        );
         assert_eq!(std::fs::read(&app.source).unwrap(), original_bytes);
         engine::command(&settings.store, "rollback").unwrap();
         assert!(Path::new(&app.source).exists());
