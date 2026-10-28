@@ -308,23 +308,9 @@ fn preserve_app_preferences(app: &mut App, existing: Option<&App>) {
     }
 }
 
+#[cfg(test)]
 fn prepare_imported_app(app: &mut App, existing: &HashMap<String, App>) -> Result<()> {
-    let previous = if let Some(previous) = existing.get(&app.id) {
-        Some(previous)
-    } else {
-        // Earlier releases used different IDs for URLs. Keep the stable catalog
-        // ID so a repeated import retains its usage history and desktop ownership.
-        let identity = app.identity();
-        let mut matches = existing.values().filter(|old| old.identity() == identity);
-        let previous = matches.next();
-        ensure!(
-            matches.next().is_none(),
-            "Several saved shortcuts match this app. Refresh the list before importing it again."
-        );
-        previous
-    };
-    preserve_app_preferences(app, previous);
-    Ok(())
+    ImportCatalog::new(existing.values().cloned()).prepare(app)
 }
 
 fn should_resume_background(disabled: bool, base: &Config, draft: &Config) -> bool {
@@ -1118,6 +1104,10 @@ impl Settings {
         let home = self.store.home.clone();
         self.start_job("Adding shortcuts…", move || {
             let _com = native::Com::new()?;
+            #[cfg(test)]
+            let import_started = Instant::now();
+            #[cfg(test)]
+            IDENTITY_EVALUATIONS.with(|calls| calls.set(0));
             let store = Store::open(&home)?;
             // Import changes source ownership too. Serialize it with placement
             // and Undo, and never alter the source set of an unfinished change.
@@ -1136,13 +1126,11 @@ impl Settings {
                     Err(error) => result.failed.push((path, format!("{error:#}"))),
                 }
             }
+            #[cfg(test)]
+            let transaction_started = Instant::now();
             store.transaction(|| {
                 let mut catalog_changed = false;
-                let mut existing: HashMap<_, _> = store
-                    .apps()?
-                    .into_iter()
-                    .map(|app| (app.id.clone(), app))
-                    .collect();
+                let mut existing = ImportCatalog::new(store.apps()?);
                 // Snapshot only touched entries, not the entire saved catalog.
                 // The final classification is based on what actually persisted,
                 // regardless of duplicate paths or import ordering.
@@ -1164,7 +1152,7 @@ impl Settings {
                             continue;
                         }
                     }
-                    if let Err(error) = prepare_imported_app(&mut app, &existing) {
+                    if let Err(error) = existing.prepare(&mut app) {
                         result
                             .failed
                             .push((PathBuf::from(&app.source), format!("{error:#}")));
@@ -1207,6 +1195,13 @@ impl Settings {
                 }
                 Ok(())
             })?;
+            #[cfg(test)]
+            import_scaling_tests::record(
+                &home,
+                IDENTITY_EVALUATIONS.with(|calls| calls.get()),
+                import_started.elapsed(),
+                transaction_started.elapsed(),
+            );
             Ok(JobResult::Added(result))
         });
     }
@@ -5163,3 +5158,9 @@ mod catalog_snapshot_tests;
 
 #[cfg(test)]
 mod catalog_relevance_tests;
+
+#[cfg(test)]
+mod import_scaling_tests;
+
+mod import_catalog;
+use import_catalog::ImportCatalog;

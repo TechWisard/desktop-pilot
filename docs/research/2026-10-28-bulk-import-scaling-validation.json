@@ -1,0 +1,109 @@
+{
+  "baseline_commit": "6c27fe636ad4b727a935763ae9ab04463d5662b5",
+  "baseline_production_ui_blob": "2d9813022d0de13316c48bfae0e3c36ab6fb45f3",
+  "before": [
+    {
+      "entries": 100,
+      "metrics": {
+        "identity_calls": 5250,
+        "import_seconds": 0.0855695,
+        "transaction_seconds": 0.0646541
+      },
+      "new_entries": 100,
+      "offline_cached_settings_search_ms": 5.3936,
+      "originals_preserved": true,
+      "saved_settings_search_ms": 5.5047999999999995,
+      "undo_passed": true,
+      "unexpected_placements": 0
+    },
+    {
+      "entries": 1000,
+      "metrics": {
+        "identity_calls": 502500,
+        "import_seconds": 2.4132424,
+        "transaction_seconds": 2.2351646
+      },
+      "new_entries": 1000,
+      "offline_cached_settings_search_ms": 32.0103,
+      "originals_preserved": true,
+      "saved_settings_search_ms": 30.586499999999997,
+      "undo_passed": true,
+      "unexpected_placements": 0
+    },
+    {
+      "entries": 5000,
+      "metrics": {
+        "identity_calls": 12512500,
+        "import_seconds": 51.6961617,
+        "transaction_seconds": 50.7255203
+      },
+      "new_entries": 5000,
+      "offline_cached_settings_search_ms": 155.585,
+      "originals_preserved": true,
+      "saved_settings_search_ms": 155.8378,
+      "undo_passed": true,
+      "unexpected_placements": 0
+    }
+  ],
+  "after": [
+    {
+      "entries": 100,
+      "metrics": {
+        "identity_calls": 301,
+        "import_seconds": 0.0721094,
+        "transaction_seconds": 0.0523927
+      },
+      "new_entries": 100,
+      "offline_cached_settings_search_ms": 5.3054,
+      "originals_preserved": true,
+      "saved_settings_search_ms": 5.7834,
+      "undo_passed": true,
+      "unexpected_placements": 0
+    },
+    {
+      "entries": 1000,
+      "metrics": {
+        "identity_calls": 3001,
+        "import_seconds": 0.436417,
+        "transaction_seconds": 0.2606694
+      },
+      "new_entries": 1000,
+      "offline_cached_settings_search_ms": 32.5646,
+      "originals_preserved": true,
+      "saved_settings_search_ms": 31.0394,
+      "undo_passed": true,
+      "unexpected_placements": 0
+    },
+    {
+      "entries": 5000,
+      "metrics": {
+        "identity_calls": 15001,
+        "import_seconds": 2.2927327,
+        "transaction_seconds": 1.425258
+      },
+      "new_entries": 5000,
+      "offline_cached_settings_search_ms": 155.1772,
+      "originals_preserved": true,
+      "saved_settings_search_ms": 154.4303,
+      "undo_passed": true,
+      "unexpected_placements": 0
+    }
+  ],
+  "baseline_tests": {
+    "passed": 3,
+    "failed": 1
+  },
+  "after_targeted_tests_passed": 4,
+  "after_full_tests_passed": 271,
+  "native_checks_passed": 28,
+  "publication_guards_passed": 9,
+  "format_clippy_build_readme": "passed",
+  "workflow_run": "https://github.com/TechWisard/desktop-pilot/actions/runs/40710774472",
+  "environment": "GitHub-hosted windows-2022; Rust 1.93.1; debug tests; serial targeted comparison",
+  "limits": [
+    "Single paired CI run, timings are diagnostic, not a human productivity study",
+    "Reopened Settings connection is not a cold OS disk-cache or full process-start measurement",
+    "No physical Windows 11 desktop or real network disconnect",
+    "Final PR/main/release checks are separate"
+  ]
+}
