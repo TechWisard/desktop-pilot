@@ -128,7 +128,13 @@ fn reopening_large_saved_catalog_keeps_immediate_search_and_one_catalog_read() {
             crate::store::CATALOG_READS.with(|reads| reads.set(0));
             settings.reload().unwrap();
             crate::store::CATALOG_READS.with(|reads| {
-                assert_eq!(reads.get(), 1, "Refresh must reuse its catalog snapshot")
+                assert_eq!(reads.get(), 0, "Unchanged poll must reuse saved catalog")
+            });
+            // Explicit invalidation still executes the entire real snapshot path.
+            settings.catalog_checkpoint = None;
+            settings.reload().unwrap();
+            crate::store::CATALOG_READS.with(|reads| {
+                assert_eq!(reads.get(), 1, "Full refresh must parse the catalog once")
             });
             assert_eq!(settings.apps.len(), size + 1);
             assert_eq!(
@@ -293,5 +299,22 @@ fn settings_refresh_keeps_worker_status_and_completed_command_feedback_current()
         assert_eq!(settings.active_commands, 0);
         assert!(settings.pending_commands.is_empty());
         assert_eq!(settings.notice.as_ref().unwrap().text, "Applied safely");
+    });
+}
+
+
+#[test]
+fn elapsed_snapshot_checkpoint_rechecks_time_dependent_recommendations() {
+    with_saved_catalog(100, |settings, rare| {
+        let (version, changes, _) = settings.catalog_checkpoint.unwrap();
+        settings.catalog_checkpoint = Some((
+            version,
+            changes,
+            Instant::now() - Duration::from_secs(61),
+        ));
+        crate::store::CATALOG_READS.with(|reads| reads.set(0));
+        settings.reload().unwrap();
+        crate::store::CATALOG_READS.with(|reads| assert_eq!(reads.get(), 1));
+        assert!(settings.preview.as_ref().unwrap().selected.contains(&rare.id));
     });
 }
