@@ -3617,3 +3617,6 @@ mod live_import_tests;
 
 #[cfg(test)]
 mod profile_attribution_tests;
+
+#[cfg(test)]
+mod identity_index_tests;
