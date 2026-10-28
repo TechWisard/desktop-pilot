@@ -69,9 +69,9 @@ fn large_saved_catalog_rescans_require_linear_identity_work_and_preserve_manual_
         let elapsed = started.elapsed();
         let evaluations = IDENTITY_EVALUATIONS.with(|calls| calls.get());
         let parses = SCAN_SHORTCUT_READS.with(|calls| calls.get());
-        assert!(
-            parses <= size + 8,
-            "Stable saved originals should be parsed once per rescan, not twice: {parses} for {size}"
+        assert_eq!(
+            parses, size,
+            "A stable saved original must be parsed once per scan: {parses} for {size}"
         );
         println!(
             "saved_catalog={} identity_evaluations={} rescan_ms={} (CI fixture, not human latency)",
