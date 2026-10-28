@@ -204,8 +204,15 @@ pub struct App {
     #[serde(default)]
     pub observed_roots: Vec<String>,
 }
+#[cfg(test)]
+thread_local! {
+    pub(crate) static IDENTITY_EVALUATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl App {
     pub fn identity(&self) -> String {
+        #[cfg(test)]
+        IDENTITY_EVALUATIONS.with(|calls| calls.set(calls.get().saturating_add(1)));
         format!(
             "{}\n{}\n{}",
             target_identity(&self.target),
