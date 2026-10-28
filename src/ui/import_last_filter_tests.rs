@@ -47,8 +47,16 @@ fn consecutive_noop_imports_display_the_actual_last_selection_without_a_database
     with_profile(|settings, anchor| {
         let first = settings.store.home.join("Project one.url");
         let second = settings.store.home.join("Project two.url");
-        std::fs::write(&first, b"[InternetShortcut]\r\nURL=https://example.invalid/project-one\r\n").unwrap();
-        std::fs::write(&second, b"[InternetShortcut]\r\nURL=https://example.invalid/project-two\r\n").unwrap();
+        std::fs::write(
+            &first,
+            b"[InternetShortcut]\r\nURL=https://example.invalid/project-one\r\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &second,
+            b"[InternetShortcut]\r\nURL=https://example.invalid/project-two\r\n",
+        )
+        .unwrap();
         let first_id = native::read_link(&first).unwrap().id;
         let second_id = native::read_link(&second).unwrap().id;
         let original = std::fs::read(&anchor.source).unwrap();
