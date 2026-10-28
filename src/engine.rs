@@ -1682,20 +1682,38 @@ pub fn command(store: &Store, action: &str) -> Result<String> {
 
 pub fn observe_match(apps: &[App], process: &str) -> Option<String> {
     let process = norm(process);
-    let matching: Vec<_> = apps
-        .iter()
-        .filter(|a| {
-            a.valid
-                && (norm(&a.target) == process
-                    || a.observed_roots.iter().any(|root| {
-                        let root = norm(root).trim_end_matches('\\').to_owned();
-                        root.len() > 5 && process.starts_with(&(root + "\\"))
-                    }))
-        })
+    let mut matching = Vec::new();
+    let mut profile_sensitive_target = false;
+    for app in apps {
+        let direct = norm(&app.target) == process;
+        // A foreground process path contains no shortcut launch arguments.
+        // Even an unavailable saved profile may still be running, so do not
+        // infer a profile merely because another profile is currently valid.
+        if direct && !app.arguments.trim().is_empty() {
+            profile_sensitive_target = true;
+        }
+        if !app.valid {
+            continue;
+        }
+        // A distinctive observed application root can still identify a
+        // launched game even when its shortcut uses a URI or arguments.
+        let rooted = !direct
+            && app.observed_roots.iter().any(|root| {
+                let root = norm(root).trim_end_matches('\\').to_owned();
+                root.len() > 5 && process.starts_with(&(root + "\\"))
+            });
+        if direct || rooted {
+            matching.push((app, direct));
+        }
+    }
+    let matching: Vec<_> = matching
+        .into_iter()
+        .filter(|(_, direct)| !profile_sensitive_target || !*direct)
+        .map(|(app, _)| app)
         .collect();
-    let identities: HashSet<_> = matching.iter().map(|a| a.identity()).collect();
+    let identities: HashSet<_> = matching.iter().map(|app| app.identity()).collect();
     if identities.len() == 1 {
-        matching.first().map(|a| a.id.clone())
+        matching.first().map(|app| app.id.clone())
     } else {
         None
     }
@@ -3596,3 +3614,6 @@ mod scan_worker;
 
 #[cfg(test)]
 mod live_import_tests;
+
+#[cfg(test)]
+mod profile_attribution_tests;

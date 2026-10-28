@@ -1,0 +1,28 @@
+{
+  "baseline_version": "0.2.29",
+  "baseline_commit": "70d77f8ffca851454465cc713bff418e1d77792a",
+  "test_commit": "2d3c0319e99f77568a672a1d228f436f795cff19",
+  "red_run": "https://github.com/TechWisard/desktop-pilot/actions/runs/40613419941",
+  "platforms": [
+    "windows-2022",
+    "windows-2025"
+  ],
+  "red_counts_per_runner": {
+    "passed": 250,
+    "failed": 3,
+    "ignored": 0
+  },
+  "reproduced": [
+    "a_single_profile_specific_shortcut_cannot_claim_unqualified_executable_time",
+    "a_missing_competing_profile_cannot_make_another_profile_unambiguous",
+    "a_plain_shortcut_does_not_claim_a_known_parameterized_profile"
+  ],
+  "unchanged_passed": [
+    "a_truly_unambiguous_plain_shortcut_still_learns_and_undoes_safely"
+  ],
+  "limits": [
+    "No physical Windows 11 observation",
+    "No human time savings measured",
+    "Corrected CI and public assets require separate verification"
+  ]
+}
