@@ -229,6 +229,7 @@ pub struct Settings {
     background_disabled: bool,
     heartbeat: i64,
     last: Instant,
+    catalog_checkpoint: Option<(i64, i64, Instant)>,
     dirty: bool,
     onboarding: bool,
     onboarding_step: usize,
@@ -786,6 +787,7 @@ impl Settings {
             background_disabled: false,
             heartbeat: 0,
             last: Instant::now(),
+            catalog_checkpoint: None,
             dirty: onboarding,
             onboarding,
             onboarding_step,
@@ -852,6 +854,35 @@ impl Settings {
         self.dirty = self.onboarding || !config_equal(&self.config, &self.edit_base);
     }
     fn reload(&mut self) -> Result<()> {
+        // External SQLite commits change data_version; local commits on this
+        // Settings connection change total_changes instead. Both are needed
+        // before reusing the last fully verified catalog snapshot.
+        let data_version: i64 = self
+            .store
+            .db
+            .pragma_query_value(None, "data_version", |row| row.get(0))?;
+        let local_changes: i64 = self
+            .store
+            .db
+            .query_row("SELECT total_changes()", [], |row| row.get(0))?;
+        let unchanged = match &self.catalog_checkpoint {
+            Some((version, changes, loaded)) => {
+                *version == data_version
+                    && *changes == local_changes
+                    // Time-dependent ranking and expiry must still advance
+                    // even in a truly idle, unchanged profile.
+                    && loaded.elapsed() < Duration::from_secs(60)
+            }
+            None => false,
+        };
+        if unchanged {
+            // A crashed worker may release its mutex without saving a final
+            // SQLite status. Keep that safety indicator fresh every poll.
+            self.background_alive = native::is_running("background", &self.store.home)?;
+            return Ok(());
+        }
+        // A failed full reload must never authorize a later stale fast path.
+        self.catalog_checkpoint = None;
         // A command result and the state it changed must come from one snapshot.
         // A worker may finish between individual SELECTs while Settings is open.
         let snapshot = self.store.db.unchecked_transaction()?;
@@ -967,6 +998,7 @@ impl Settings {
         if self.job.is_none() && self.pending_commands.is_empty() {
             self.pending_policy = None;
         }
+        self.catalog_checkpoint = Some((data_version, local_changes, Instant::now()));
         Ok(())
     }
     fn start_job(

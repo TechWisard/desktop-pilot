@@ -128,7 +128,13 @@ fn reopening_large_saved_catalog_keeps_immediate_search_and_one_catalog_read() {
             crate::store::CATALOG_READS.with(|reads| reads.set(0));
             settings.reload().unwrap();
             crate::store::CATALOG_READS.with(|reads| {
-                assert_eq!(reads.get(), 1, "Refresh must reuse its catalog snapshot")
+                assert_eq!(reads.get(), 0, "Unchanged poll must reuse saved catalog")
+            });
+            // Explicit invalidation still executes the entire real snapshot path.
+            settings.catalog_checkpoint = None;
+            settings.reload().unwrap();
+            crate::store::CATALOG_READS.with(|reads| {
+                assert_eq!(reads.get(), 1, "Full refresh must parse the catalog once")
             });
             assert_eq!(settings.apps.len(), size + 1);
             assert_eq!(
@@ -162,5 +168,156 @@ fn invalid_preview_settings_preserve_saved_search_without_a_second_catalog_read(
         assert_eq!(settings.catalog.indices.len(), 1);
         assert_eq!(settings.apps.len(), 101);
         assert!(settings.state.owned.is_empty());
+    });
+}
+
+#[test]
+fn unchanged_settings_refreshes_do_not_reparse_a_large_saved_catalog() {
+    with_saved_catalog(1_000, |settings, rare| {
+        let original = settings
+            .preview
+            .as_ref()
+            .unwrap()
+            .selected
+            .contains(&rare.id);
+        crate::store::CATALOG_READS.with(|reads| reads.set(0));
+        for _ in 0..12 {
+            settings.reload().unwrap();
+        }
+        crate::store::CATALOG_READS.with(|reads| {
+            assert_eq!(
+                reads.get(),
+                0,
+                "An unchanged saved catalog must not be parsed every UI refresh"
+            );
+        });
+        assert_eq!(settings.apps.len(), 1_001);
+        assert_eq!(
+            settings
+                .preview
+                .as_ref()
+                .unwrap()
+                .selected
+                .contains(&rare.id),
+            original
+        );
+    });
+}
+
+#[test]
+fn settings_refresh_detects_both_external_and_same_connection_changes() {
+    with_saved_catalog(100, |settings, rare| {
+        let writer = Store::open(&settings.store.home).unwrap();
+        crate::store::CATALOG_READS.with(|reads| reads.set(0));
+        for _ in 0..3 {
+            settings.reload().unwrap();
+        }
+        let mut changed = writer.app(&rare.id).unwrap();
+        changed.policy = Policy::Never;
+        writer.put_app(&changed).unwrap();
+        settings.reload().unwrap();
+        assert_eq!(
+            settings
+                .apps
+                .iter()
+                .find(|app| app.id == rare.id)
+                .unwrap()
+                .policy,
+            Policy::Never
+        );
+        assert!(
+            !settings
+                .preview
+                .as_ref()
+                .unwrap()
+                .selected
+                .contains(&rare.id)
+        );
+        crate::store::CATALOG_READS.with(|reads| assert_eq!(reads.get(), 1));
+
+        // PRAGMA data_version does not change for writes on the same connection.
+        // Protect immediate local rule edits as well as worker/tray changes.
+        settings.store.policy(&rare.id, Policy::Always).unwrap();
+        settings.reload().unwrap();
+        assert_eq!(
+            settings
+                .apps
+                .iter()
+                .find(|app| app.id == rare.id)
+                .unwrap()
+                .policy,
+            Policy::Always
+        );
+        assert!(
+            settings
+                .preview
+                .as_ref()
+                .unwrap()
+                .selected
+                .contains(&rare.id)
+        );
+        crate::store::CATALOG_READS.with(|reads| assert_eq!(reads.get(), 2));
+    });
+}
+
+#[test]
+fn settings_refresh_keeps_worker_status_and_completed_command_feedback_current() {
+    with_saved_catalog(100, |settings, _| {
+        let worker = Store::open(&settings.store.home).unwrap();
+        crate::store::CATALOG_READS.with(|reads| reads.set(0));
+        for _ in 0..3 {
+            settings.reload().unwrap();
+        }
+        worker
+            .set("status", &"Changes paused: source unavailable")
+            .unwrap();
+        settings.reload().unwrap();
+        assert_eq!(settings.status, "Changes paused: source unavailable");
+
+        worker.command("apply").unwrap();
+        let id: i64 = worker
+            .db
+            .query_row("SELECT MAX(id) FROM commands", [], |row| row.get(0))
+            .unwrap();
+        settings.pending_commands.push(PendingCommand {
+            id,
+            action: "apply".into(),
+            submitted: Instant::now(),
+        });
+        settings.reload().unwrap();
+        assert_eq!(settings.active_commands, 1);
+        assert_eq!(settings.pending_commands.len(), 1);
+
+        worker
+            .db
+            .execute(
+                "UPDATE commands SET status='done',message='Applied safely' WHERE id=?1",
+                [id],
+            )
+            .unwrap();
+        settings.reload().unwrap();
+        assert_eq!(settings.active_commands, 0);
+        assert!(settings.pending_commands.is_empty());
+        assert_eq!(settings.notice.as_ref().unwrap().text, "Applied safely");
+    });
+}
+
+#[test]
+fn elapsed_snapshot_checkpoint_rechecks_time_dependent_recommendations() {
+    with_saved_catalog(100, |settings, rare| {
+        let (version, changes, _) = settings.catalog_checkpoint.unwrap();
+        settings.catalog_checkpoint =
+            Some((version, changes, Instant::now() - Duration::from_secs(61)));
+        crate::store::CATALOG_READS.with(|reads| reads.set(0));
+        settings.reload().unwrap();
+        crate::store::CATALOG_READS.with(|reads| assert_eq!(reads.get(), 1));
+        assert!(
+            settings
+                .preview
+                .as_ref()
+                .unwrap()
+                .selected
+                .contains(&rare.id)
+        );
     });
 }
