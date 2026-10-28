@@ -439,7 +439,9 @@ fn refresh_apps_guarded(store: &Store, cancelled: impl Fn() -> bool) -> Result<(
             return Ok(());
         }
         if attempt == 1 {
-            bail!("Состав быстрых ярлыков изменился во время проверки. Обновите список ещё раз; ручные изменения сохранены.");
+            bail!(
+                "Состав быстрых ярлыков изменился во время проверки. Обновите список ещё раз; ручные изменения сохранены."
+            );
         }
     }
     unreachable!("Two bounded scan attempts return or report a conflict")
