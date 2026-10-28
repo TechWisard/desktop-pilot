@@ -398,6 +398,15 @@ pub(crate) struct TestScanGate {
 pub(crate) static TEST_SCAN_GATE: std::sync::Mutex<Option<TestScanGate>> =
     std::sync::Mutex::new(None);
 #[cfg(test)]
+pub(crate) struct TestMonitorCatalogObserver {
+    pub home: PathBuf,
+    pub sender: std::sync::mpsc::Sender<(bool, Vec<String>)>,
+}
+#[cfg(test)]
+pub(crate) static TEST_MONITOR_CATALOG: std::sync::Mutex<Option<TestMonitorCatalogObserver>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
 struct TestScanCompletion(std::sync::mpsc::Sender<()>);
 #[cfg(test)]
 impl Drop for TestScanCompletion {
@@ -2112,6 +2121,15 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                 store.set("status", &status)?;
             }
         }
+        #[cfg(test)]
+        if let Some(observer) = TEST_MONITOR_CATALOG.lock().unwrap().as_ref()
+            && observer.home == store.home
+        {
+            let _ = observer.sender.send((
+                scanned.is_some() && scan.is_none(),
+                apps.iter().map(|app| app.id.clone()).collect(),
+            ));
+        }
         std::thread::sleep(Duration::from_secs(2));
     }
 }
@@ -3563,3 +3581,6 @@ mod renamed_copy_scan_tests;
 mod blocked_scan_tests;
 
 mod scan_worker;
+
+#[cfg(test)]
+mod live_import_tests;

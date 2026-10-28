@@ -355,3 +355,27 @@ fn distinct_launch_profiles_remain_separate_during_import() {
         assert_eq!(settings.store.app(&app.id).unwrap().source, app.source);
     });
 }
+
+#[test]
+fn importing_a_new_source_signals_the_live_catalog_once_without_reimport_noise() {
+    with_profile(|settings, _app| {
+        let before: u64 = settings.store.get("catalog_epoch").unwrap();
+        let source = settings.store.home.join("Fresh project.url");
+        std::fs::write(
+            &source,
+            b"[InternetShortcut]\r\nURL=https://example.invalid/FreshProject\r\n",
+        )
+        .unwrap();
+        let added = import(settings, vec![source]).unwrap();
+        assert!(added.failed.is_empty());
+        assert_eq!(added.added.len(), 1);
+        let changed: u64 = settings.store.get("catalog_epoch").unwrap();
+        assert_eq!(changed, before + 1);
+
+        // Re-selecting an unchanged managed copy does not change the catalog.
+        let copy = owned(settings);
+        let repeated = import(settings, vec![copy.path.into()]).unwrap();
+        assert!(repeated.failed.is_empty());
+        assert_eq!(settings.store.get::<u64>("catalog_epoch").unwrap(), changed);
+    });
+}
