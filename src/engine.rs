@@ -1737,9 +1737,13 @@ pub fn command(store: &Store, action: &str) -> Result<String> {
             store.transaction(|| {
                 store.db.execute("DELETE FROM days", [])?;
                 for mut a in store.apps()? {
-                    a.seed = 0.0;
-                    a.seed_at = 0;
-                    store.put_app(&a)?;
+                    // Clearing usage must not rewrite thousands of already
+                    // unseeded catalog entries while holding SQLite's writer.
+                    if a.seed != 0.0 || a.seed_at != 0 {
+                        a.seed = 0.0;
+                        a.seed_at = 0;
+                        store.put_app(&a)?;
+                    }
                 }
                 let mut progress: Progress = store.get("learning")?;
                 progress.finish_if_ready(&store.get("config")?, now());

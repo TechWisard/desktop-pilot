@@ -5203,3 +5203,6 @@ use import_catalog::ImportCatalog;
 
 #[cfg(test)]
 mod import_last_filter_tests;
+
+#[cfg(test)]
+mod clear_history_tests;
