@@ -537,3 +537,30 @@ fn mixed_new_and_existing_imports_must_report_only_one_new_shortcut() {
         assert!(fresh.exists());
     });
 }
+
+#[test]
+fn refreshing_an_existing_original_reports_an_update_not_a_new_app() {
+    with_profile(|settings, app| {
+        let duplicate = settings.store.home.join("Different source.url");
+        std::fs::copy(&app.source, &duplicate).unwrap();
+        let (kind, notice) = import_via_settings_with_notice(settings, vec![duplicate.clone()]);
+        assert!(matches!(kind, NoticeKind::Success), "{notice}");
+        assert!(
+            notice.contains("Updated: 1") || notice.contains("Обновлено: 1"),
+            "A replacement source is an update to the existing identity: {notice}"
+        );
+        assert!(
+            !notice.contains("Added: 1") && !notice.contains("Добавлено: 1"),
+            "An updated original must not appear as another new app: {notice}"
+        );
+        assert_eq!(settings.store.apps().unwrap().len(), 1);
+        assert_eq!(
+            norm(&settings.store.app(&app.id).unwrap().source),
+            norm(&duplicate.to_string_lossy())
+        );
+        assert_eq!(settings.store.app(&app.id).unwrap().policy, Policy::Always);
+        engine::command(&settings.store, "rollback").unwrap();
+        assert!(duplicate.exists());
+        assert!(Path::new(&app.source).exists());
+    });
+}
