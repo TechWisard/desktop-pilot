@@ -1081,6 +1081,7 @@ impl Settings {
                 }
             }
             store.transaction(|| {
+                let mut catalog_changed = false;
                 let mut existing: HashMap<_, _> = store
                     .apps()?
                     .into_iter()
@@ -1106,12 +1107,23 @@ impl Settings {
                             .push((PathBuf::from(&app.source), format!("{error:#}")));
                         continue;
                     }
-                    store.put_app(&app)?;
+                    if existing.get(&app.id).is_none_or(|saved| saved != &app) {
+                        store.put_app(&app)?;
+                        catalog_changed = true;
+                    }
                     existing.insert(app.id.clone(), app.clone());
                     result.added.push((app.id, app.name));
                 }
                 let mut seen = HashSet::new();
                 result.added.retain(|(id, _)| seen.insert(id.clone()));
+                if catalog_changed {
+                    // A single revision bump per committed batch notifies the
+                    // running monitor without starting an expensive rescan.
+                    // No-op and quick-copy reimports leave the revision alone.
+                    let epoch: u64 = store.get("catalog_epoch")?;
+                    let next = epoch.checked_add(1).context("Catalog revision exhausted")?;
+                    store.set("catalog_epoch", &next)?;
+                }
                 Ok(())
             })?;
             Ok(JobResult::Added(result))

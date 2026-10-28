@@ -1921,6 +1921,10 @@ pub fn monitor(home: PathBuf) -> Result<()> {
         progress.started_at = now();
         store.set("learning", &progress)?;
     }
+    // Read the revision before the catalog. If a manual import commits between
+    // these two reads, at worst the next poll refreshes the same entry twice.
+    // The reverse order could miss an import until a six-hour filesystem scan.
+    let mut catalog_epoch: u64 = store.get("catalog_epoch")?;
     let mut apps = store.apps()?;
     let mut focus = crate::activity::FocusEvidence::default();
     let mut usage = UsageAccumulator::default();
@@ -2010,6 +2014,14 @@ pub fn monitor(home: PathBuf) -> Result<()> {
         }
         if store.get::<bool>("shutdown")? {
             return Ok(());
+        }
+        // Settings can import shortcuts directly without a command. The
+        // saved catalog should become usable for foreground matching on the
+        // next poll, even when the separate filesystem scan is still running.
+        let current_catalog_epoch: u64 = store.get("catalog_epoch")?;
+        if current_catalog_epoch != catalog_epoch {
+            apps = store.apps()?;
+            catalog_epoch = current_catalog_epoch;
         }
         let config: Config = store.get("config")?;
         config.validate()?;
