@@ -3676,3 +3676,6 @@ mod profile_attribution_tests;
 
 #[cfg(test)]
 mod identity_index_tests;
+
+#[cfg(test)]
+mod discovery_limit_tests;
