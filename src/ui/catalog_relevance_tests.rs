@@ -119,6 +119,12 @@ fn explicit_sort_and_manual_rule_filters_are_not_overridden_by_relevance() {
             "A0000 Utility",
             "explicit usage sort must win"
         );
+        cache.update(apps, ranking, "editor", 0, 3, &HashSet::new());
+        assert_eq!(
+            names(&cache, apps)[0],
+            "A0000 Utility",
+            "explicit alphabetical order must remain selectable during search"
+        );
         cache.update(apps, ranking, "editor", 3, 0, &HashSet::new());
         assert_eq!(
             names(&cache, apps),

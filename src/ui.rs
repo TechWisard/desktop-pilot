@@ -97,7 +97,7 @@ impl CatalogCache {
                     6
                 }
             });
-        } else if sort != 0 {
+        } else if sort == 1 || sort == 2 {
             self.indices.sort_by(|&a, &b| {
                 let a = ranked(&apps[a]);
                 let b = ranked(&apps[b]);
@@ -363,10 +363,11 @@ fn app_filter_name(filter: usize) -> &'static str {
         _ => t("Все приложения", "All apps"),
     }
 }
-fn app_sort_name(sort: usize) -> &'static str {
+fn app_sort_name(sort: usize, search_active: bool) -> &'static str {
     match sort {
         1 => t("По рейтингу", "By ranking"),
         2 => t("По времени использования", "By usage time"),
+        0 if search_active => t("По соответствию", "By relevance"),
         _ => t("По алфавиту", "Alphabetically"),
     }
 }
@@ -2487,6 +2488,7 @@ impl Settings {
                 }
             });
             let filters_active = self.app_filter != 0 || self.app_sort != 0;
+            let search_active = !self.filter.trim().is_empty();
             let filter_heading = if self.app_filter != 0 {
                 format!(
                     "{}: {}",
@@ -2497,7 +2499,7 @@ impl Settings {
                 format!(
                     "{}: {}",
                     t("Порядок", "Order"),
-                    app_sort_name(self.app_sort)
+                    app_sort_name(self.app_sort, search_active)
                 )
             } else {
                 t("Фильтр и порядок", "Filter and order").into()
@@ -2531,14 +2533,21 @@ impl Settings {
                     egui::ComboBox::from_id_salt("app-sort")
                         .width(ui.available_width().min(250.0))
                         .wrap()
-                        .selected_text(app_sort_name(self.app_sort))
+                        .selected_text(app_sort_name(self.app_sort, search_active))
                         .show_ui(ui, |ui| {
                             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                             ui.selectable_value(
                                 &mut self.app_sort,
                                 0,
-                                t("По алфавиту", "Alphabetically"),
+                                app_sort_name(0, search_active),
                             );
+                            if search_active || self.app_sort == 3 {
+                                ui.selectable_value(
+                                    &mut self.app_sort,
+                                    3,
+                                    t("По алфавиту", "Alphabetically"),
+                                );
+                            }
                             ui.selectable_value(
                                 &mut self.app_sort,
                                 1,
