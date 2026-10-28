@@ -1,0 +1,44 @@
+{
+  "baseline_version": "0.2.28",
+  "baseline_commit": "a06d71e44bcdc93922e48368aaa0d126d724310b",
+  "red_commit": "f4b16e790868791186e6123f61eb4ae183724cf6",
+  "red_ci": "https://github.com/TechWisard/desktop-pilot/actions/runs/40610581497",
+  "red_per_runner": {
+    "passed": 247,
+    "failed": 2,
+    "ignored": 0,
+    "failed_tests": [
+      "engine::live_import_tests::background_observes_newly_imported_app_without_waiting_for_next_scan",
+      "ui::import_ownership_tests::importing_a_new_source_signals_the_live_catalog_once_without_reimport_noise"
+    ]
+  },
+  "corrected_commit": "3be4d72e8ab5e3a5c97058dc002dd474f7203ac6",
+  "corrected_ci": "https://github.com/TechWisard/desktop-pilot/actions/runs/40611142481",
+  "green_per_runner": {
+    "rust_passed": 249,
+    "native_passed": 28,
+    "publication_guards_passed": 9,
+    "cargo_fmt_check": true,
+    "clippy_warnings_denied": true,
+    "cargo_build_locked": true,
+    "readme_guard": true
+  },
+  "runners": [
+    "windows-2022",
+    "windows-2025"
+  ],
+  "reproduction": "Real background monitor/cache + Settings async import + SQLite Store; isolated .url source and scoped test observer",
+  "time_limit_seconds": 7,
+  "asserted_unchanged": [
+    "original shortcut bytes",
+    "manual rules and Undo",
+    "ranking weights",
+    "absence of automatic placement from the test"
+  ],
+  "limitations": [
+    "No measured human task-time gain",
+    "No actual stalled network drive",
+    "No physical Windows 11 GUI inspection",
+    "Final PR/main release and public asset verification separate from this candidate"
+  ]
+}

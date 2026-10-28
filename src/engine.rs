@@ -398,6 +398,15 @@ pub(crate) struct TestScanGate {
 pub(crate) static TEST_SCAN_GATE: std::sync::Mutex<Option<TestScanGate>> =
     std::sync::Mutex::new(None);
 #[cfg(test)]
+pub(crate) struct TestMonitorCatalogObserver {
+    pub home: PathBuf,
+    pub sender: std::sync::mpsc::Sender<(bool, Vec<String>)>,
+}
+#[cfg(test)]
+pub(crate) static TEST_MONITOR_CATALOG: std::sync::Mutex<Option<TestMonitorCatalogObserver>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
 struct TestScanCompletion(std::sync::mpsc::Sender<()>);
 #[cfg(test)]
 impl Drop for TestScanCompletion {
@@ -1912,6 +1921,10 @@ pub fn monitor(home: PathBuf) -> Result<()> {
         progress.started_at = now();
         store.set("learning", &progress)?;
     }
+    // Read the revision before the catalog. If a manual import commits between
+    // these two reads, at worst the next poll refreshes the same entry twice.
+    // The reverse order could miss an import until a six-hour filesystem scan.
+    let mut catalog_epoch: u64 = store.get("catalog_epoch")?;
     let mut apps = store.apps()?;
     let mut focus = crate::activity::FocusEvidence::default();
     let mut usage = UsageAccumulator::default();
@@ -2001,6 +2014,14 @@ pub fn monitor(home: PathBuf) -> Result<()> {
         }
         if store.get::<bool>("shutdown")? {
             return Ok(());
+        }
+        // Settings can import shortcuts directly without a command. The
+        // saved catalog should become usable for foreground matching on the
+        // next poll, even when the separate filesystem scan is still running.
+        let current_catalog_epoch: u64 = store.get("catalog_epoch")?;
+        if current_catalog_epoch != catalog_epoch {
+            apps = store.apps()?;
+            catalog_epoch = current_catalog_epoch;
         }
         let config: Config = store.get("config")?;
         config.validate()?;
@@ -2111,6 +2132,15 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                 }
                 store.set("status", &status)?;
             }
+        }
+        #[cfg(test)]
+        if let Some(observer) = TEST_MONITOR_CATALOG.lock().unwrap().as_ref()
+            && observer.home == store.home
+        {
+            let _ = observer.sender.send((
+                scanned.is_some() && scan.is_none(),
+                apps.iter().map(|app| app.id.clone()).collect(),
+            ));
         }
         std::thread::sleep(Duration::from_secs(2));
     }
@@ -3563,3 +3593,6 @@ mod renamed_copy_scan_tests;
 mod blocked_scan_tests;
 
 mod scan_worker;
+
+#[cfg(test)]
+mod live_import_tests;
