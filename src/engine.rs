@@ -1833,8 +1833,13 @@ pub fn automatic_review(store: &Store, quiet: bool) -> Result<bool> {
     config.validate()?;
     let state: State = store.get("state")?;
     let mut progress: Progress = store.get("learning")?;
+    let previous_completion = progress.completed_at;
     progress.finish_if_ready(&config, now());
-    store.set("learning", &progress)?;
+    // A no-op review must not acquire SQLite's sole WAL writer or rewrite
+    // completed learning progress. Persist only the real completion transition.
+    if progress.completed_at != previous_completion {
+        store.set("learning", &progress)?;
+    }
     let review_at = now();
     let review_due = !state.initialized
         || review_at
@@ -3702,3 +3707,6 @@ mod identity_index_tests;
 
 #[cfg(test)]
 mod discovery_limit_tests;
+
+#[cfg(test)]
+mod idle_review_tests;
