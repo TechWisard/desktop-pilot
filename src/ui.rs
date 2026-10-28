@@ -125,7 +125,11 @@ fn import_summary(result: &ImportResult) -> String {
         parts.push(format!("{}: {}", t("Обновлено", "Updated"), result.updated));
     }
     if already > 0 {
-        parts.push(format!("{}: {}", t("Уже в списке", "Already in list"), already));
+        parts.push(format!(
+            "{}: {}",
+            t("Уже в списке", "Already in list"),
+            already
+        ));
     }
     let ending = if result.created + result.updated == 0 {
         t("Без изменений.", "No changes made.")
