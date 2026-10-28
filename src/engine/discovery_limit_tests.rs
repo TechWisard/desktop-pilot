@@ -19,19 +19,27 @@ fn five_thousand_real_shortcuts_remain_discoverable_and_manual_rules_survive_res
     let desktop = root.join("Desktop");
     std::fs::create_dir_all(&desktop).unwrap();
     let store = Store::open(&root).unwrap();
-    store.set("test_desktop", &desktop.to_string_lossy()).unwrap();
+    store
+        .set("test_desktop", &desktop.to_string_lossy())
+        .unwrap();
     store.set("setup_complete", &true).unwrap();
-    store.set("config", &Config {
-        respect_taskbar_pins: false,
-        ..Config::default()
-    }).unwrap();
+    store
+        .set(
+            "config",
+            &Config {
+                respect_taskbar_pins: false,
+                ..Config::default()
+            },
+        )
+        .unwrap();
 
     for index in 0..5_000 {
         let path = desktop.join(format!("App-{index:04}.url"));
         std::fs::write(
             path,
             format!("[InternetShortcut]\r\nURL=https://example.invalid/catalog/{index:04}\r\n"),
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     refresh_apps(&store).unwrap();
@@ -46,8 +54,14 @@ fn five_thousand_real_shortcuts_remain_discoverable_and_manual_rules_survive_res
         "A supported 5,000-link folder must not trigger a truncation warning",
     );
 
-    let rare = catalog.iter().find(|a| a.target.ends_with("/4999")).unwrap();
-    let excluded = catalog.iter().find(|a| a.target.ends_with("/0001")).unwrap();
+    let rare = catalog
+        .iter()
+        .find(|a| a.target.ends_with("/4999"))
+        .unwrap();
+    let excluded = catalog
+        .iter()
+        .find(|a| a.target.ends_with("/0001"))
+        .unwrap();
     let rare_source = rare.source.clone();
     let rare_original = std::fs::read(&rare_source).unwrap();
     store.policy(&rare.id, Policy::Always).unwrap();
