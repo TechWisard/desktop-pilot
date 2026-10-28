@@ -302,19 +302,22 @@ fn settings_refresh_keeps_worker_status_and_completed_command_feedback_current()
     });
 }
 
-
 #[test]
 fn elapsed_snapshot_checkpoint_rechecks_time_dependent_recommendations() {
     with_saved_catalog(100, |settings, rare| {
         let (version, changes, _) = settings.catalog_checkpoint.unwrap();
-        settings.catalog_checkpoint = Some((
-            version,
-            changes,
-            Instant::now() - Duration::from_secs(61),
-        ));
+        settings.catalog_checkpoint =
+            Some((version, changes, Instant::now() - Duration::from_secs(61)));
         crate::store::CATALOG_READS.with(|reads| reads.set(0));
         settings.reload().unwrap();
         crate::store::CATALOG_READS.with(|reads| assert_eq!(reads.get(), 1));
-        assert!(settings.preview.as_ref().unwrap().selected.contains(&rare.id));
+        assert!(
+            settings
+                .preview
+                .as_ref()
+                .unwrap()
+                .selected
+                .contains(&rare.id)
+        );
     });
 }
