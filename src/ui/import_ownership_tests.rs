@@ -455,3 +455,112 @@ fn importing_a_new_source_signals_the_live_catalog_once_without_reimport_noise()
         assert_eq!(settings.store.get::<u64>("catalog_epoch").unwrap(), changed);
     });
 }
+
+/// An import is an explicit user action. An unchanged managed quick copy is
+/// already in the catalog, not a newly added application. Exercise the actual
+/// asynchronous Settings entry and the notice users see after completion.
+fn import_via_settings_with_notice(
+    settings: &mut Settings,
+    paths: Vec<PathBuf>,
+) -> (NoticeKind, String) {
+    settings.add_shortcuts(paths);
+    let context = egui::Context::default();
+    for _ in 0..200 {
+        settings.poll_jobs(&context);
+        if settings.job.is_none() {
+            let notice = settings
+                .notice
+                .as_ref()
+                .expect("import must report its result");
+            return (notice.kind, notice.text.clone());
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    panic!("asynchronous import did not complete");
+}
+
+#[test]
+fn reimporting_an_existing_copy_must_not_claim_a_new_shortcut() {
+    with_profile(|settings, app| {
+        let quick = owned(settings);
+        let before = data(settings, app);
+        let (kind, notice) =
+            import_via_settings_with_notice(settings, vec![PathBuf::from(&quick.path)]);
+        assert!(
+            matches!(kind, NoticeKind::Info),
+            "An unchanged quick-copy import is not a new addition: {notice}"
+        );
+        assert!(
+            notice.contains("Already in list") || notice.contains("Уже в списке"),
+            "User needs an accurate no-change explanation: {notice}"
+        );
+        assert_eq!(data(settings, app), before);
+        assert!(settings.can_undo);
+        assert_eq!(settings.apps.len(), 1);
+    });
+}
+
+#[test]
+fn mixed_new_and_existing_imports_must_report_only_one_new_shortcut() {
+    with_profile(|settings, app| {
+        let quick = owned(settings);
+        let original_bytes = std::fs::read(&app.source).unwrap();
+        let fresh = settings.store.home.join("Actually new.url");
+        std::fs::write(
+            &fresh,
+            b"[InternetShortcut]\r\nURL=https://example.invalid/ActuallyNew\r\n",
+        )
+        .unwrap();
+        let fresh_id = native::read_link(&fresh).unwrap().id;
+        let (kind, notice) = import_via_settings_with_notice(
+            settings,
+            vec![PathBuf::from(&quick.path), fresh.clone()],
+        );
+        assert!(matches!(kind, NoticeKind::Success));
+        assert!(
+            notice.contains("Added: 1") || notice.contains("Добавлено: 1"),
+            "Only the new entry should count as added: {notice}"
+        );
+        assert!(
+            notice.contains("Already in list: 1") || notice.contains("Уже в списке: 1"),
+            "Existing entries should be identified separately: {notice}"
+        );
+        assert_eq!(settings.store.apps().unwrap().len(), 2);
+        assert_eq!(settings.store.app(&app.id).unwrap().source, app.source);
+        assert_eq!(
+            settings.store.app(&fresh_id).unwrap().source,
+            native::read_link(&fresh).unwrap().source
+        );
+        assert_eq!(std::fs::read(&app.source).unwrap(), original_bytes);
+        engine::command(&settings.store, "rollback").unwrap();
+        assert!(Path::new(&app.source).exists());
+        assert!(fresh.exists());
+    });
+}
+
+#[test]
+fn refreshing_an_existing_original_reports_an_update_not_a_new_app() {
+    with_profile(|settings, app| {
+        let duplicate = settings.store.home.join("Different source.url");
+        std::fs::copy(&app.source, &duplicate).unwrap();
+        let (kind, notice) = import_via_settings_with_notice(settings, vec![duplicate.clone()]);
+        assert!(matches!(kind, NoticeKind::Success), "{notice}");
+        assert!(
+            notice.contains("Updated: 1") || notice.contains("Обновлено: 1"),
+            "A replacement source is an update to the existing identity: {notice}"
+        );
+        assert!(
+            !notice.contains("Added: 1") && !notice.contains("Добавлено: 1"),
+            "An updated original must not appear as another new app: {notice}"
+        );
+        assert_eq!(settings.store.apps().unwrap().len(), 1);
+        assert_eq!(
+            norm(&settings.store.app(&app.id).unwrap().source),
+            norm(&duplicate.to_string_lossy())
+        );
+        assert_eq!(settings.store.app(&app.id).unwrap().policy, Policy::Always);
+        engine::command(&settings.store, "rollback").unwrap();
+        assert!(duplicate.exists());
+        assert!(Path::new(&app.source).exists());
+    });
+}

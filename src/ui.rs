@@ -106,8 +106,37 @@ struct PendingCommand {
     submitted: Instant,
 }
 struct ImportResult {
+    // All distinct, successfully selected catalog identities, including no-ops.
     added: Vec<(String, String)>,
     failed: Vec<(PathBuf, String)>,
+    created: usize,
+    updated: usize,
+}
+fn import_summary(result: &ImportResult) -> String {
+    let already = result
+        .added
+        .len()
+        .saturating_sub(result.created + result.updated);
+    let mut parts = Vec::new();
+    if result.created > 0 {
+        parts.push(format!("{}: {}", t("Добавлено", "Added"), result.created));
+    }
+    if result.updated > 0 {
+        parts.push(format!("{}: {}", t("Обновлено", "Updated"), result.updated));
+    }
+    if already > 0 {
+        parts.push(format!(
+            "{}: {}",
+            t("Уже в списке", "Already in list"),
+            already
+        ));
+    }
+    let ending = if result.created + result.updated == 0 {
+        t("Без изменений.", "No changes made.")
+    } else {
+        t("Правила и история сохранены.", "Rules and history kept.")
+    };
+    format!("{}. {}", parts.join(" · "), ending)
 }
 enum JobResult {
     Setup(Config),
@@ -306,7 +335,7 @@ fn app_filter_name(filter: usize) -> &'static str {
         2 => t("Всегда на столе", "Always on desktop"),
         3 => t("Не добавлять", "Never add"),
         4 => t("Недоступные", "Unavailable"),
-        5 => t("Последние добавленные", "Recently added"),
+        5 => t("Последний импорт", "Last import"),
         _ => t("Все приложения", "All apps"),
     }
 }
@@ -1073,6 +1102,8 @@ impl Settings {
             let mut result = ImportResult {
                 added: Vec::new(),
                 failed: Vec::new(),
+                created: 0,
+                updated: 0,
             };
             for path in paths {
                 match native::read_link(&path) {
@@ -1087,9 +1118,16 @@ impl Settings {
                     .into_iter()
                     .map(|app| (app.id.clone(), app))
                     .collect();
+                // Snapshot only touched entries, not the entire saved catalog.
+                // The final classification is based on what actually persisted,
+                // regardless of duplicate paths or import ordering.
+                let mut before_import: HashMap<String, Option<App>> = HashMap::new();
                 for mut app in apps {
                     match engine::imported_quick_copy(&store, &app) {
                         Ok(Some(original)) => {
+                            before_import
+                                .entry(original.id.clone())
+                                .or_insert_with(|| existing.get(&original.id).cloned());
                             result.added.push((original.id, original.name));
                             continue;
                         }
@@ -1107,6 +1145,9 @@ impl Settings {
                             .push((PathBuf::from(&app.source), format!("{error:#}")));
                         continue;
                     }
+                    before_import
+                        .entry(app.id.clone())
+                        .or_insert_with(|| existing.get(&app.id).cloned());
                     if existing.get(&app.id).is_none_or(|saved| saved != &app) {
                         store.put_app(&app)?;
                         catalog_changed = true;
@@ -1116,6 +1157,21 @@ impl Settings {
                 }
                 let mut seen = HashSet::new();
                 result.added.retain(|(id, _)| seen.insert(id.clone()));
+                result.created = result
+                    .added
+                    .iter()
+                    .filter(|(id, _)| before_import.get(id).is_some_and(|old| old.is_none()))
+                    .count();
+                result.updated = result
+                    .added
+                    .iter()
+                    .filter(|(id, _)| {
+                        before_import
+                            .get(id)
+                            .and_then(Option::as_ref)
+                            .is_some_and(|old| existing.get(id).is_some_and(|new| new != old))
+                    })
+                    .count();
                 if catalog_changed {
                     // A single revision bump per committed batch notifies the
                     // running monitor without starting an expensive rescan.
@@ -1224,7 +1280,12 @@ impl Settings {
                                 self.app_page = 0;
                                 self.tab = 1;
                                 self.page_scroll_reset = true;
-                                self.inform(format!("Shortcuts added: {}. Existing rules and history were kept.", result.added.len()), NoticeKind::Success);
+                                let kind = if result.created + result.updated > 0 {
+                                    NoticeKind::Success
+                                } else {
+                                    NoticeKind::Info
+                                };
+                                self.inform(import_summary(&result), kind);
                             }
                             self.import_paths = result
                                 .failed
@@ -2439,7 +2500,7 @@ impl Settings {
                                 ui.selectable_value(
                                     &mut self.app_filter,
                                     5,
-                                    t("Последние добавленные", "Recently added"),
+                                    t("Последний импорт", "Last import"),
                                 );
                             }
                         });
@@ -2620,7 +2681,7 @@ impl Settings {
                                 } else if app.pinned {
                                     ui.small(t("На панели задач", "On the taskbar"));
                                 } else if self.highlighted_apps.contains(&app.id) {
-                                    ui.colored_label(ACCENT, t("Добавлено", "Added"));
+                                    ui.colored_label(ACCENT, t("Выбрано", "Selected"));
                                 } else {
                                     let category = match app.category.as_str() {
                                         "Manual" => t("Добавлено вами", "Added by you"),
