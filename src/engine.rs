@@ -388,6 +388,14 @@ thread_local! {
 }
 
 #[cfg(test)]
+thread_local! {
+    /// Inject an actual user placement after the scan's Store/ownership snapshot
+    /// but before its source I/O. This tests the real application logic.
+    static BEFORE_REFRESH_DISCOVERY: std::cell::RefCell<Option<RefreshCommitHook>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
 pub(crate) struct TestScanGate {
     pub home: PathBuf,
     pub entered: std::sync::mpsc::Sender<()>,
@@ -455,6 +463,13 @@ fn refresh_apps_guarded(store: &Store, cancelled: impl Fn() -> bool) -> Result<(
         .iter()
         .map(|app| (app.id.clone(), norm(&app.source)))
         .collect();
+    #[cfg(test)]
+    BEFORE_REFRESH_DISCOVERY.with(|slot| {
+        let action = slot.borrow_mut().take();
+        if let Some(action) = action {
+            action(store);
+        }
+    });
     // This test-only boundary recreates a blocked shortcut filesystem read.
     // The rest of the scan, command queue and Store are production paths.
     #[cfg(test)]
