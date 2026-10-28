@@ -73,7 +73,31 @@ impl CatalogCache {
             })
             .map(|(index, _)| index)
             .collect();
-        if sort != 0 {
+        if sort == 0 && !words.is_empty() {
+            // A profile directory or a shared executable name can make thousands
+            // of shortcuts match the same query. Show an exact app name before
+            // path/category-only hits without removing any existing results.
+            // Cached keys avoid repeated Unicode lowercasing during sorting.
+            let phrase = words.join(" ");
+            self.indices.sort_by_cached_key(|&index| {
+                let name = apps[index].name.to_lowercase();
+                if name == phrase {
+                    0u8
+                } else if name.starts_with(&phrase) {
+                    1
+                } else if name.ends_with(&phrase) {
+                    2
+                } else if name.contains(&phrase) {
+                    3
+                } else if words.iter().all(|word| name.contains(word)) {
+                    4
+                } else if words.iter().any(|word| name.contains(word)) {
+                    5
+                } else {
+                    6
+                }
+            });
+        } else if sort == 1 || sort == 2 {
             self.indices.sort_by(|&a, &b| {
                 let a = ranked(&apps[a]);
                 let b = ranked(&apps[b]);
@@ -339,10 +363,11 @@ fn app_filter_name(filter: usize) -> &'static str {
         _ => t("Все приложения", "All apps"),
     }
 }
-fn app_sort_name(sort: usize) -> &'static str {
+fn app_sort_name(sort: usize, search_active: bool) -> &'static str {
     match sort {
         1 => t("По рейтингу", "By ranking"),
         2 => t("По времени использования", "By usage time"),
+        0 if search_active => t("По соответствию", "By relevance"),
         _ => t("По алфавиту", "Alphabetically"),
     }
 }
@@ -2463,6 +2488,7 @@ impl Settings {
                 }
             });
             let filters_active = self.app_filter != 0 || self.app_sort != 0;
+            let search_active = !self.filter.trim().is_empty();
             let filter_heading = if self.app_filter != 0 {
                 format!(
                     "{}: {}",
@@ -2473,7 +2499,7 @@ impl Settings {
                 format!(
                     "{}: {}",
                     t("Порядок", "Order"),
-                    app_sort_name(self.app_sort)
+                    app_sort_name(self.app_sort, search_active)
                 )
             } else {
                 t("Фильтр и порядок", "Filter and order").into()
@@ -2507,14 +2533,21 @@ impl Settings {
                     egui::ComboBox::from_id_salt("app-sort")
                         .width(ui.available_width().min(250.0))
                         .wrap()
-                        .selected_text(app_sort_name(self.app_sort))
+                        .selected_text(app_sort_name(self.app_sort, search_active))
                         .show_ui(ui, |ui| {
                             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                             ui.selectable_value(
                                 &mut self.app_sort,
                                 0,
-                                t("По алфавиту", "Alphabetically"),
+                                app_sort_name(0, search_active),
                             );
+                            if search_active || self.app_sort == 3 {
+                                ui.selectable_value(
+                                    &mut self.app_sort,
+                                    3,
+                                    t("По алфавиту", "Alphabetically"),
+                                );
+                            }
                             ui.selectable_value(
                                 &mut self.app_sort,
                                 1,
@@ -5127,3 +5160,6 @@ mod clock_health_tests;
 
 #[cfg(test)]
 mod catalog_snapshot_tests;
+
+#[cfg(test)]
+mod catalog_relevance_tests;
