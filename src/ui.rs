@@ -5196,3 +5196,6 @@ mod import_scaling_tests;
 
 mod import_catalog;
 use import_catalog::ImportCatalog;
+
+#[cfg(test)]
+mod import_last_filter_tests;
