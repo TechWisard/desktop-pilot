@@ -26,6 +26,10 @@ fn translate(value: &str, russian: bool) -> String {
     };
     let translations = [
         (
+            "Состав быстрых ярлыков изменился во время проверки. Обновите список ещё раз; ручные изменения сохранены.",
+            "Quick shortcuts changed during the scan. Refresh the list again; manual changes were preserved.",
+        ),
+        (
             "Цель ярлыка или рабочая папка недоступны. Восстановите приложение или подключите диск.",
             "The shortcut target or working folder is unavailable. Restore the app or reconnect the drive.",
         ),
@@ -956,3 +960,6 @@ mod cold_start_tests {
         assert_eq!(translate(english, true), russian);
     }
 }
+
+#[cfg(test)]
+mod scan_ownership_tests;

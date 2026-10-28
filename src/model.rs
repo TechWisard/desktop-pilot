@@ -240,7 +240,7 @@ pub struct Point {
     pub y: i32,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Owned {
     pub app: String,
     pub path: String,

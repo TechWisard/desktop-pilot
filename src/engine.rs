@@ -388,6 +388,14 @@ thread_local! {
 }
 
 #[cfg(test)]
+thread_local! {
+    /// Inject an actual user placement after the scan's Store/ownership snapshot
+    /// but before its source I/O. This tests the real application logic.
+    static BEFORE_REFRESH_DISCOVERY: std::cell::RefCell<Option<RefreshCommitHook>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
 pub(crate) struct TestScanGate {
     pub home: PathBuf,
     pub entered: std::sync::mpsc::Sender<()>,
@@ -423,6 +431,23 @@ pub fn refresh_apps(store: &Store) -> Result<()> {
 /// Check cancellation on the *actual* Store/catalog path, including before
 /// committing, so late filesystem results cannot overwrite a newer session.
 fn refresh_apps_guarded(store: &Store, cancelled: impl Fn() -> bool) -> Result<()> {
+    // A placement or manual relocation can finish while the filesystem scan
+    // still uses an older ownership snapshot. Retake that snapshot once instead
+    // of promoting one of our own new desktop copies to an original.
+    for attempt in 0..2 {
+        if refresh_apps_once(store, &cancelled)? {
+            return Ok(());
+        }
+        if attempt == 1 {
+            bail!(
+                "Состав быстрых ярлыков изменился во время проверки. Обновите список ещё раз; ручные изменения сохранены."
+            );
+        }
+    }
+    unreachable!("Two bounded scan attempts return or report a conflict")
+}
+
+fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<bool> {
     ensure!(!cancelled(), "Background catalog scan cancelled");
     ensure_no_unfinished(store)?;
     let real = real_desktop(store)?;
@@ -455,6 +480,13 @@ fn refresh_apps_guarded(store: &Store, cancelled: impl Fn() -> bool) -> Result<(
         .iter()
         .map(|app| (app.id.clone(), norm(&app.source)))
         .collect();
+    #[cfg(test)]
+    BEFORE_REFRESH_DISCOVERY.with(|slot| {
+        let action = slot.borrow_mut().take();
+        if let Some(action) = action {
+            action(store);
+        }
+    });
     // This test-only boundary recreates a blocked shortcut filesystem read.
     // The rest of the scan, command queue and Store are production paths.
     #[cfg(test)]
@@ -764,6 +796,19 @@ fn refresh_apps_guarded(store: &Store, cancelled: impl Fn() -> bool) -> Result<(
     });
     store.transaction(|| {
         ensure!(!cancelled(), "Background catalog scan cancelled");
+        // This is a real BEGIN IMMEDIATE transaction. Once the current
+        // ownership is checked, no other UI/worker connection can commit
+        // placement changes until this scan's writes have completed.
+        //
+        // Keeping a pre-placement snapshot can turn a newly created (or newly
+        // renamed) managed quick copy into its own original if that original
+        // became unavailable during source I/O. Discard the entire stale scan
+        // and retry against fresh ownership, rather than merely skipping an
+        // individual entry or guessing from its bytes.
+        let current: State = store.get("state")?;
+        if current.owned != state.owned {
+            return Ok(false);
+        }
         // A placement may have entered its prepared state while scanning.
         // Recheck under the writer before changing any catalog row.
         ensure_no_unfinished(store)?;
@@ -804,7 +849,7 @@ fn refresh_apps_guarded(store: &Store, cancelled: impl Fn() -> bool) -> Result<(
                 store.event("warning", &warning)?;
             }
         }
-        Ok(())
+        Ok(true)
     })
 }
 

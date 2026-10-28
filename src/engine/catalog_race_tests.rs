@@ -175,3 +175,136 @@ fn a_transaction_started_during_scan_blocks_stale_catalog_changes() {
         assert!(Path::new(&app.source).exists());
     });
 }
+
+fn at_discovery(callback: impl FnOnce(&Store) + 'static) {
+    BEFORE_REFRESH_DISCOVERY.with(|slot| {
+        assert!(slot.borrow().is_none());
+        *slot.borrow_mut() = Some(Box::new(callback));
+    });
+}
+
+#[test]
+fn a_new_quick_copy_during_scan_cannot_replace_its_offline_original() {
+    with_profile(|store| {
+        let mut original = url(store, &store.home, "Original", "Work");
+        original.policy = Policy::Always;
+        original.note = "Protected manually".into();
+        store.put_app(&original).unwrap();
+        store.observe(&original.id, 180, true, false).unwrap();
+        let source = original.source.clone();
+        let bytes = std::fs::read(&source).unwrap();
+        let offline = store.home.join("Original.offline");
+        let moved_to = offline.clone();
+        at_discovery(move |store| {
+            apply(store, true).unwrap();
+            assert_eq!(store.get::<State>("state").unwrap().owned.len(), 1);
+            std::fs::rename(&source, &moved_to).unwrap();
+        });
+
+        refresh_apps(store).unwrap();
+        let saved = store.app(&original.id).unwrap();
+        assert_eq!(
+            saved.source, original.source,
+            "A stale source scan adopted a newly managed desktop copy as its original"
+        );
+        assert!(!saved.valid, "An offline original must remain unavailable");
+        assert_eq!(saved.policy, Policy::Always);
+        assert_eq!(saved.note, original.note);
+        let state: State = store.get("state").unwrap();
+        assert_eq!(state.owned.len(), 1);
+        let copy = state.owned[0].clone();
+        assert_eq!(std::fs::read(&copy.path).unwrap(), bytes);
+        assert!(copy.manual);
+        let plan = preview(store, false).unwrap();
+        assert!(plan.added.is_empty() && plan.removed.is_empty());
+        assert_eq!(store.apps().unwrap().len(), 1);
+
+        std::fs::rename(&offline, &original.source).unwrap();
+        refresh_apps(store).unwrap();
+        assert!(store.app(&original.id).unwrap().valid);
+        rollback(store).unwrap();
+        assert!(!Path::new(&copy.path).exists());
+        assert_eq!(std::fs::read(&original.source).unwrap(), bytes);
+        assert_eq!(store.app(&original.id).unwrap().policy, Policy::Always);
+    });
+}
+
+#[test]
+fn a_renamed_new_quick_copy_cannot_be_promoted_during_source_outage() {
+    with_profile(|store| {
+        let mut original = url(store, &store.home, "Original", "Work");
+        original.policy = Policy::Always;
+        original.note = "Preserve deliberate shortcut name".into();
+        store.put_app(&original).unwrap();
+        let original_path = original.source.clone();
+        let original_bytes = std::fs::read(&original_path).unwrap();
+        let renamed = root(store).unwrap().join("Renamed by user.url");
+        let target = renamed.clone();
+        let offline = store.home.join("Original.offline");
+        let moved_to = offline.clone();
+        at_discovery(move |store| {
+            apply(store, true).unwrap();
+            let owned: State = store.get("state").unwrap();
+            assert_eq!(owned.owned.len(), 1);
+            std::fs::rename(&owned.owned[0].path, &target).unwrap();
+            std::fs::rename(&original_path, &moved_to).unwrap();
+        });
+
+        refresh_apps(store).unwrap();
+        let saved = store.app(&original.id).unwrap();
+        assert_eq!(
+            saved.source, original.source,
+            "Renaming after the ownership snapshot must not create a new original"
+        );
+        assert!(!saved.valid);
+        assert_eq!(saved.policy, Policy::Always);
+        assert_eq!(saved.note, original.note);
+        assert_eq!(store.apps().unwrap().len(), 1);
+        reconcile_manual(store).unwrap();
+        let owned: State = store.get("state").unwrap();
+        assert_eq!(owned.owned.len(), 1);
+        assert_eq!(norm(&owned.owned[0].path), norm(&renamed.to_string_lossy()));
+        assert!(owned.owned[0].manual);
+        assert_eq!(std::fs::read(&renamed).unwrap(), original_bytes);
+
+        std::fs::rename(&offline, &original.source).unwrap();
+        refresh_apps(store).unwrap();
+        rollback(store).unwrap();
+        // The renamed shortcut is a user-controlled file. Undo intentionally
+        // releases ownership without deleting the user's renamed copy.
+        assert!(renamed.exists());
+        assert!(store.get::<State>("state").unwrap().owned.is_empty());
+        assert_eq!(std::fs::read(&renamed).unwrap(), original_bytes);
+        assert_eq!(std::fs::read(&original.source).unwrap(), original_bytes);
+    });
+}
+
+#[test]
+fn independent_alias_is_still_allowed_after_a_concurrent_manual_placement() {
+    with_profile(|store| {
+        let mut original = url(store, &store.home, "Original", "Work");
+        original.policy = Policy::Always;
+        store.put_app(&original).unwrap();
+        let source = original.source.clone();
+        let alias = root(store).unwrap().join("Independent alias.url");
+        let copy_alias = alias.clone();
+        let offline = store.home.join("Original.offline");
+        let moved_to = offline.clone();
+        at_discovery(move |store| {
+            apply(store, true).unwrap();
+            std::fs::copy(&source, &copy_alias).unwrap();
+            std::fs::rename(&source, &moved_to).unwrap();
+        });
+        refresh_apps(store).unwrap();
+        let saved = store.app(&original.id).unwrap();
+        assert_eq!(norm(&saved.source), norm(&alias.to_string_lossy()));
+        assert!(saved.valid);
+        assert_eq!(saved.policy, Policy::Always);
+        assert_eq!(store.apps().unwrap().len(), 1);
+        let owned: State = store.get("state").unwrap();
+        assert_eq!(owned.owned.len(), 1);
+        assert_ne!(file_identity(&alias).unwrap(), owned.owned[0].file_id);
+        rollback(store).unwrap();
+        assert!(alias.exists() && offline.exists());
+    });
+}

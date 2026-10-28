@@ -1,0 +1,36 @@
+{
+  "baseline_release": "0.2.33",
+  "baseline_commit": "6b10bfd5d1a0ab93c0b8bbd835c7c60bc772c515",
+  "repro_branch": "test/scan-owned-copy-red-20261028",
+  "red_run": "https://github.com/TechWisard/desktop-pilot/actions/runs/40658727599",
+  "red_rust": {
+    "passed": 259,
+    "failed": 2,
+    "failed_cases": [
+      "a_new_quick_copy_during_scan_cannot_replace_its_offline_original",
+      "a_renamed_new_quick_copy_cannot_be_promoted_during_source_outage"
+    ],
+    "passed_control": "independent_alias_is_still_allowed_after_a_concurrent_manual_placement"
+  },
+  "green_run": "https://github.com/TechWisard/desktop-pilot/actions/runs/40659360500",
+  "green": {
+    "rust_tests": 262,
+    "rust_failed": 0,
+    "native_checks": 28,
+    "publication_guards": 9,
+    "readme_guard": "passed",
+    "format": "passed",
+    "strict_clippy": "passed",
+    "locked_build": "passed",
+    "runners": [
+      "windows-2022",
+      "windows-2025"
+    ]
+  },
+  "safety": "Manual rename remains a user-controlled file after Undo; the catalog ownership is released without deleting it.",
+  "scope_limitations": [
+    "Deterministic Windows Server hosted runner interleavings, not physical Windows 11",
+    "No actual user task-time, 200% visual or network outage measurement",
+    "Separate release-version commit and main/tag/public asset verification required"
+  ]
+}
