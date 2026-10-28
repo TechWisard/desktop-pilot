@@ -1327,6 +1327,10 @@ impl Settings {
                             if !result.added.is_empty() {
                                 self.highlighted_apps =
                                     result.added.iter().map(|(id, _)| id.clone()).collect();
+                                // "Last import" is an input to the filtered view, even
+                                // when a repeated import makes no SQLite changes.
+                                // Refresh only the view cache, not the saved catalog.
+                                self.catalog.query = None;
                                 self.filter.clear();
                                 self.app_filter = 5;
                                 self.app_page = 0;
