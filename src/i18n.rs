@@ -409,6 +409,26 @@ fn translate(value: &str, russian: bool) -> String {
             "Repeated use; eligible for a direct shortcut",
         ),
         (
+            "Сохранённый исторический приоритет; свежих наблюдений пока мало",
+            "Saved historical priority; little recent activity has been observed",
+        ),
+        (
+            "Продолжительная работа за день; быстрый ярлык может быть полезен",
+            "Extended use in one day; a quick shortcut may help",
+        ),
+        (
+            "Несколько сеансов за день; быстрый ярлык может быть полезен",
+            "Several sessions in one day; a quick shortcut may help",
+        ),
+        (
+            "Использование в разные дни; быстрый ярлык может быть полезен",
+            "Usage on different days; a quick shortcut may help",
+        ),
+        (
+            "Наблюдалась работа с приложением; быстрый ярлык может быть полезен",
+            "Activity observed; a quick shortcut may help",
+        ),
+        (
             "Команда передана фоновому приложению",
             "Command sent to the background process",
         ),
@@ -985,3 +1005,37 @@ mod cold_start_tests {
 
 #[cfg(test)]
 mod scan_ownership_tests;
+
+#[cfg(test)]
+mod evidence_reason_translation_tests {
+    use super::translate;
+
+    #[test]
+    fn usage_evidence_explanations_roundtrip_in_both_languages() {
+        for (ru, en) in [
+            (
+                "Сохранённый исторический приоритет; свежих наблюдений пока мало",
+                "Saved historical priority; little recent activity has been observed",
+            ),
+            (
+                "Продолжительная работа за день; быстрый ярлык может быть полезен",
+                "Extended use in one day; a quick shortcut may help",
+            ),
+            (
+                "Несколько сеансов за день; быстрый ярлык может быть полезен",
+                "Several sessions in one day; a quick shortcut may help",
+            ),
+            (
+                "Использование в разные дни; быстрый ярлык может быть полезен",
+                "Usage on different days; a quick shortcut may help",
+            ),
+            (
+                "Наблюдалась работа с приложением; быстрый ярлык может быть полезен",
+                "Activity observed; a quick shortcut may help",
+            ),
+        ] {
+            assert_eq!(translate(ru, false), en);
+            assert_eq!(translate(en, true), ru);
+        }
+    }
+}
