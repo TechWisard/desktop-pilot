@@ -85,7 +85,8 @@ fn multiword_query_prefers_exact_title_but_keeps_unordered_word_and_path_matches
         assert_eq!(matched.len(), 104);
         assert_eq!(matched[0], "Work Editor");
         assert_eq!(matched[1], "Editor Work");
-        assert_eq!(matched[2], "My Editor Notes");
+        assert_eq!(matched[2], "Editor");
+        assert_eq!(matched[3], "My Editor Notes");
         cache.update(apps, ranking, "", 0, 0, &HashSet::new());
         assert_eq!(names(&cache, apps)[0], "A0000 Utility", "empty query keeps alphabetic order");
     });

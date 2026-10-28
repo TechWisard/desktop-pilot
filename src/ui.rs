@@ -73,7 +73,31 @@ impl CatalogCache {
             })
             .map(|(index, _)| index)
             .collect();
-        if sort != 0 {
+        if sort == 0 && !words.is_empty() {
+            // A profile directory or a shared executable name can make thousands
+            // of shortcuts match the same query. Show an exact app name before
+            // path/category-only hits without removing any existing results.
+            // Cached keys avoid repeated Unicode lowercasing during sorting.
+            let phrase = words.join(" ");
+            self.indices.sort_by_cached_key(|&index| {
+                let name = apps[index].name.to_lowercase();
+                if name == phrase {
+                    0u8
+                } else if name.starts_with(&phrase) {
+                    1
+                } else if name.ends_with(&phrase) {
+                    2
+                } else if name.contains(&phrase) {
+                    3
+                } else if words.iter().all(|word| name.contains(word)) {
+                    4
+                } else if words.iter().any(|word| name.contains(word)) {
+                    5
+                } else {
+                    6
+                }
+            });
+        } else if sort != 0 {
             self.indices.sort_by(|&a, &b| {
                 let a = ranked(&apps[a]);
                 let b = ranked(&apps[b]);
