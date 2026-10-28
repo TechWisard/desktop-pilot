@@ -1718,6 +1718,7 @@ pub fn observe_match(apps: &[App], process: &str) -> Option<String> {
         None
     }
 }
+
 fn observe_app_id(apps: &[App], id: &str) -> Option<String> {
     if id.is_empty() {
         return None;
