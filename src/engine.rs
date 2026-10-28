@@ -483,6 +483,12 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
     let state: State = store.get("state")?;
     let scanned_at = now();
     let mut known = store.apps()?;
+    // These originals were already fully parsed and verified on this scan.
+    // Reopening the very same file during folder discovery doubles Shell/URL
+    // parsing for a warm catalog, without contributing different information.
+    // Other aliases, changed targets and unreadable sources still take the
+    // existing discovery and recovery paths below.
+    let mut verified_saved_sources = HashSet::new();
     // A long filesystem scan can overlap a user's explicit shortcut import.
     // Record only the sources seen at scan start; the import transaction may
     // select a different original before these results are ready to persist.
@@ -524,6 +530,7 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
                 app.unavailable_since = 0;
             }
             Ok(actual) if actual.valid => {
+                verified_saved_sources.insert(norm(&app.source));
                 // Launch identity is unchanged. Refresh only the non-identity
                 // metadata read from the original file. Never rewrite the
                 // independently managed desktop copy or its user's position.
@@ -702,6 +709,9 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
     }
     for path in paths {
         ensure!(!cancelled(), "Background catalog scan cancelled");
+        if verified_saved_sources.contains(&norm(&path.to_string_lossy())) {
+            continue;
+        }
         if state
             .owned
             .iter()
