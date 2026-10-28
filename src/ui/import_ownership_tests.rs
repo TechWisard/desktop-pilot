@@ -1,7 +1,7 @@
 use super::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-fn with_profile(test: impl FnOnce(&mut Settings, &App)) {
+pub(super) fn with_profile(test: impl FnOnce(&mut Settings, &App)) {
     static SERIAL: AtomicU64 = AtomicU64::new(0);
     let home = std::env::temp_dir().join(format!(
         "desktop-pilot-import-ownership-{}-{}-{}",
