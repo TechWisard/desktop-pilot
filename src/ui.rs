@@ -274,14 +274,6 @@ fn shortcut_paths(value: &str) -> Result<Vec<PathBuf>> {
             .and_then(|line| line.strip_suffix('"'))
             .unwrap_or(line);
         let path = PathBuf::from(line);
-        ensure!(path.is_absolute(), "Use a full shortcut path: {line}");
-        ensure!(
-            path.extension().is_some_and(|extension| matches!(
-                extension.to_str().map(str::to_ascii_lowercase).as_deref(),
-                Some("lnk" | "url")
-            )),
-            "Choose a .lnk or .url shortcut: {line}"
-        );
         if seen.insert(norm(line)) {
             paths.push(path);
         }
@@ -291,6 +283,21 @@ fn shortcut_paths(value: &str) -> Result<Vec<PathBuf>> {
         "Choose a shortcut or paste its full path."
     );
     Ok(paths)
+}
+
+// Reject bad selections individually in the worker. Other explicit file
+// selections must still be processed.
+fn validate_shortcut_path(path: &Path) -> Result<()> {
+    ensure!(path.is_absolute(), "Use a full shortcut path: {}", path.display());
+    ensure!(
+        path.extension().is_some_and(|extension| matches!(
+            extension.to_str().map(str::to_ascii_lowercase).as_deref(),
+            Some("lnk" | "url")
+        )),
+        "Choose a .lnk or .url shortcut: {}",
+        path.display()
+    );
+    Ok(())
 }
 
 fn preserve_app_preferences(app: &mut App, existing: Option<&App>) {
@@ -1170,6 +1177,10 @@ impl Settings {
                 updated: 0,
             };
             for path in paths {
+                if let Err(error) = validate_shortcut_path(&path) {
+                    result.failed.push((path, format!("{error:#}")));
+                    continue;
+                }
                 match native::read_link(&path) {
                     Ok(app) => apps.push(app),
                     Err(error) => result.failed.push((path, format!("{error:#}"))),
@@ -1378,7 +1389,12 @@ impl Settings {
                                 .join("\n\n");
                             self.import_open = !result.failed.is_empty();
                             if self.import_open {
-                                self.fail("Some shortcuts could not be added. Check the paths in the dialog and try again.");
+                                let explanation = "Some shortcuts could not be added. Check the paths in the dialog and try again.";
+                                if result.added.is_empty() {
+                                    self.fail(explanation);
+                                } else {
+                                    self.fail(format!("{}\n{explanation}", import_summary(&result)));
+                                }
                             }
                         }
                         Err(e) => {
@@ -4887,16 +4903,17 @@ mod tests {
         assert_eq!(paths.len(), 2);
         assert_eq!(paths[0], PathBuf::from(r"C:\Мои приложения\Editor.LNK"));
         assert_eq!(paths[1], PathBuf::from(r"\\server\Share\Site.url"));
+        assert!(shortcut_paths("").is_err());
         for invalid in [
-            "",
             "app.lnk",
             r"C:relative.lnk",
             r"C:\App.exe",
             r"C:\App.lnk\nC:\document.txt",
         ] {
+            let paths = shortcut_paths(invalid).unwrap();
             assert!(
-                shortcut_paths(invalid).is_err(),
-                "unexpected import: {invalid}"
+                paths.iter().all(|path| validate_shortcut_path(path).is_err()),
+                "invalid file type or relative path reached the native parser: {invalid}"
             );
         }
     }
