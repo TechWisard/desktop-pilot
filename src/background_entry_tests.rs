@@ -294,7 +294,6 @@ fn input_hooks_follow_manual_observe_manual_changes_and_concurrent_turn_off() {
     std::fs::remove_dir_all(home).unwrap();
 }
 
-
 #[test]
 fn failed_input_hook_registration_preserves_manual_controls_and_can_recover() {
     // A denied Windows input hook must not terminate the worker/tray that
@@ -323,8 +322,10 @@ fn failed_input_hook_registration_preserves_manual_controls_and_can_recover() {
     let attempted = engine::sync_input_hooks(&store, &mut hooks, true, || -> Result<()> {
         anyhow::bail!("simulated Windows hook registration denied")
     });
-    assert!(matches!(attempted, Ok(false)),
-        "hook failure must not stop manual commands or fake tracking: {attempted:?}");
+    assert!(
+        matches!(attempted, Ok(false)),
+        "hook failure must not stop manual commands or fake tracking: {attempted:?}"
+    );
     assert!(hooks.is_none());
     assert!(
         !store.get::<String>("input_warning").unwrap().is_empty(),
@@ -333,9 +334,15 @@ fn failed_input_hook_registration_preserves_manual_controls_and_can_recover() {
     engine::command(&store, &format!("policy:{}:Never", app.id)).unwrap();
     assert_eq!(store.app(&app.id).unwrap().policy, Policy::Never);
     assert_eq!(std::fs::read(&original).unwrap(), bytes);
-    assert_eq!(serde_json::to_value(store.days().unwrap()).unwrap(), history);
+    assert_eq!(
+        serde_json::to_value(store.days().unwrap()).unwrap(),
+        history
+    );
     assert!(engine::sync_input_hooks(&store, &mut hooks, true, || Ok(())).unwrap());
-    assert!(hooks.is_some(), "a later successful registration must recover");
+    assert!(
+        hooks.is_some(),
+        "a later successful registration must recover"
+    );
     assert!(store.get::<String>("input_warning").unwrap().is_empty());
     assert_eq!(store.app(&app.id).unwrap().policy, Policy::Never);
     drop(store);
