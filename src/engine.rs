@@ -354,7 +354,7 @@ pub(crate) fn preview_loaded(
 ) -> Result<Preview> {
     cfg.validate()?;
     let ranking = rank(apps, days, cfg, time);
-    let selected = select(apps, &ranking, state, cfg, initial);
+    let selected = select_at(apps, &ranking, state, cfg, initial, time);
     ensure!(
         selected.len() <= cfg.slots,
         "Ручных закреплений больше доступных мест. Увеличьте число мест или снимите закрепления."
