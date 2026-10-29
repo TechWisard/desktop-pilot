@@ -5,7 +5,10 @@ fn test_home() -> PathBuf {
     let home = std::env::temp_dir().join(format!(
         "test-desktop-pilot-background-entry-{}-{}",
         std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     std::fs::create_dir_all(&home).unwrap();
     home
@@ -53,8 +56,14 @@ fn a_disabled_profile_cannot_be_resurrected_by_a_late_background_entry() {
     let saved_bytes = std::fs::read(&original).unwrap();
     drop(store);
     std::fs::remove_dir_all(home).unwrap();
-    assert!(!admitted, "a background launch must respect explicit Turn off");
-    assert_eq!(before, after, "rejected startup must not rewrite the profile");
+    assert!(
+        !admitted,
+        "a background launch must respect explicit Turn off"
+    );
+    assert_eq!(
+        before, after,
+        "rejected startup must not rewrite the profile"
+    );
     assert_eq!(saved_bytes, bytes);
 }
 
@@ -70,7 +79,10 @@ fn a_permitted_background_entry_can_resume_without_resetting_preferences() {
     assert!(register_background_session(&store).unwrap());
     assert!(!store.get::<bool>("shutdown").unwrap());
     assert_eq!(store.get::<i64>("heartbeat").unwrap(), 0);
-    assert_eq!(store.get::<u32>("background_pid").unwrap(), std::process::id());
+    assert_eq!(
+        store.get::<u32>("background_pid").unwrap(),
+        std::process::id()
+    );
     assert_eq!(store.get::<Config>("config").unwrap(), config);
     drop(store);
     std::fs::remove_dir_all(home).unwrap();
