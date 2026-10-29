@@ -183,8 +183,37 @@ fn copy_new(source: &Path, destination: &Path) -> Result<()> {
     let result = (|| -> Result<()> {
         file.write_all(&bytes)?;
         file.sync_all()?;
+        // The later attribute update can fail after Windows has moved the
+        // hidden staging file. Retain its identity to clean only our own copy.
+        let staged_id = identity_of(&file).ok().flatten();
         drop(file);
-        move_new(&temp, destination)
+        if let Err(error) = move_new(&temp, destination) {
+            if !temp.try_exists()? {
+                let Some(file_id) = staged_id else {
+                    bail!(
+                        "Published shortcut {} may remain after: {error:#}; filesystem identity was unavailable",
+                        destination.display()
+                    );
+                };
+                let owned = Owned {
+                    app: String::new(),
+                    path: destination.to_string_lossy().into_owned(),
+                    sha: hash(&bytes),
+                    position: Point::default(),
+                    manual: false,
+                    since: 0,
+                    file_id: Some(file_id),
+                };
+                if let Err(cleanup) = remove_owned(destination, &owned) {
+                    return Err(error.context(format!(
+                        "Could not safely remove published shortcut {}: {cleanup:#}",
+                        destination.display()
+                    )));
+                }
+            }
+            return Err(error);
+        }
+        Ok(())
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&temp);
