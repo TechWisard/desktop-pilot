@@ -1028,12 +1028,13 @@ impl Settings {
         }
         let home = self.store.home.clone();
         let action = command.to_owned();
-        self.start_job("Sending the command…", move || {
-            match setup::dispatch_settings_command(&home, &action)? {
+        self.start_job(
+            "Sending the command…",
+            move || match setup::dispatch_settings_command(&home, &action)? {
                 setup::SettingsCommand::Queued(id) => Ok(JobResult::Queued(id, action)),
                 setup::SettingsCommand::Completed(message) => Ok(JobResult::Completed(message)),
-            }
-        });
+            },
+        );
     }
     fn change_policy(&mut self, id: String, policy: Policy) {
         if !self.busy() {
