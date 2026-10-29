@@ -346,8 +346,37 @@ pub fn dispatch_settings_command(home: &Path, action: &str) -> Result<SettingsCo
 // Shared with Settings save so its conditional resume cannot overtake Turn off.
 pub(crate) fn start_background_locked(store: &Store) -> Result<()> {
     let exe = install_current(store)?;
-    start_installed(store, &exe)?;
-    store.set("background_disabled", &false)
+    with_background_start_permission(store, || start_installed(store, &exe))
+}
+
+/// The explicit Start owner already holds the per-profile startup mutex.
+/// Authorize its child before spawning, since the child now refuses to enter
+/// a profile that the user explicitly turned off. Restore the previous off
+/// state if the launch or readiness check fails.
+pub(crate) fn with_background_start_permission(
+    store: &Store,
+    launch: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    let was_disabled: bool = store.get("background_disabled")?;
+    if was_disabled {
+        store.set("background_disabled", &false)?;
+    }
+    match launch() {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            if was_disabled
+                && let Err(restore) = store.transaction(|| {
+                    store.set("background_disabled", &true)?;
+                    store.set("shutdown", &true)
+                })
+            {
+                return Err(error.context(format!(
+                    "Could not restore Turn off after startup failed: {restore:#}"
+                )));
+            }
+            Err(error)
+        }
+    }
 }
 
 fn start_installed(store: &Store, exe: &Path) -> Result<()> {

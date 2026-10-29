@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod activity;
+#[cfg(test)]
+mod background_entry_tests;
 mod cli;
 #[cfg(test)]
 mod cli_startup_race_tests;
@@ -50,6 +52,28 @@ fn prepare_report(args: &[String]) -> Result<()> {
     }
     Ok(())
 }
+/// Registers the actual background entry after the profile's singleton is claimed.
+/// Kept separate so the database transition is exercised by native regressions.
+fn register_background_session(store: &Store) -> Result<bool> {
+    // The background singleton is already held. Turn off retains that lock
+    // until its SQLite disable transaction commits, so this admission decision
+    // cannot overtake a completed user stop.
+    store.transaction(|| {
+        if store.get::<bool>("background_disabled")? {
+            return Ok(false);
+        }
+        store.set(
+            "input_filter",
+            &"non-injected keyboard/buttons/wheel; fresh foreground interaction",
+        )?;
+        store.set("shutdown", &false)?;
+        store.set("heartbeat", &0i64)?;
+        store.set("background_pid", &std::process::id())?;
+        store.set("background_version", &env!("CARGO_PKG_VERSION"))?;
+        Ok(true)
+    })
+}
+
 fn background_running(home: &Path) -> Result<bool> {
     native::is_running("background", home)
 }
@@ -260,16 +284,9 @@ fn run(error_profile: &mut Option<PathBuf>) -> Result<()> {
                 return Ok(());
             };
             let _input_hooks = activity::Hooks::install()?;
-            s.set(
-                "input_filter",
-                &"non-injected keyboard/buttons/wheel; fresh foreground interaction",
-            )?;
-            s.transaction(|| {
-                s.set("shutdown", &false)?;
-                s.set("heartbeat", &0i64)?;
-                s.set("background_pid", &std::process::id())?;
-                s.set("background_version", &env!("CARGO_PKG_VERSION"))
-            })?;
+            if !register_background_session(&s)? {
+                return Ok(());
+            }
             let worker_home = h.clone();
             let worker = std::thread::spawn(move || {
                 let r = std::panic::catch_unwind(|| engine::monitor(worker_home.clone()))
@@ -634,6 +651,22 @@ fn self_test(home: &Path, args: &[String], error_profile: &mut Option<PathBuf>) 
             && fresh.get::<String>("disable_sentinel")? == "keep profile and rules",
         "Opening a disabled profile restarted work or lost profile data"
     );
+    // The Windows Run entry invokes --background directly. A delayed/stale
+    // launch after Turn off must exit without resetting the saved shutdown.
+    let disabled_heartbeat: i64 = fresh.get("heartbeat")?;
+    let late = std::process::Command::new(setup::installed_exe(&fresh.home))
+        .args(["--background", "--home"])
+        .arg(&fresh.home)
+        .output()?;
+    ensure!(
+        late.status.success()
+            && !background_running(&fresh.home)?
+            && fresh.get::<bool>("background_disabled")?
+            && fresh.get::<bool>("shutdown")?
+            && fresh.get::<i64>("heartbeat")? == disabled_heartbeat
+            && fresh.get::<String>("disable_sentinel")? == "keep profile and rules",
+        "A delayed background process ignored Turn off or modified the disabled profile"
+    );
     setup::start_background(&fresh.home)?;
     ensure!(
         background_running(&fresh.home)? && !fresh.get::<bool>("background_disabled")?,
@@ -865,6 +898,7 @@ fn self_test(home: &Path, args: &[String], error_profile: &mut Option<PathBuf>) 
                 "new queued commands complete exactly once",
                 "disable stops and persists collection automation and startup choices",
                 "opening disabled settings keeps the worker stopped and preserves data",
+                "delayed Windows startup honors Turn off without changing the profile",
                 "explicit resume restarts the worker",
                 "resume replaces an already stopping worker before reporting success",
                 "report destination cannot overwrite the profile database",
