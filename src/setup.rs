@@ -691,7 +691,8 @@ mod tests {
     }
 
     #[test]
-    fn turn_off_without_enabled_autostart_ignores_registry_refusal_but_keeps_strict_failure_for_enabled_startup() {
+    fn turn_off_without_enabled_autostart_ignores_registry_refusal_but_keeps_strict_failure_for_enabled_startup()
+    {
         // Use real disable_background, per-profile locks, SQLite and pending
         // command cancellation. Only the Windows registration boundary is
         // deliberately rejected; the test cannot modify the host registry.
@@ -711,8 +712,7 @@ mod tests {
             };
             store.set("config", &config).unwrap();
             let source = root.join("Important.url");
-            let source_bytes =
-                b"[InternetShortcut]\r\nURL=https://example.invalid/Important\r\n";
+            let source_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/Important\r\n";
             std::fs::write(&source, source_bytes).unwrap();
             let app = native::read_link(&source).unwrap();
             store.put_app(&app).unwrap();
@@ -726,7 +726,9 @@ mod tests {
             *TEST_REJECT_AUTOSTART_UPDATE.lock().unwrap() = None;
             if was_enabled {
                 let error = result.expect_err("removing enabled startup still requires Windows");
-                assert!(format!("{error:#}").contains("Simulated Windows startup registration refusal"));
+                assert!(
+                    format!("{error:#}").contains("Simulated Windows startup registration refusal")
+                );
                 assert_eq!(store.get::<Config>("config").unwrap(), config);
                 assert!(!store.get::<bool>("background_disabled").unwrap());
                 assert!(!store.get::<bool>("shutdown").unwrap());
