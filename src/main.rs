@@ -56,6 +56,7 @@ fn background_running(home: &Path) -> Result<bool> {
 
 /// Coordinate direct CLI changes with explicit Settings startup/disable.
 fn direct_cli_change<T>(store: &Store, action: impl FnOnce() -> Result<T>) -> Result<T> {
+    let _starting = native::exclusive("startup", &store.home)?;
     ensure!(
         !background_running(&store.home)?,
         "При работающем фоне используйте окно настроек"
