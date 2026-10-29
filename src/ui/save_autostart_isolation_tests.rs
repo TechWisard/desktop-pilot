@@ -3,7 +3,10 @@ use super::*;
 
 fn save_result(settings: &mut Settings) -> std::result::Result<JobResult, String> {
     settings.save();
-    let job = settings.job.take().expect("real Settings save job must start");
+    let job = settings
+        .job
+        .take()
+        .expect("real Settings save job must start");
     job.receiver
         .recv_timeout(Duration::from_secs(15))
         .expect("real Settings save job must complete")
@@ -22,8 +25,7 @@ fn unrelated_preference_saves_when_windows_autostart_registration_is_unavailable
 
         // This failure hook runs at the actual setup::save_config boundary in
         // Settings' asynchronous SQLite writer. It does not modify real Windows.
-        *setup::TEST_REJECT_AUTOSTART_UPDATE.lock().unwrap() =
-            Some(settings.store.home.clone());
+        *setup::TEST_REJECT_AUTOSTART_UPDATE.lock().unwrap() = Some(settings.store.home.clone());
 
         settings.config.slots = base.slots + 1;
         settings.refresh_dirty();
@@ -57,7 +59,10 @@ fn unrelated_preference_saves_when_windows_autostart_registration_is_unavailable
             Ok(_) => panic!("An unavailable startup change was falsely reported as saved"),
         }
         assert!(!settings.store.get::<Config>("config").unwrap().autostart);
-        assert_eq!(settings.store.get::<Config>("config").unwrap().slots, base.slots + 1);
+        assert_eq!(
+            settings.store.get::<Config>("config").unwrap().slots,
+            base.slots + 1
+        );
 
         *setup::TEST_REJECT_AUTOSTART_UPDATE.lock().unwrap() = None;
         let restored = match save_result(settings) {
