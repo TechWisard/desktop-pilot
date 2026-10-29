@@ -167,6 +167,37 @@ fn a_disabled_entry_never_installs_global_input_hooks() {
     std::fs::remove_dir_all(home).unwrap();
 }
 
+
+#[test]
+fn enabled_manual_only_entry_must_not_request_global_input_hooks() {
+    // Unlike explicit Turn off, this mode keeps the tray and manual commands
+    // available. It has no permission to observe keyboard or mouse activity.
+    let home = test_home();
+    let store = Store::open(&home).unwrap();
+    store.set("setup_complete", &true).unwrap();
+    store.set("background_disabled", &false).unwrap();
+    let config = Config {
+        collect: false,
+        automatic: false,
+        learning_enabled: false,
+        ..Default::default()
+    };
+    store.set("config", &config).unwrap();
+    let mut attempted = 0;
+    let hooks = install_input_hooks_if_enabled(&store, || -> Result<()> {
+        attempted += 1;
+        Ok(())
+    })
+    .unwrap();
+    assert!(hooks.is_none(), "manual-only mode needs no global input hooks");
+    assert_eq!(attempted, 0, "no hook initializer should be called");
+    assert!(register_background_session(&store).unwrap());
+    assert!(!store.get::<bool>("shutdown").unwrap());
+    assert_eq!(store.get::<Config>("config").unwrap(), config);
+    drop(store);
+    std::fs::remove_dir_all(home).unwrap();
+}
+
 #[test]
 fn turning_off_during_input_hook_setup_still_rejects_session_registration() {
     let home = test_home();
