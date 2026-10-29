@@ -332,18 +332,18 @@ fn stale_collect_snapshot_cannot_keep_existing_hooks_after_permission_is_revoked
     store.set("background_disabled", &false).unwrap();
     let dropped = Arc::new(AtomicUsize::new(0));
     let mut hooks: Option<CountedHook> = None;
-    let mut installations = 0usize;
+    let installations = std::cell::Cell::new(0usize);
 
     let mut sync = |hooks: &mut Option<CountedHook>| {
         engine::sync_input_hooks(&store, hooks, true, || {
-            installations += 1;
+            installations.set(installations.get() + 1);
             Ok(CountedHook(dropped.clone()))
         })
         .unwrap()
     };
     assert!(sync(&mut hooks));
     assert!(hooks.is_some());
-    assert_eq!(installations, 1);
+    assert_eq!(installations.get(), 1);
 
     // Pausing collection must invalidate a formerly authorized installation
     // even when this monitor iteration still carries an older true snapshot.
@@ -359,7 +359,7 @@ fn stale_collect_snapshot_cannot_keep_existing_hooks_after_permission_is_revoked
     config.collect = true;
     settings.set("config", &config).unwrap();
     assert!(sync(&mut hooks));
-    assert_eq!(installations, 2);
+    assert_eq!(installations.get(), 2);
 
     // Turn off can also commit after the same snapshot, before the hook poll.
     settings.set("background_disabled", &true).unwrap();
@@ -369,11 +369,11 @@ fn stale_collect_snapshot_cannot_keep_existing_hooks_after_permission_is_revoked
     );
     assert!(hooks.is_none());
     assert_eq!(dropped.load(Ordering::SeqCst), 2);
-    assert_eq!(installations, 2, "revocation cannot register new hooks");
+    assert_eq!(installations.get(), 2, "revocation cannot register new hooks");
 
     settings.set("background_disabled", &false).unwrap();
     assert!(sync(&mut hooks));
-    assert_eq!(installations, 3);
+    assert_eq!(installations.get(), 3);
     settings.set("shutdown", &true).unwrap();
     assert!(!sync(&mut hooks), "shutdown must release existing hooks");
     assert!(hooks.is_none());
