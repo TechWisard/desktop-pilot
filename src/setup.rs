@@ -268,6 +268,23 @@ pub(crate) static QUEUE_TEST_PAUSE: std::sync::Mutex<Option<QueueTestPause>> =
     std::sync::Mutex::new(None);
 
 #[cfg(test)]
+pub(crate) static DISABLED_LOCAL_TEST_PAUSE: std::sync::Mutex<Option<QueueTestPause>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
+pub(crate) fn pause_before_disabled_local(home: &Path) {
+    let gate = DISABLED_LOCAL_TEST_PAUSE.lock().unwrap();
+    if let Some(gate) = gate.as_ref().filter(|gate| gate.home == home) {
+        gate.arrived
+            .send(())
+            .expect("disabled local command reached the interleaving boundary");
+        gate.resume
+            .recv_timeout(Duration::from_secs(20))
+            .expect("disabled local command checkpoint released");
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn pause_before_enqueue(home: &Path) {
     let gate = QUEUE_TEST_PAUSE.lock().unwrap();
     if let Some(gate) = gate.as_ref().filter(|gate| gate.home == home) {

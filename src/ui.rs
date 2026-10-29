@@ -1038,6 +1038,8 @@ impl Settings {
                 // worker. Keep the established command, ownership and Undo guards.
                 let _com = native::Com::new()?;
                 let store = Store::open(&home)?;
+                #[cfg(test)]
+                setup::pause_before_disabled_local(&home);
                 ensure!(
                     !native::is_running("background", &home)?,
                     "Background work is still stopping. Try the action again."
@@ -5246,3 +5248,6 @@ mod queue_race_tests;
 
 #[cfg(test)]
 mod save_disable_race_tests;
+
+#[cfg(test)]
+mod disabled_start_race_tests;
