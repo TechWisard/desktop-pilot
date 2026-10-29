@@ -1183,6 +1183,30 @@ mod tests {
         assert!(select(&[], &[unknown], &State::default(), &cfg, true).is_empty());
     }
     #[test]
+    fn extended_unc_spelling_keeps_one_shortcut_identity() {
+        // Windows UNC and extended-length UNC name the same server/share
+        // regardless of case in the UNC device component.
+        let ordinary = r"\\Server\Team\Tools\launch.exe";
+        for spelling in [
+            r"\\?\UNC\Server\Team\Tools\launch.exe",
+            r"\\?\unc\SERVER\team\TOOLS\LAUNCH.EXE",
+            r"\\?\UnC\server\TEAM\Tools\launch.exe",
+        ] {
+            assert_eq!(norm(spelling), norm(ordinary));
+            let mut saved = App { target: ordinary.into(), ..Default::default() };
+            let mut discovered = App { target: spelling.into(), ..Default::default() };
+            saved.assign_id();
+            discovered.assign_id();
+            assert_eq!(saved.id, discovered.id, "a path-spelling change must not create an extra catalog application");
+        }
+        assert_ne!(norm(r"\\?\C:\Team\Tools\launch.exe"), norm(ordinary));
+        assert_ne!(
+            target_identity("https://example.com/Team"),
+            target_identity("https://example.com/team")
+        );
+    }
+
+    #[test]
     fn windows_unc_normalization_and_url_identity_are_distinct() {
         assert_eq!(
             norm(r"\\?\UNC\Server\Share\App.exe"),
