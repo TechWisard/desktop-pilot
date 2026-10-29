@@ -444,6 +444,9 @@ pub(crate) struct TestScanGate {
 pub(crate) static TEST_SCAN_GATE: std::sync::Mutex<Option<TestScanGate>> =
     std::sync::Mutex::new(None);
 #[cfg(test)]
+pub(crate) static TEST_POST_DISCOVERY_GATE: std::sync::Mutex<Option<TestScanGate>> =
+    std::sync::Mutex::new(None);
+#[cfg(test)]
 pub(crate) struct TestMonitorCatalogObserver {
     pub home: PathBuf,
     pub sender: std::sync::mpsc::Sender<(bool, Vec<String>)>,
@@ -849,6 +852,24 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
             }
         }
     }
+    // The test boundary is after real filesystem enumeration but before its
+    // snapshot is committed. A later explicit refresh must not be reported
+    // complete based only on this already-stale enumeration.
+    #[cfg(test)]
+    let _post_discovery = if let Some(gate) = {
+        let mut slot = TEST_POST_DISCOVERY_GATE.lock().unwrap();
+        if slot.as_ref().is_some_and(|gate| gate.home == store.home) {
+            slot.take()
+        } else {
+            None
+        }
+    } {
+        let _ = gate.entered.send(());
+        let _ = gate.release.recv_timeout(Duration::from_secs(40));
+        Some(TestScanCompletion(gate.completed))
+    } else {
+        None
+    };
     #[cfg(test)]
     BEFORE_REFRESH_COMMIT.with(|callback| {
         if let Some(callback) = callback.borrow_mut().take() {
@@ -3924,6 +3945,9 @@ mod renamed_copy_scan_tests;
 
 #[cfg(test)]
 mod blocked_scan_tests;
+
+#[cfg(test)]
+mod deferred_rescan_tests;
 
 mod scan_worker;
 
