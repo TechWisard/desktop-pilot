@@ -1031,10 +1031,8 @@ impl Settings {
         self.start_job("Sending the command…", move || {
             // An explicitly disabled profile must remain disabled. Serialize
             // this decision with Turn off so this action cannot silently resume.
-            if setup::start_background_if_enabled(&home)? {
-                let store = Store::open(&home)?;
-                store.command(&action)?;
-                Ok(JobResult::Queued(store.db.last_insert_rowid(), action))
+            if let Some(id) = setup::enqueue_settings_command_if_enabled(&home, &action)? {
+                Ok(JobResult::Queued(id, action))
             } else {
                 // Explicit local actions do not need an installed executable or
                 // worker. Keep the established command, ownership and Undo guards.
@@ -5226,3 +5224,6 @@ mod clear_history_tests;
 
 #[cfg(test)]
 mod disabled_actions_tests;
+
+#[cfg(test)]
+mod queue_race_tests;

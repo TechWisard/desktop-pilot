@@ -255,9 +255,35 @@ pub fn start_background(home: &Path) -> Result<()> {
     start_background_locked(&store)
 }
 
-/// A Settings command is not permission to resume explicitly disabled tracking.
-/// Serialize the decision with Turn off / explicit Start under the startup lock.
-pub fn start_background_if_enabled(home: &Path) -> Result<bool> {
+// Test-only pause at the command write boundary; never shipped in release.
+#[cfg(test)]
+pub(crate) struct QueueTestPause {
+    pub home: PathBuf,
+    pub arrived: std::sync::mpsc::Sender<()>,
+    pub resume: std::sync::mpsc::Receiver<()>,
+}
+
+#[cfg(test)]
+pub(crate) static QUEUE_TEST_PAUSE: std::sync::Mutex<Option<QueueTestPause>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
+pub(crate) fn pause_before_enqueue(home: &Path) {
+    let gate = QUEUE_TEST_PAUSE.lock().unwrap();
+    if let Some(gate) = gate.as_ref().filter(|gate| gate.home == home) {
+        gate.arrived
+            .send(())
+            .expect("queue must reach the race checkpoint");
+        gate.resume
+            .recv_timeout(Duration::from_secs(20))
+            .expect("queue checkpoint must be released");
+    }
+}
+
+/// Enqueue under the same startup lock as an explicit Turn off. Releasing
+/// that lock between worker readiness and INSERT could leave a new pending
+/// action after Turn off had cancelled the queue and stopped the worker.
+pub fn enqueue_settings_command_if_enabled(home: &Path, action: &str) -> Result<Option<i64>> {
     let _starting = native::exclusive("startup", home)?;
     let store = Store::open(home)?;
     ensure!(
@@ -265,10 +291,19 @@ pub fn start_background_if_enabled(home: &Path) -> Result<bool> {
         "Complete initial setup before starting background tracking"
     );
     if store.get::<bool>("background_disabled")? {
-        return Ok(false);
+        return Ok(None);
     }
     start_background_locked(&store)?;
-    Ok(true)
+    #[cfg(test)]
+    pause_before_enqueue(home);
+    store.transaction(|| {
+        ensure!(
+            !store.get::<bool>("shutdown")? && !store.get::<bool>("background_disabled")?,
+            "Background work stopped before the command could be queued. Try the action again."
+        );
+        store.command(action)?;
+        Ok(Some(store.db.last_insert_rowid()))
+    })
 }
 
 fn start_background_locked(store: &Store) -> Result<()> {
