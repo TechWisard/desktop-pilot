@@ -2486,9 +2486,11 @@ mod tests {
             );
             assert_eq!(std::fs::read(&original).unwrap(), bytes);
             assert!(
-                !std::fs::read_dir(&store.home)
+                !std::fs::read_dir(&store.home).unwrap().any(|entry| entry
                     .unwrap()
-                    .any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with(".desktop-pilot-")),
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".desktop-pilot-")),
                 "Failed shortcut publication left a staging file"
             );
             copy_new(&original, &destination).unwrap();
