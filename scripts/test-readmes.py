@@ -19,3 +19,21 @@ for path, heading in (
     assert "SHA-256" in section, path
 
 print("README installation instructions: English and Russian use latest-release archives")
+
+# Keep the public catalog limits and post-import instructions synchronized with
+# the actual scanner and Settings controls, instead of freezing old release values.
+scanner = Path("src/engine.rs").read_text(encoding="utf-8")
+limit_match = re.search(r"MAX_DISCOVERED_SHORTCUTS:\s*usize\s*=\s*([0-9_]+)", scanner)
+assert limit_match, "Missing scanner discovery limit"
+limit = int(limit_match.group(1).replace("_", ""))
+for path, opening, numeral, heading in (
+    ("docs/guide.md", "The catalog reads personal", f"{limit:,}", "Last import"),
+    ("docs/guide.ru.md", "Каталог собирается", str(limit), "Последний импорт"),
+):
+    content = Path(path).read_text(encoding="utf-8")
+    introduction = next((line for line in content.splitlines() if line.startswith(opening)), "")
+    assert introduction, f"Missing catalog instructions in {path}"
+    assert numeral in introduction, f"Outdated shortcut scan limit in {path}"
+    assert heading in introduction, f"Outdated import filter wording in {path}"
+
+print("Catalog guides match the scanner limit and Last import behavior")
