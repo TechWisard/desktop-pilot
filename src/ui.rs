@@ -1117,13 +1117,18 @@ impl Settings {
             let warning = if restart {
                 engine::setup_complete(&store)
                     .and_then(|complete| {
-                        ensure!(complete, "Complete initial setup before starting background tracking");
+                        ensure!(
+                            complete,
+                            "Complete initial setup before starting background tracking"
+                        );
                         setup::start_background_locked(&store)
                     })
                     .err()
                     .map(|error| {
-                    format!("Settings were saved, but background work could not start: {error:#}")
-                })
+                        format!(
+                            "Settings were saved, but background work could not start: {error:#}"
+                        )
+                    })
             } else {
                 None
             };
