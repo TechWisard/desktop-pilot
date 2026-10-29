@@ -497,8 +497,16 @@ pub fn disable_background(home: &Path) -> Result<Config> {
         .map_err(|error| restore_autostart(&store, error))
 }
 
+#[cfg(test)]
+pub(crate) static TEST_REJECT_AUTOSTART_UPDATE: std::sync::Mutex<Option<PathBuf>> =
+    std::sync::Mutex::new(None);
+
 pub fn save_config(store: &Store, config: &Config) -> Result<()> {
     config.validate()?;
+    #[cfg(test)]
+    if TEST_REJECT_AUTOSTART_UPDATE.lock().unwrap().as_ref() == Some(&store.home) {
+        anyhow::bail!("Simulated Windows startup registration refusal");
+    }
     let previous: Config = store.get("config")?;
     let actual = !test_profile(store)?;
     if actual {
