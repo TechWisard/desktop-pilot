@@ -59,9 +59,7 @@ fn install_input_hooks_if_enabled<T>(
     store: &Store,
     install: impl FnOnce() -> Result<T>,
 ) -> Result<Option<T>> {
-    if store.get::<bool>("background_disabled")?
-        || !store.get::<Config>("config")?.collect
-    {
+    if store.get::<bool>("background_disabled")? || !store.get::<Config>("config")?.collect {
         return Ok(None);
     }
     Ok(Some(install()?))
