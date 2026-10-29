@@ -15,8 +15,11 @@ static PAUSE: Mutex<Option<Pause>> = Mutex::new(None);
 pub(super) fn pause_before_change(home: &Path) {
     let gate = PAUSE.lock().unwrap();
     if let Some(gate) = gate.as_ref().filter(|gate| gate.home == home) {
-        gate.arrived.send(()).expect("direct CLI action reached the boundary");
-        gate.resume.recv_timeout(Duration::from_secs(15))
+        gate.arrived
+            .send(())
+            .expect("direct CLI action reached the boundary");
+        gate.resume
+            .recv_timeout(Duration::from_secs(15))
             .expect("direct CLI checkpoint must be released");
     }
 }
@@ -26,22 +29,35 @@ fn direct_cli_rollback_cannot_overlap_an_explicit_start() {
     // Actual production direct_cli_change, native SQLite, Win32 named mutex,
     // inert source shortcut, placement and Undo. No user desktop is touched.
     let home = std::env::temp_dir().join(format!(
-        "test-desktop-pilot-cli-startup-{}-{}", std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-            .unwrap().as_nanos()
+        "test-desktop-pilot-cli-startup-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     std::fs::create_dir_all(&home).unwrap();
     let store = Store::open(&home).unwrap();
     let desktop = home.join("Desktop");
     std::fs::create_dir_all(&desktop).unwrap();
-    store.set("test_desktop", &desktop.to_string_lossy()).unwrap();
+    store
+        .set("test_desktop", &desktop.to_string_lossy())
+        .unwrap();
     store.set("setup_complete", &true).unwrap();
     store.set("pins_verified", &true).unwrap();
     store.set("background_disabled", &true).unwrap();
-    store.set("config", &Config {
-        learning_enabled: false, automatic: false, collect: false,
-        respect_taskbar_pins: false, ..Config::default()
-    }).unwrap();
+    store
+        .set(
+            "config",
+            &Config {
+                learning_enabled: false,
+                automatic: false,
+                collect: false,
+                respect_taskbar_pins: false,
+                ..Config::default()
+            },
+        )
+        .unwrap();
     let source = home.join("Important.url");
     let source_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/Important\r\n";
     std::fs::write(&source, source_bytes).unwrap();
@@ -56,7 +72,9 @@ fn direct_cli_rollback_cannot_overlap_an_explicit_start() {
     let (arrived_tx, arrived_rx) = mpsc::channel();
     let (resume_tx, resume_rx) = mpsc::channel();
     *PAUSE.lock().unwrap() = Some(Pause {
-        home: home.clone(), arrived: arrived_tx, resume: resume_rx
+        home: home.clone(),
+        arrived: arrived_tx,
+        resume: resume_rx,
     });
     let worker_home = home.clone();
     let worker = std::thread::spawn(move || -> Result<String> {
@@ -66,7 +84,8 @@ fn direct_cli_rollback_cannot_overlap_an_explicit_start() {
             engine::rollback(&store)
         })
     });
-    arrived_rx.recv_timeout(Duration::from_secs(15))
+    arrived_rx
+        .recv_timeout(Duration::from_secs(15))
         .expect("CLI rollback reached the production boundary");
     // The explicit Settings Start operation acquires this same mutex.
     // It cannot be permitted between the CLI's stopped check and Undo.

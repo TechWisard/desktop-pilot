@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod activity;
 mod cli;
+#[cfg(test)]
+mod cli_startup_race_tests;
 mod engine;
 mod i18n;
 #[cfg(test)]
@@ -14,8 +16,6 @@ mod setup;
 mod store;
 mod tray;
 mod ui;
-#[cfg(test)]
-mod cli_startup_race_tests;
 use anyhow::{Context, Result, ensure};
 use model::*;
 use std::path::{Path, PathBuf};
