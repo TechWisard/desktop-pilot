@@ -255,6 +255,22 @@ pub fn start_background(home: &Path) -> Result<()> {
     start_background_locked(&store)
 }
 
+/// A Settings command is not permission to resume explicitly disabled tracking.
+/// Serialize the decision with Turn off / explicit Start under the startup lock.
+pub fn start_background_if_enabled(home: &Path) -> Result<bool> {
+    let _starting = native::exclusive("startup", home)?;
+    let store = Store::open(home)?;
+    ensure!(
+        engine::setup_complete(&store)?,
+        "Complete initial setup before starting background tracking"
+    );
+    if store.get::<bool>("background_disabled")? {
+        return Ok(false);
+    }
+    start_background_locked(&store)?;
+    Ok(true)
+}
+
 fn start_background_locked(store: &Store) -> Result<()> {
     let exe = install_current(store)?;
     start_installed(store, &exe)?;
