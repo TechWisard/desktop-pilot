@@ -2006,7 +2006,16 @@ pub(crate) fn sync_input_hooks<T>(
     collecting: bool,
     install: impl FnOnce() -> Result<T>,
 ) -> Result<bool> {
-    if !collecting {
+    // The monitor's Config was read earlier in this poll. Settings can pause
+    // collection or turn off background work after that snapshot, including
+    // while a hook is already installed. Recheck persisted permission on every
+    // poll, not only while first installing a hook.
+    if !collecting
+        || store.get::<bool>("shutdown")?
+        || store.get::<bool>("background_disabled")?
+        || !store.get::<Config>("config")?.collect
+    {
+        crate::activity::set_enabled(false);
         *current = None;
         return Ok(false);
     }
@@ -2206,7 +2215,7 @@ pub fn monitor(home: PathBuf) -> Result<()> {
         last_tick = Instant::now();
         let mut active_id = None;
         let mut learning_active = false;
-        if config.collect && elapsed < 5.0 {
+        if tracking_ready && elapsed < 5.0 {
             if let Ok(foreground) = native::foreground() {
                 let input = crate::activity::snapshot();
                 let tick = crate::activity::tick();

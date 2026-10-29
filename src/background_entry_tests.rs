@@ -293,3 +293,103 @@ fn input_hooks_follow_manual_observe_manual_changes_and_concurrent_turn_off() {
     drop(store);
     std::fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn stale_collect_snapshot_cannot_keep_existing_hooks_after_permission_is_revoked() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    struct CountedHook(Arc<AtomicUsize>);
+    impl Drop for CountedHook {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    // A different Settings connection can commit a pause after monitor has
+    // already read its Config snapshot. Exercise the actual hook lifecycle,
+    // persisted SQLite state and the same stale collecting argument.
+    let home = test_home();
+    let store = Store::open(&home).unwrap();
+    let settings = Store::open(&home).unwrap();
+    let original = home.join("Keep.url");
+    let original_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/Keep\r\n";
+    std::fs::write(&original, original_bytes).unwrap();
+    let mut app = native::read_link(&original).unwrap();
+    app.policy = Policy::Always;
+    store.put_app(&app).unwrap();
+    store.observe(&app.id, 300, true, false).unwrap();
+    let saved_apps = store.apps().unwrap();
+    let saved_days = store.days().unwrap();
+    let mut config = Config {
+        collect: true,
+        automatic: false,
+        ..Default::default()
+    };
+    store.set("config", &config).unwrap();
+    store.set("shutdown", &false).unwrap();
+    store.set("background_disabled", &false).unwrap();
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let mut hooks: Option<CountedHook> = None;
+    let installations = std::cell::Cell::new(0usize);
+
+    let sync = |hooks: &mut Option<CountedHook>| {
+        engine::sync_input_hooks(&store, hooks, true, || {
+            installations.set(installations.get() + 1);
+            Ok(CountedHook(dropped.clone()))
+        })
+        .unwrap()
+    };
+    assert!(sync(&mut hooks));
+    assert!(hooks.is_some());
+    assert_eq!(installations.get(), 1);
+
+    // Pausing collection must invalidate a formerly authorized installation
+    // even when this monitor iteration still carries an older true snapshot.
+    config.collect = false;
+    settings.set("config", &config).unwrap();
+    assert!(
+        !sync(&mut hooks),
+        "paused observation must revoke the stale snapshot"
+    );
+    assert!(hooks.is_none());
+    assert_eq!(dropped.load(Ordering::SeqCst), 1);
+
+    config.collect = true;
+    settings.set("config", &config).unwrap();
+    assert!(sync(&mut hooks));
+    assert_eq!(installations.get(), 2);
+
+    // Turn off can also commit after the same snapshot, before the hook poll.
+    settings.set("background_disabled", &true).unwrap();
+    assert!(
+        !sync(&mut hooks),
+        "Turn off must revoke already installed hooks"
+    );
+    assert!(hooks.is_none());
+    assert_eq!(dropped.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        installations.get(),
+        2,
+        "revocation cannot register new hooks"
+    );
+
+    settings.set("background_disabled", &false).unwrap();
+    assert!(sync(&mut hooks));
+    assert_eq!(installations.get(), 3);
+    settings.set("shutdown", &true).unwrap();
+    assert!(!sync(&mut hooks), "shutdown must release existing hooks");
+    assert!(hooks.is_none());
+    assert_eq!(dropped.load(Ordering::SeqCst), 3);
+
+    assert_eq!(store.apps().unwrap(), saved_apps);
+    assert_eq!(
+        serde_json::to_value(store.days().unwrap()).unwrap(),
+        serde_json::to_value(saved_days).unwrap()
+    );
+    assert_eq!(std::fs::read(&original).unwrap(), original_bytes);
+    drop(settings);
+    drop(store);
+    std::fs::remove_dir_all(home).unwrap();
+}
