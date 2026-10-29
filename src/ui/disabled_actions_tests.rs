@@ -2,7 +2,10 @@ use super::{import_ownership_tests::with_profile, *};
 
 fn run_settings_action(settings: &mut Settings, action: &str) -> Result<()> {
     settings.queue(action);
-    let job = settings.job.take().expect("Settings action must start a job");
+    let job = settings
+        .job
+        .take()
+        .expect("Settings action must start a job");
     let response = job
         .receiver
         .recv_timeout(Duration::from_secs(25))
@@ -17,7 +20,8 @@ fn disabled_profile_manual_rules_and_undo_do_not_restart_tracking() {
     with_profile(|settings, app| {
         let home = settings.store.home.clone();
         let quick = settings.store.get::<State>("state").unwrap().owned[0]
-            .path.clone();
+            .path
+            .clone();
         let bytes = std::fs::read(&app.source).unwrap();
         let before_days = serde_json::to_value(settings.store.days().unwrap()).unwrap();
         setup::disable_background(&home).unwrap();
@@ -30,7 +34,10 @@ fn disabled_profile_manual_rules_and_undo_do_not_restart_tracking() {
         run_settings_action(settings, &format!("policy:{}:Never", app.id))
             .expect("manual exclusion must work while background tracking is off");
         assert_eq!(settings.store.app(&app.id).unwrap().policy, Policy::Never);
-        assert!(Path::new(&quick).exists(), "a rule change cannot silently delete a shortcut");
+        assert!(
+            Path::new(&quick).exists(),
+            "a rule change cannot silently delete a shortcut"
+        );
         assert!(settings.store.get::<bool>("background_disabled").unwrap());
         assert!(settings.store.get::<bool>("shutdown").unwrap());
         assert!(!native::is_running("background", &home).unwrap());
@@ -49,6 +56,9 @@ fn disabled_profile_manual_rules_and_undo_do_not_restart_tracking() {
         assert!(settings.store.get::<bool>("background_disabled").unwrap());
         assert!(settings.store.get::<bool>("shutdown").unwrap());
         assert!(!native::is_running("background", &home).unwrap());
-        assert!(installed.is_dir(), "the manual path must not touch the installer");
+        assert!(
+            installed.is_dir(),
+            "the manual path must not touch the installer"
+        );
     });
 }
