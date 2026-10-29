@@ -87,3 +87,32 @@ fn a_permitted_background_entry_can_resume_without_resetting_preferences() {
     drop(store);
     std::fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn explicit_start_grants_background_entry_and_restores_turn_off_after_failure() {
+    // Exercise the same start-permission transition used by the real launcher.
+    // Only the simulated failed child is injected; SQLite admission is real.
+    let home = test_home();
+    let store = Store::open(&home).unwrap();
+    store.set("setup_complete", &true).unwrap();
+    store.set("background_disabled", &true).unwrap();
+    store.set("shutdown", &true).unwrap();
+    let failed = setup::with_background_start_permission(&store, || {
+        assert!(register_background_session(&store)?);
+        anyhow::bail!("simulated child failed readiness")
+    });
+    assert!(failed.is_err());
+    assert!(store.get::<bool>("background_disabled").unwrap());
+    assert!(store.get::<bool>("shutdown").unwrap());
+    assert!(!register_background_session(&store).unwrap());
+
+    setup::with_background_start_permission(&store, || {
+        assert!(register_background_session(&store)?);
+        Ok(())
+    })
+    .unwrap();
+    assert!(!store.get::<bool>("background_disabled").unwrap());
+    assert!(!store.get::<bool>("shutdown").unwrap());
+    drop(store);
+    std::fs::remove_dir_all(home).unwrap();
+}
