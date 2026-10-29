@@ -35,10 +35,15 @@ fn competing_mode_choices_cannot_synthesize_an_unrequested_mode() {
 
     let mut paused = adaptive.clone();
     paused.collect = false;
-    let merged_pause = merge_config(&adaptive, &Config {
-        slots: 5,
-        ..adaptive.clone()
-    }, &paused).unwrap();
+    let merged_pause = merge_config(
+        &adaptive,
+        &Config {
+            slots: 5,
+            ..adaptive.clone()
+        },
+        &paused,
+    )
+    .unwrap();
     assert!(merged_pause.automatic && !merged_pause.collect);
     assert_eq!(merged_pause.slots, 5);
 }
@@ -74,13 +79,24 @@ fn real_settings_save_rejects_competing_mode_without_touching_profile_or_undo() 
 
         editor.save();
         let job = editor.job.take().expect("real asynchronous Settings save");
-        let result = job.receiver.recv_timeout(Duration::from_secs(15))
+        let result = job
+            .receiver
+            .recv_timeout(Duration::from_secs(15))
             .expect("save must not hang on a mode conflict");
-        assert!(result.is_err(), "competing mode saves must not silently succeed");
+        assert!(
+            result.is_err(),
+            "competing mode saves must not silently succeed"
+        );
         assert_eq!(settings.store.get::<Config>("config").unwrap(), latest);
         assert_eq!(settings.store.app(&anchor.id).unwrap(), protected_app);
-        assert_eq!(serde_json::to_value(settings.store.days().unwrap()).unwrap(), before_days);
-        assert_eq!(settings.store.get::<State>("state").unwrap().owned, before_state.owned);
+        assert_eq!(
+            serde_json::to_value(settings.store.days().unwrap()).unwrap(),
+            before_days
+        );
+        assert_eq!(
+            settings.store.get::<State>("state").unwrap().owned,
+            before_state.owned
+        );
         assert_eq!(std::fs::read(&anchor.source).unwrap(), original);
         assert!(Path::new(&quick_copy).is_file());
 
