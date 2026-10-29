@@ -587,7 +587,11 @@ fn malformed_pasted_path_does_not_discard_other_selected_shortcuts() {
         );
         let paths = shortcut_paths(&typed)
             .expect("a bad pasted line must not reject another valid shortcut");
-        assert_eq!(paths.len(), 3, "duplicate valid paths are still deduplicated");
+        assert_eq!(
+            paths.len(),
+            3,
+            "duplicate valid paths are still deduplicated"
+        );
         let result = import(settings, paths).unwrap();
         assert_eq!((result.created, result.updated), (1, 0));
         assert_eq!(result.added.len(), 1);
@@ -608,7 +612,10 @@ fn malformed_pasted_path_does_not_discard_other_selected_shortcuts() {
         assert_eq!(settings.store.apps().unwrap().len(), 2);
         assert_eq!(data(settings, anchor), protected);
         assert_eq!(std::fs::read(&anchor.source).unwrap(), original_bytes);
-        assert_eq!(std::fs::read(&wrong_type).unwrap(), b"do not import this file");
+        assert_eq!(
+            std::fs::read(&wrong_type).unwrap(),
+            b"do not import this file"
+        );
         let preview = engine::preview(&settings.store, false).unwrap();
         assert!(preview.added.is_empty() && preview.removed.is_empty());
         let repeated = import(settings, vec![good.clone()]).unwrap();
@@ -616,6 +623,9 @@ fn malformed_pasted_path_does_not_discard_other_selected_shortcuts() {
         engine::command(&settings.store, "rollback").unwrap();
         assert_eq!(std::fs::read(&anchor.source).unwrap(), original_bytes);
         assert!(good.is_file());
-        assert_eq!(settings.store.app(&anchor.id).unwrap().policy, Policy::Always);
+        assert_eq!(
+            settings.store.app(&anchor.id).unwrap().policy,
+            Policy::Always
+        );
     });
 }
