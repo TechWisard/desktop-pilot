@@ -2084,9 +2084,8 @@ impl<T> InputHookRuntime<T> {
         }
         let mut installer_failed = false;
         let result = sync_input_hooks(store, &mut self.hooks, collecting, || {
-            install().map_err(|error| {
+            install().inspect_err(|_| {
                 installer_failed = true;
-                error
             })
         });
         match result {
