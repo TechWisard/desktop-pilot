@@ -273,7 +273,9 @@ pub(crate) static QUEUE_TEST_PAUSE: std::sync::Mutex<Option<QueueTestPause>> =
 pub(crate) fn pause_before_enqueue(home: &Path) {
     let gate = QUEUE_TEST_PAUSE.lock().unwrap();
     if let Some(gate) = gate.as_ref().filter(|gate| gate.home == home) {
-        gate.arrived.send(()).expect("queue must reach the race checkpoint");
+        gate.arrived
+            .send(())
+            .expect("queue must reach the race checkpoint");
         gate.resume
             .recv_timeout(Duration::from_secs(20))
             .expect("queue checkpoint must be released");

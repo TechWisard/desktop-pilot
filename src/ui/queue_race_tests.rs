@@ -37,9 +37,7 @@ fn queued_manual_action_cannot_escape_a_concurrent_explicit_disable() {
         // If a second Settings instance can acquire startup now, Turn off can
         // finish before the first instance inserts its action. That leaves a
         // new pending command with no running worker to execute it.
-        let interleaving_possible = native::try_exclusive("startup", &home)
-            .unwrap()
-            .is_some();
+        let interleaving_possible = native::try_exclusive("startup", &home).unwrap().is_some();
         resume_tx.send(()).unwrap();
         let response = job.receiver.recv_timeout(Duration::from_secs(25)).unwrap();
         let id = match response.unwrap() {
@@ -53,11 +51,9 @@ fn queued_manual_action_cannot_escape_a_concurrent_explicit_disable() {
         let status: String = settings
             .store
             .db
-            .query_row(
-                "SELECT status FROM commands WHERE id=?1",
-                [id],
-                |row| row.get(0),
-            )
+            .query_row("SELECT status FROM commands WHERE id=?1", [id], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(status, "error", "Turn off must cancel queued work");
         assert!(settings.store.pending().unwrap().is_empty());
