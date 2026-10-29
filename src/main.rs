@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod activity;
+#[cfg(test)]
+mod background_entry_tests;
 mod cli;
 #[cfg(test)]
 mod cli_startup_race_tests;
@@ -50,6 +52,22 @@ fn prepare_report(args: &[String]) -> Result<()> {
     }
     Ok(())
 }
+/// Registers the actual background entry after the profile's singleton is claimed.
+/// Kept separate so the database transition is exercised by native regressions.
+fn register_background_session(store: &Store) -> Result<bool> {
+    store.set(
+        "input_filter",
+        &"non-injected keyboard/buttons/wheel; fresh foreground interaction",
+    )?;
+    store.transaction(|| {
+        store.set("shutdown", &false)?;
+        store.set("heartbeat", &0i64)?;
+        store.set("background_pid", &std::process::id())?;
+        store.set("background_version", &env!("CARGO_PKG_VERSION"))?;
+        Ok(true)
+    })
+}
+
 fn background_running(home: &Path) -> Result<bool> {
     native::is_running("background", home)
 }
@@ -260,16 +278,9 @@ fn run(error_profile: &mut Option<PathBuf>) -> Result<()> {
                 return Ok(());
             };
             let _input_hooks = activity::Hooks::install()?;
-            s.set(
-                "input_filter",
-                &"non-injected keyboard/buttons/wheel; fresh foreground interaction",
-            )?;
-            s.transaction(|| {
-                s.set("shutdown", &false)?;
-                s.set("heartbeat", &0i64)?;
-                s.set("background_pid", &std::process::id())?;
-                s.set("background_version", &env!("CARGO_PKG_VERSION"))
-            })?;
+            if !register_background_session(&s)? {
+                return Ok(());
+            }
             let worker_home = h.clone();
             let worker = std::thread::spawn(move || {
                 let r = std::panic::catch_unwind(|| engine::monitor(worker_home.clone()))
