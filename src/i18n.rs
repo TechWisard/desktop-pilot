@@ -380,6 +380,14 @@ fn translate(value: &str, russian: bool) -> String {
             "Сначала завершите первоначальную настройку",
             "Complete initial setup before starting background tracking",
         ),
+        (
+            "Отслеживание ввода недоступно:",
+            "Input observation unavailable:",
+        ),
+        (
+            "Ручное управление доступно; повторная попытка через 30 секунд.",
+            "Manual control remains available; retrying in 30 seconds.",
+        ),
         ("Фоновый учёт работает", "Background tracking is running"),
         ("Изменения приостановлены", "Changes paused"),
         ("Фоновый учёт остановлен", "Background tracking stopped"),

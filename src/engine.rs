@@ -2034,6 +2034,109 @@ pub(crate) fn sync_input_hooks<T>(
     Ok(true)
 }
 
+const INPUT_HOOK_RETRY: Duration = Duration::from_secs(30);
+
+/// Keep manual commands and the tray alive when Windows rejects input hooks.
+/// SQLite permission/read failures are still fatal; only the OS installer error
+/// is recoverable. The same sync_input_hooks path performs every permission check.
+struct InputHookRuntime<T> {
+    hooks: Option<T>,
+    retry_at: Option<Instant>,
+    last_failure: Option<String>,
+}
+impl<T> Default for InputHookRuntime<T> {
+    fn default() -> Self {
+        Self {
+            hooks: None,
+            retry_at: None,
+            last_failure: None,
+        }
+    }
+}
+impl<T> InputHookRuntime<T> {
+    fn poll(
+        &mut self,
+        store: &Store,
+        collecting: bool,
+        install: impl FnOnce() -> Result<T>,
+    ) -> Result<(bool, Option<String>)> {
+        if !collecting {
+            self.retry_at = None;
+            self.last_failure = None;
+        }
+        if collecting
+            && self.hooks.is_none()
+            && self
+                .retry_at
+                .is_some_and(|attempt| attempt.elapsed() < INPUT_HOOK_RETRY)
+        {
+            // A stale collecting snapshot must not keep a warning or permission
+            // after a concurrent pause/Turn off. No callbacks are installed.
+            if store.get::<bool>("shutdown")?
+                || store.get::<bool>("background_disabled")?
+                || !store.get::<Config>("config")?.collect
+            {
+                self.retry_at = None;
+                self.last_failure = None;
+            }
+            crate::activity::set_enabled(false);
+            return Ok((false, self.last_failure.clone()));
+        }
+        let mut installer_failed = false;
+        let result = sync_input_hooks(store, &mut self.hooks, collecting, || {
+            install().map_err(|error| {
+                installer_failed = true;
+                error
+            })
+        });
+        match result {
+            Ok(ready) => {
+                self.retry_at = None;
+                self.last_failure = None;
+                Ok((ready, None))
+            }
+            Err(error) if installer_failed => {
+                crate::activity::set_enabled(false);
+                self.retry_at = Some(Instant::now());
+                let warning = format!(
+                    "Отслеживание ввода недоступно: {error:#}. Ручное управление доступно; повторная попытка через 30 секунд."
+                );
+                self.last_failure = Some(warning.clone());
+                Ok((false, Some(warning)))
+            }
+            // A storage failure must never be relabelled a hook failure.
+            Err(error) => Err(error),
+        }
+    }
+}
+
+fn publish_hook_warning(
+    store: &Store,
+    previous: &mut Option<String>,
+    warning: Option<&str>,
+    collecting: bool,
+) -> Result<()> {
+    if previous.as_deref() == warning {
+        return Ok(());
+    }
+    if let Some(warning) = warning {
+        store.set("status", &format!("Изменения приостановлены: {warning}"))?;
+        store.event("warning", warning)?;
+    } else if let Some(old) = previous.as_ref() {
+        let status: String = store.get("status")?;
+        if status.starts_with(&format!("Изменения приостановлены: {old}")) {
+            let recovered = if collecting {
+                "Фоновый учёт работает"
+            } else {
+                "Учёт использования приостановлен"
+            };
+            store.set("status", &recovered)?;
+        }
+    }
+    *previous = warning.map(str::to_owned);
+    Ok(())
+}
+
 /// Keep startup and explicit commands responsive without rewriting the same
 /// SQLite heartbeat on every two-second idle monitor tick.
 fn publish_heartbeat_if_due(
@@ -2082,7 +2185,8 @@ pub fn monitor(home: PathBuf) -> Result<()> {
     let mut last_autostart = None;
     let mut autostart_retry: Option<Instant> = None;
     let mut previous_collect = None;
-    let mut input_hooks: Option<crate::activity::Hooks> = None;
+    let mut input_hooks = InputHookRuntime::<crate::activity::Hooks>::default();
+    let mut published_hook_warning: Option<String> = None;
     loop {
         // Keep stop intent visible until the process releases its mutex. Only
         // the next explicit startup may clear it and advertise readiness.
@@ -2175,11 +2279,13 @@ pub fn monitor(home: PathBuf) -> Result<()> {
         if !config.collect {
             crate::activity::set_enabled(false);
         }
-        let tracking_ready = sync_input_hooks(
+        let (tracking_ready, hook_warning) =
+            input_hooks.poll(&store, config.collect, crate::activity::Hooks::install)?;
+        publish_hook_warning(
             &store,
-            &mut input_hooks,
+            &mut published_hook_warning,
+            hook_warning.as_deref(),
             config.collect,
-            crate::activity::Hooks::install,
         )?;
         crate::activity::set_enabled(tracking_ready);
         if previous_collect != Some(config.collect) {
@@ -2276,6 +2382,9 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                     Ok(()) => "Учёт использования приостановлен".into(),
                     Err(e) => format!("Изменения приостановлены: {e:#}"),
                 };
+                if let Some(warning) = &hook_warning {
+                    status = format!("Изменения приостановлены: {warning}\n{status}");
+                }
                 for key in [
                     "autostart_warning",
                     "tray_warning",
@@ -3764,3 +3873,6 @@ mod discovery_limit_tests;
 
 #[cfg(test)]
 mod idle_review_tests;
+
+#[cfg(test)]
+mod hook_failure_tests;
