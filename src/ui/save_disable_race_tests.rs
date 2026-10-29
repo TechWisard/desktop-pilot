@@ -49,16 +49,17 @@ fn saving_settings_cannot_interleave_turn_off_between_commit_and_restart_decisio
             resume,
         });
         settings.save();
-        let job = settings.job.take().expect("Settings uses the real asynchronous save");
+        let job = settings
+            .job
+            .take()
+            .expect("Settings uses the real asynchronous save");
         observed
             .recv_timeout(Duration::from_secs(15))
             .expect("save must reach the post-commit checkpoint");
 
         // This is the exact named Windows mutex Turn off acquires before it
         // cancels pending work. An available lock exposes the lost ordering.
-        let startup_was_available = native::try_exclusive("startup", &home)
-            .unwrap()
-            .is_some();
+        let startup_was_available = native::try_exclusive("startup", &home).unwrap().is_some();
         release.send(()).unwrap();
         let result = job
             .receiver
@@ -82,7 +83,10 @@ fn saving_settings_cannot_interleave_turn_off_between_commit_and_restart_decisio
         assert!(settings.store.get::<bool>("background_disabled").unwrap());
         assert!(!native::is_running("background", &home).unwrap());
         assert_eq!(settings.store.get::<State>("state").unwrap().owned, owned);
-        assert_eq!(serde_json::to_value(settings.store.days().unwrap()).unwrap(), history);
+        assert_eq!(
+            serde_json::to_value(settings.store.days().unwrap()).unwrap(),
+            history
+        );
         assert_eq!(std::fs::read(&anchor.source).unwrap(), original);
     });
 }
