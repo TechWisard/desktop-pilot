@@ -565,7 +565,6 @@ fn refreshing_an_existing_original_reports_an_update_not_a_new_app() {
     });
 }
 
-
 #[test]
 fn malformed_pasted_path_does_not_discard_other_selected_shortcuts() {
     with_profile(|settings, anchor| {
@@ -594,8 +593,18 @@ fn malformed_pasted_path_does_not_discard_other_selected_shortcuts() {
         assert_eq!(result.added.len(), 1);
         assert_eq!(result.added[0].0, good_id);
         assert_eq!(result.failed.len(), 2);
-        assert!(result.failed.iter().any(|(_, message)| message.contains("full shortcut path")));
-        assert!(result.failed.iter().any(|(_, message)| message.contains(".lnk or .url")));
+        assert!(
+            result
+                .failed
+                .iter()
+                .any(|(_, message)| message.contains("full shortcut path"))
+        );
+        assert!(
+            result
+                .failed
+                .iter()
+                .any(|(_, message)| message.contains(".lnk or .url"))
+        );
         assert_eq!(settings.store.apps().unwrap().len(), 2);
         assert_eq!(data(settings, anchor), protected);
         assert_eq!(std::fs::read(&anchor.source).unwrap(), original_bytes);
