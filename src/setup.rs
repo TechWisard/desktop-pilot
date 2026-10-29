@@ -476,11 +476,21 @@ pub fn disable_background(home: &Path) -> Result<Config> {
     store
         .transaction(|| {
             let mut config: Config = store.get("config")?;
+            let startup_was_enabled = config.autostart;
             config.automatic = false;
             config.collect = false;
             config.autostart = false;
             config.learning_enabled = false;
-            save_config(&store, &config)?;
+            config.validate()?;
+            if startup_was_enabled {
+                // Removing an enabled Windows startup entry remains mandatory.
+                save_config(&store, &config)?;
+            } else {
+                // A saved startup-off choice needs no registry write. An OS
+                // registration failure must not block an explicit Turn off.
+                // Persisted background_disabled also rejects delayed launches.
+                store.set("config", &config)?;
+            }
             let message = "Command cancelled because background work was disabled.";
             let cancelled = store.db.execute(
                 "UPDATE commands SET status='error',message=?1 WHERE status IN ('pending','running')",
@@ -688,6 +698,66 @@ mod tests {
         drop(worker);
         drop(store);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn turn_off_without_autostart_ignores_unavailable_registry() {
+        // Use real disable_background, per-profile locks, SQLite and pending
+        // command cancellation. Only the Windows registration boundary is
+        // deliberately rejected; the test cannot modify the host registry.
+        for was_enabled in [false, true] {
+            let root = test_home(if was_enabled {
+                "disable-registry-enabled"
+            } else {
+                "disable-registry-already-off"
+            });
+            let store = Store::open(&root).unwrap();
+            let config = Config {
+                collect: true,
+                automatic: true,
+                autostart: was_enabled,
+                learning_enabled: true,
+                ..Default::default()
+            };
+            store.set("config", &config).unwrap();
+            let source = root.join("Important.url");
+            let source_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/Important\r\n";
+            std::fs::write(&source, source_bytes).unwrap();
+            let app = native::read_link(&source).unwrap();
+            store.put_app(&app).unwrap();
+            store.observe(&app.id, 180, true, false).unwrap();
+            store.command("apply").unwrap();
+            let days = serde_json::to_value(store.days().unwrap()).unwrap();
+            let saved = store.app(&app.id).unwrap();
+            *TEST_REJECT_AUTOSTART_UPDATE.lock().unwrap() = Some(root.clone());
+            let result = disable_background(&root);
+            // Clear injection before assertions, including a failing baseline.
+            *TEST_REJECT_AUTOSTART_UPDATE.lock().unwrap() = None;
+            if was_enabled {
+                let error = result.expect_err("removing enabled startup still requires Windows");
+                assert!(
+                    format!("{error:#}").contains("Simulated Windows startup registration refusal")
+                );
+                assert_eq!(store.get::<Config>("config").unwrap(), config);
+                assert!(!store.get::<bool>("background_disabled").unwrap());
+                assert!(!store.get::<bool>("shutdown").unwrap());
+                assert_eq!(store.pending().unwrap().len(), 1);
+            } else {
+                let disabled = result.expect(
+                    "Turn off must not need Windows startup access when startup was already off",
+                );
+                assert!(!disabled.collect && !disabled.automatic);
+                assert!(!disabled.autostart && !disabled.learning_enabled);
+                assert!(store.get::<bool>("background_disabled").unwrap());
+                assert!(store.get::<bool>("shutdown").unwrap());
+                assert!(store.pending().unwrap().is_empty());
+            }
+            assert_eq!(store.app(&app.id).unwrap(), saved);
+            assert_eq!(serde_json::to_value(store.days().unwrap()).unwrap(), days);
+            assert_eq!(std::fs::read(source).unwrap(), source_bytes);
+            drop(store);
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[test]
