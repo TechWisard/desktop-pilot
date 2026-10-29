@@ -293,7 +293,8 @@ fn run(error_profile: &mut Option<PathBuf>) -> Result<()> {
             let Some(_instance) = native::try_exclusive("background", &h)? else {
                 return Ok(());
             };
-            let Some(_input_hooks) = install_input_hooks_if_enabled(&s, activity::Hooks::install)? else {
+            let Some(_input_hooks) = install_input_hooks_if_enabled(&s, activity::Hooks::install)?
+            else {
                 return Ok(());
             };
             if !register_background_session(&s)? {

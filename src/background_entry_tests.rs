@@ -144,8 +144,14 @@ fn a_disabled_entry_never_installs_global_input_hooks() {
         Ok(())
     })
     .unwrap();
-    assert!(installed.is_none(), "Turn off must refuse the input-hook stage");
-    assert_eq!(attempts, 0, "do not even attempt to monitor input after Turn off");
+    assert!(
+        installed.is_none(),
+        "Turn off must refuse the input-hook stage"
+    );
+    assert_eq!(
+        attempts, 0,
+        "do not even attempt to monitor input after Turn off"
+    );
     assert!(!register_background_session(&store).unwrap());
     let after = serde_json::json!({
         "disabled": store.get::<bool>("background_disabled").unwrap(),
