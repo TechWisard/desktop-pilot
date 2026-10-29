@@ -24,7 +24,10 @@ fn disabled_local_command_must_serialize_with_another_windows_startup() {
             resume: resume_rx,
         });
         settings.queue(&format!("policy:{}:Never", anchor.id));
-        let job = settings.job.take().expect("real asynchronous Settings action");
+        let job = settings
+            .job
+            .take()
+            .expect("real asynchronous Settings action");
         arrived_rx
             .recv_timeout(Duration::from_secs(15))
             .expect("disabled local action reached the command boundary");
@@ -45,7 +48,10 @@ fn disabled_local_command_must_serialize_with_another_windows_startup() {
             }
             other => panic!("unexpected command response: {:?}", other.map(|_| ())),
         }
-        assert_eq!(settings.store.app(&anchor.id).unwrap().policy, Policy::Never);
+        assert_eq!(
+            settings.store.app(&anchor.id).unwrap().policy,
+            Policy::Never
+        );
         assert_eq!(std::fs::read(&anchor.source).unwrap(), original);
         assert_eq!(
             serde_json::to_value(settings.store.days().unwrap()).unwrap(),
