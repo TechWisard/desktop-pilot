@@ -1109,6 +1109,8 @@ impl Settings {
                     return Err(error);
                 }
             };
+            #[cfg(test)]
+            save_disable_race_tests::pause_after_save(&home);
             let warning = if restart {
                 setup::start_background(&home).err().map(|error| {
                     format!("Settings were saved, but background work could not start: {error:#}")
@@ -5227,3 +5229,6 @@ mod disabled_actions_tests;
 
 #[cfg(test)]
 mod queue_race_tests;
+
+#[cfg(test)]
+mod save_disable_race_tests;
