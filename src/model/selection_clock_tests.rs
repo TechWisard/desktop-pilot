@@ -31,6 +31,7 @@ fn offline_retention_and_rank_use_one_snapshot_time() {
     offline.valid = false;
     offline.unavailable_since = at - 3600;
     let mut available = native::read_link(&alternative).unwrap();
+    assert!(available.valid);
     available.seed = 100.0;
     available.seed_at = at;
     store.put_app(&offline).unwrap();

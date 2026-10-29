@@ -374,10 +374,20 @@ pub fn select(
     cfg: &Config,
     initial: bool,
 ) -> Vec<String> {
+    select_at(apps, ranking, state, cfg, initial, now())
+}
+
+pub(crate) fn select_at(
+    apps: &[App],
+    ranking: &[Ranked],
+    state: &State,
+    cfg: &Config,
+    initial: bool,
+    at: i64,
+) -> Vec<String> {
     let by_id: HashMap<_, _> = apps.iter().map(|a| (a.id.as_str(), a)).collect();
     let scores: HashMap<_, _> = ranking.iter().map(|r| (r.id.as_str(), r)).collect();
     let score = |id: &str| scores.get(id).map_or(0.0, |r| r.score);
-    let at = now();
     // Already managed copies tolerate source outages. Auto copies get 72 hours;
     // a copy the user explicitly protected or moved must not disappear merely
     // because its unchanged source is unavailable. An identity change is not
