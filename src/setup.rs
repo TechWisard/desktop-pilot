@@ -306,7 +306,9 @@ pub fn enqueue_settings_command_if_enabled(home: &Path, action: &str) -> Result<
     })
 }
 
-fn start_background_locked(store: &Store) -> Result<()> {
+// Caller must already own the per-profile named "startup" mutex.
+// Shared with Settings save so its conditional resume cannot overtake Turn off.
+pub(crate) fn start_background_locked(store: &Store) -> Result<()> {
     let exe = install_current(store)?;
     start_installed(store, &exe)?;
     store.set("background_disabled", &false)
