@@ -1080,6 +1080,9 @@ impl Settings {
         let config = self.config.clone();
         let base = self.edit_base.clone();
         self.start_job("Saving settings…", move || {
+            // Turn off, settings persistence and conditional resume share one
+            // startup lock. Do not make a stale resume decision after shutdown.
+            let _starting = native::exclusive("startup", &home)?;
             let store = Store::open(&home)?;
             let restart =
                 should_resume_background(store.get::<bool>("background_disabled")?, &base, &config);
@@ -1112,7 +1115,13 @@ impl Settings {
             #[cfg(test)]
             save_disable_race_tests::pause_after_save(&home);
             let warning = if restart {
-                setup::start_background(&home).err().map(|error| {
+                engine::setup_complete(&store)
+                    .and_then(|complete| {
+                        ensure!(complete, "Complete initial setup before starting background tracking");
+                        setup::start_background_locked(&store)
+                    })
+                    .err()
+                    .map(|error| {
                     format!("Settings were saved, but background work could not start: {error:#}")
                 })
             } else {
