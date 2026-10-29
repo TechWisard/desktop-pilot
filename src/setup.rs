@@ -282,7 +282,10 @@ pub(crate) fn pause_before_enqueue(home: &Path) {
     }
 }
 
-pub fn start_background_if_enabled(home: &Path) -> Result<bool> {
+/// Enqueue under the same startup lock as an explicit Turn off. Releasing
+/// that lock between worker readiness and INSERT could leave a new pending
+/// action after Turn off had cancelled the queue and stopped the worker.
+pub fn enqueue_settings_command_if_enabled(home: &Path, action: &str) -> Result<Option<i64>> {
     let _starting = native::exclusive("startup", home)?;
     let store = Store::open(home)?;
     ensure!(
@@ -290,10 +293,19 @@ pub fn start_background_if_enabled(home: &Path) -> Result<bool> {
         "Complete initial setup before starting background tracking"
     );
     if store.get::<bool>("background_disabled")? {
-        return Ok(false);
+        return Ok(None);
     }
     start_background_locked(&store)?;
-    Ok(true)
+    #[cfg(test)]
+    pause_before_enqueue(home);
+    store.transaction(|| {
+        ensure!(
+            !store.get::<bool>("shutdown")? && !store.get::<bool>("background_disabled")?,
+            "Background work stopped before the command could be queued. Try the action again."
+        );
+        store.command(action)?;
+        Ok(Some(store.db.last_insert_rowid()))
+    })
 }
 
 fn start_background_locked(store: &Store) -> Result<()> {
