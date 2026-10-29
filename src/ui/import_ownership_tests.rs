@@ -705,6 +705,9 @@ fn pasted_utf8_signature_does_not_discard_a_valid_quoted_shortcut() {
         assert!(!Path::new(&quick.path).exists());
         assert_eq!(std::fs::read(&source).unwrap(), bytes);
         assert_eq!(std::fs::read(&anchor.source).unwrap(), original_anchor);
-        assert_eq!(settings.store.app(&anchor.id).unwrap().policy, Policy::Always);
+        assert_eq!(
+            settings.store.app(&anchor.id).unwrap().policy,
+            Policy::Always
+        );
     });
 }
