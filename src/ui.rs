@@ -166,6 +166,7 @@ enum JobResult {
     Setup(Config),
     Saved(Config, Option<String>),
     Queued(i64, String),
+    Completed(String),
     Started,
     Prepared,
     Added(ImportResult),
@@ -1028,11 +1029,23 @@ impl Settings {
         let home = self.store.home.clone();
         let action = command.to_owned();
         self.start_job("Sending the command…", move || {
-            // Verify that a worker is available before leaving a command in the queue.
-            setup::start_background(&home)?;
-            let store = Store::open(&home)?;
-            store.command(&action)?;
-            Ok(JobResult::Queued(store.db.last_insert_rowid(), action))
+            // An explicitly disabled profile must remain disabled. Serialize
+            // this decision with Turn off so this action cannot silently resume.
+            if setup::start_background_if_enabled(&home)? {
+                let store = Store::open(&home)?;
+                store.command(&action)?;
+                Ok(JobResult::Queued(store.db.last_insert_rowid(), action))
+            } else {
+                // Explicit local actions do not need an installed executable or
+                // worker. Keep the established command, ownership and Undo guards.
+                let _com = native::Com::new()?;
+                let store = Store::open(&home)?;
+                ensure!(
+                    !native::is_running("background", &home)?,
+                    "Background work is still stopping. Try the action again."
+                );
+                Ok(JobResult::Completed(engine::command(&store, &action)?))
+            }
         });
     }
     fn change_policy(&mut self, id: String, policy: Policy) {
@@ -1311,6 +1324,10 @@ impl Settings {
                                 action,
                                 submitted: Instant::now(),
                             });
+                        }
+                        Ok(JobResult::Completed(message)) => {
+                            self.pending_policy = None;
+                            self.inform(message, NoticeKind::Success);
                         }
                         Ok(JobResult::Started) => {
                             self.inform("Background work started.", NoticeKind::Success)
