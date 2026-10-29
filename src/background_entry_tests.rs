@@ -369,7 +369,11 @@ fn stale_collect_snapshot_cannot_keep_existing_hooks_after_permission_is_revoked
     );
     assert!(hooks.is_none());
     assert_eq!(dropped.load(Ordering::SeqCst), 2);
-    assert_eq!(installations.get(), 2, "revocation cannot register new hooks");
+    assert_eq!(
+        installations.get(),
+        2,
+        "revocation cannot register new hooks"
+    );
 
     settings.set("background_disabled", &false).unwrap();
     assert!(sync(&mut hooks));
