@@ -5268,3 +5268,6 @@ mod save_disable_race_tests;
 
 #[cfg(test)]
 mod disabled_start_race_tests;
+
+#[cfg(test)]
+mod save_autostart_isolation_tests;
