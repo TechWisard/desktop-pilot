@@ -12,8 +12,12 @@ pub fn now() -> i64 {
 }
 pub fn norm(s: &str) -> String {
     let expanded = expand_env(s).replace('/', "\\");
-    let ordinary = if let Some(unc) = expanded.strip_prefix(r"\\?\UNC\") {
-        format!(r"\\{unc}")
+    // Extended UNC device prefixes are case-insensitive on ordinary Windows
+    // file paths. Treat their different spellings as the same saved source.
+    // get() also avoids slicing through a multibyte path prefix.
+    let prefix = expanded.get(..8).unwrap_or_default();
+    let ordinary = if prefix.eq_ignore_ascii_case(r"\\?\UNC\") {
+        format!(r"\\{}", &expanded[8..])
     } else {
         expanded.trim_start_matches(r"\\?\").to_owned()
     };
