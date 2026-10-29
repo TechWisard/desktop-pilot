@@ -300,7 +300,17 @@ pub(crate) fn pause_before_enqueue(home: &Path) {
 /// Enqueue under the same startup lock as an explicit Turn off. Releasing
 /// that lock between worker readiness and INSERT could leave a new pending
 /// action after Turn off had cancelled the queue and stopped the worker.
-pub fn enqueue_settings_command_if_enabled(home: &Path, action: &str) -> Result<Option<i64>> {
+/// Result of a Settings action. An explicitly disabled profile executes its
+/// manual command locally; an enabled profile queues work for the worker.
+pub enum SettingsCommand {
+    Queued(i64),
+    Completed(String),
+}
+
+/// Preserve one ordering boundary across a disabled local action and another
+/// window's explicit Start/Turn off. The previous two-stage decision released
+/// the startup mutex before performing the local command.
+pub fn dispatch_settings_command(home: &Path, action: &str) -> Result<SettingsCommand> {
     let _starting = native::exclusive("startup", home)?;
     let store = Store::open(home)?;
     ensure!(
@@ -308,7 +318,16 @@ pub fn enqueue_settings_command_if_enabled(home: &Path, action: &str) -> Result<
         "Complete initial setup before starting background tracking"
     );
     if store.get::<bool>("background_disabled")? {
-        return Ok(None);
+        // No installer or background process is needed for an explicit local
+        // action. Keep the existing changes lock, COM and Undo behavior.
+        let _com = native::Com::new()?;
+        ensure!(
+            !native::is_running("background", home)?,
+            "Background work is still stopping. Try the action again."
+        );
+        #[cfg(test)]
+        pause_before_disabled_local(home);
+        return Ok(SettingsCommand::Completed(engine::command(&store, action)?));
     }
     start_background_locked(&store)?;
     #[cfg(test)]
@@ -319,7 +338,7 @@ pub fn enqueue_settings_command_if_enabled(home: &Path, action: &str) -> Result<
             "Background work stopped before the command could be queued. Try the action again."
         );
         store.command(action)?;
-        Ok(Some(store.db.last_insert_rowid()))
+        Ok(SettingsCommand::Queued(store.db.last_insert_rowid()))
     })
 }
 
