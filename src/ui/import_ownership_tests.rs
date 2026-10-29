@@ -564,3 +564,49 @@ fn refreshing_an_existing_original_reports_an_update_not_a_new_app() {
         assert!(Path::new(&app.source).exists());
     });
 }
+
+
+#[test]
+fn malformed_pasted_path_does_not_discard_other_selected_shortcuts() {
+    with_profile(|settings, anchor| {
+        let protected = data(settings, anchor);
+        let original_bytes = std::fs::read(&anchor.source).unwrap();
+        let good = settings.store.home.join("Useful project.url");
+        std::fs::write(
+            &good,
+            b"[InternetShortcut]\r\nURL=https://example.invalid/UsefulProject\r\n",
+        )
+        .unwrap();
+        let good_id = native::read_link(&good).unwrap().id;
+        let wrong_type = settings.store.home.join("Notes.txt");
+        std::fs::write(&wrong_type, b"do not import this file").unwrap();
+        let typed = format!(
+            "\"{}\"\nnot-an-absolute.lnk\n{}\n{}\n",
+            good.display(),
+            wrong_type.display(),
+            good.display()
+        );
+        let paths = shortcut_paths(&typed)
+            .expect("a bad pasted line must not reject another valid shortcut");
+        assert_eq!(paths.len(), 3, "duplicate valid paths are still deduplicated");
+        let result = import(settings, paths).unwrap();
+        assert_eq!((result.created, result.updated), (1, 0));
+        assert_eq!(result.added.len(), 1);
+        assert_eq!(result.added[0].0, good_id);
+        assert_eq!(result.failed.len(), 2);
+        assert!(result.failed.iter().any(|(_, message)| message.contains("full shortcut path")));
+        assert!(result.failed.iter().any(|(_, message)| message.contains(".lnk or .url")));
+        assert_eq!(settings.store.apps().unwrap().len(), 2);
+        assert_eq!(data(settings, anchor), protected);
+        assert_eq!(std::fs::read(&anchor.source).unwrap(), original_bytes);
+        assert_eq!(std::fs::read(&wrong_type).unwrap(), b"do not import this file");
+        let preview = engine::preview(&settings.store, false).unwrap();
+        assert!(preview.added.is_empty() && preview.removed.is_empty());
+        let repeated = import(settings, vec![good.clone()]).unwrap();
+        assert_eq!((repeated.created, repeated.updated), (0, 0));
+        engine::command(&settings.store, "rollback").unwrap();
+        assert_eq!(std::fs::read(&anchor.source).unwrap(), original_bytes);
+        assert!(good.is_file());
+        assert_eq!(settings.store.app(&anchor.id).unwrap().policy, Policy::Always);
+    });
+}
