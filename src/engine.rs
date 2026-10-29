@@ -121,6 +121,11 @@ fn identity_of(file: &std::fs::File) -> Result<Option<String>> {
 fn fingerprint(path: &Path) -> Result<String> {
     Ok(hash(&std::fs::read(path)?))
 }
+#[cfg(test)]
+thread_local! {
+    static TEST_POST_MOVE_ERROR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 fn move_new(source: &Path, destination: &Path) -> Result<()> {
     #[cfg(windows)]
     {
@@ -137,6 +142,10 @@ fn move_new(source: &Path, destination: &Path) -> Result<()> {
                 PCWSTR(native::wide(&destination.to_string_lossy()).as_ptr()),
                 MOVEFILE_WRITE_THROUGH,
             )?;
+            #[cfg(test)]
+            if TEST_POST_MOVE_ERROR.with(|flag| flag.replace(false)) {
+                bail!("Simulated attribute update refusal after successful rename");
+            }
             // Desktop staging files are hidden. Publication must expose the final
             // shortcut without briefly displaying temporary icons in Explorer.
             if !destination
@@ -2458,6 +2467,35 @@ mod tests {
         std::fs::remove_file(path).unwrap();
         std::fs::rename(replacement, path).unwrap();
     }
+    #[test]
+    fn failed_attribute_update_after_rename_must_not_leave_a_hidden_unowned_copy() {
+        with_store(|store| {
+            let original = store.home.join("Original-publish.url");
+            let destination = store.home.join("Published-copy.url");
+            let bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/recovery\r\n";
+            std::fs::write(&original, bytes).unwrap();
+            TEST_POST_MOVE_ERROR.with(|flag| flag.set(true));
+            let error = copy_new(&original, &destination).unwrap_err();
+            assert!(
+                format!("{error:#}").contains("Simulated attribute update refusal"),
+                "{error:#}"
+            );
+            assert!(
+                !destination.exists(),
+                "A successful rename followed by an attribute error left an untracked shortcut"
+            );
+            assert_eq!(std::fs::read(&original).unwrap(), bytes);
+            assert!(
+                !std::fs::read_dir(&store.home)
+                    .unwrap()
+                    .any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with(".desktop-pilot-")),
+                "Failed shortcut publication left a staging file"
+            );
+            copy_new(&original, &destination).unwrap();
+            assert_eq!(std::fs::read(&destination).unwrap(), bytes);
+        });
+    }
+
     #[test]
     fn same_display_names_get_distinct_files_and_reversible_ownership() {
         with_store(|store| {
