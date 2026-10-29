@@ -668,3 +668,46 @@ fn partial_import_feedback_reports_success_and_rejected_lines_together() {
         assert!(good.is_file());
     });
 }
+
+#[test]
+fn pasted_utf8_signature_does_not_discard_a_valid_quoted_shortcut() {
+    with_profile(|settings, anchor| {
+        let source = settings.store.home.join("Copied project.url");
+        let bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/copied-project\r\n";
+        std::fs::write(&source, bytes).unwrap();
+        let pasted = format!("\u{feff}\"{}\"\r\nrelative-bad.lnk", source.display());
+        let paths = shortcut_paths(&pasted).unwrap();
+        let before = data(settings, anchor);
+        let original_anchor = std::fs::read(&anchor.source).unwrap();
+        let quick = owned(settings);
+        let result = import(settings, paths).unwrap();
+
+        assert_eq!(
+            result.created, 1,
+            "a leading UTF-8 signature must not turn a valid absolute path into an invalid one"
+        );
+        assert_eq!(result.updated, 0);
+        assert_eq!(result.added.len(), 1);
+        assert_eq!(result.failed.len(), 1);
+        assert_eq!(result.failed[0].0, PathBuf::from("relative-bad.lnk"));
+        assert!(result.failed[0].1.contains("full shortcut path"));
+        assert_eq!(settings.store.apps().unwrap().len(), 2);
+        assert_eq!(data(settings, anchor), before);
+        assert_eq!(std::fs::read(&source).unwrap(), bytes);
+        assert_eq!(std::fs::read(&anchor.source).unwrap(), original_anchor);
+        let preview = engine::preview(&settings.store, false).unwrap();
+        assert!(preview.added.is_empty() && preview.removed.is_empty());
+
+        let repeated = import(settings, vec![source.clone()]).unwrap();
+        assert_eq!((repeated.created, repeated.updated), (0, 0));
+        assert!(repeated.failed.is_empty());
+        engine::command(&settings.store, "rollback").unwrap();
+        assert!(!Path::new(&quick.path).exists());
+        assert_eq!(std::fs::read(&source).unwrap(), bytes);
+        assert_eq!(std::fs::read(&anchor.source).unwrap(), original_anchor);
+        assert_eq!(
+            settings.store.app(&anchor.id).unwrap().policy,
+            Policy::Always
+        );
+    });
+}

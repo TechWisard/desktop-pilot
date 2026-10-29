@@ -266,6 +266,9 @@ pub struct Settings {
 }
 
 fn shortcut_paths(value: &str) -> Result<Vec<PathBuf>> {
+    // A pasted UTF-8 text list can begin with a signature, not a filename.
+    // Preserve U+FEFF inside paths or later lines; report those as entered.
+    let value = value.strip_prefix('\u{feff}').unwrap_or(value);
     let mut paths = Vec::new();
     let mut seen = HashSet::new();
     for line in value.lines().map(str::trim).filter(|line| !line.is_empty()) {
