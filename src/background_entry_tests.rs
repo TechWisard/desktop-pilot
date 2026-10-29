@@ -116,3 +116,78 @@ fn explicit_start_grants_background_entry_and_restores_turn_off_after_failure() 
     drop(store);
     std::fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn a_disabled_entry_never_installs_global_input_hooks() {
+    let home = test_home();
+    let store = Store::open(&home).unwrap();
+    store.set("setup_complete", &true).unwrap();
+    let source = home.join("Protected.url");
+    let bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/protected\r\n";
+    std::fs::write(&source, bytes).unwrap();
+    let mut app = native::read_link(&source).unwrap();
+    app.policy = Policy::Always;
+    store.put_app(&app).unwrap();
+    store.observe(&app.id, 300, true, false).unwrap();
+    setup::disable_background(&home).unwrap();
+    let before = serde_json::json!({
+        "disabled": store.get::<bool>("background_disabled").unwrap(),
+        "shutdown": store.get::<bool>("shutdown").unwrap(),
+        "heartbeat": store.get::<i64>("heartbeat").unwrap(),
+        "input_filter": store.get::<String>("input_filter").unwrap(),
+        "apps": store.apps().unwrap(),
+        "days": store.days().unwrap(),
+    });
+    let mut attempts = 0usize;
+    let installed = install_input_hooks_if_enabled(&store, || -> Result<()> {
+        attempts += 1;
+        Ok(())
+    })
+    .unwrap();
+    assert!(
+        installed.is_none(),
+        "Turn off must refuse the input-hook stage"
+    );
+    assert_eq!(
+        attempts, 0,
+        "do not even attempt to monitor input after Turn off"
+    );
+    assert!(!register_background_session(&store).unwrap());
+    let after = serde_json::json!({
+        "disabled": store.get::<bool>("background_disabled").unwrap(),
+        "shutdown": store.get::<bool>("shutdown").unwrap(),
+        "heartbeat": store.get::<i64>("heartbeat").unwrap(),
+        "input_filter": store.get::<String>("input_filter").unwrap(),
+        "apps": store.apps().unwrap(),
+        "days": store.days().unwrap(),
+    });
+    assert_eq!(before, after);
+    assert_eq!(std::fs::read(&source).unwrap(), bytes);
+    drop(store);
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn turning_off_during_input_hook_setup_still_rejects_session_registration() {
+    let home = test_home();
+    let store = Store::open(&home).unwrap();
+    store.set("setup_complete", &true).unwrap();
+    store.set("background_disabled", &false).unwrap();
+    store.set("shutdown", &false).unwrap();
+    let mut attempts = 0usize;
+    let installed = install_input_hooks_if_enabled(&store, || -> Result<()> {
+        attempts += 1;
+        // The user can turn off the program after the first permission read.
+        store.set("background_disabled", &true)?;
+        store.set("shutdown", &true)?;
+        Ok(())
+    })
+    .unwrap();
+    assert!(installed.is_some());
+    assert_eq!(attempts, 1);
+    assert!(!register_background_session(&store).unwrap());
+    assert!(store.get::<bool>("background_disabled").unwrap());
+    assert!(store.get::<bool>("shutdown").unwrap());
+    drop(store);
+    std::fs::remove_dir_all(home).unwrap();
+}

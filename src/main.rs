@@ -52,6 +52,19 @@ fn prepare_report(args: &[String]) -> Result<()> {
     }
     Ok(())
 }
+/// The input provenance hooks are only needed for a session which has not
+/// already been explicitly disabled. Admission is checked again after
+/// installation to handle an intervening Turn off.
+fn install_input_hooks_if_enabled<T>(
+    store: &Store,
+    install: impl FnOnce() -> Result<T>,
+) -> Result<Option<T>> {
+    if store.get::<bool>("background_disabled")? {
+        return Ok(None);
+    }
+    Ok(Some(install()?))
+}
+
 /// Registers the actual background entry after the profile's singleton is claimed.
 /// Kept separate so the database transition is exercised by native regressions.
 fn register_background_session(store: &Store) -> Result<bool> {
@@ -283,7 +296,10 @@ fn run(error_profile: &mut Option<PathBuf>) -> Result<()> {
             let Some(_instance) = native::try_exclusive("background", &h)? else {
                 return Ok(());
             };
-            let _input_hooks = activity::Hooks::install()?;
+            let Some(_input_hooks) = install_input_hooks_if_enabled(&s, activity::Hooks::install)?
+            else {
+                return Ok(());
+            };
             if !register_background_session(&s)? {
                 return Ok(());
             }
