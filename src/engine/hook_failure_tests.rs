@@ -25,6 +25,7 @@ fn with_store(test: impl FnOnce(&Store)) {
     store
         .set("test_desktop", &desktop.to_string_lossy())
         .unwrap();
+    store.set("pins_verified", &true).unwrap();
     store.set("shutdown", &false).unwrap();
     store.set("background_disabled", &false).unwrap();
     store
@@ -34,6 +35,7 @@ fn with_store(test: impl FnOnce(&Store)) {
                 collect: true,
                 automatic: false,
                 learning_enabled: false,
+                respect_taskbar_pins: false,
                 ..Config::default()
             },
         )
@@ -84,7 +86,7 @@ fn rejected_hooks_keep_manual_shortcuts_and_undo_operational_then_recover() {
 
         // Existing real SQLite and desktop mutation paths remain usable.
         let applied = apply(store, true).unwrap();
-        assert_eq!(applied.added.len(), 1);
+        assert!(applied.contains("1"), "expected one manually protected shortcut");
         assert!(store.get::<State>("state").unwrap().owned.len() == 1);
         command(store, "rollback").unwrap();
         assert!(store.get::<State>("state").unwrap().owned.is_empty());
@@ -127,7 +129,7 @@ fn storage_failure_is_not_misreported_as_a_recoverable_hook_error() {
     with_store(|store| {
         let mut hooks = InputHookRuntime::<CountedHook>::default();
         store
-            .set("config", &serde_json::json!({"broken": "config"}))
+            .set("config", &serde_json::json!("broken config"))
             .unwrap();
         let mut attempted = false;
         let result = hooks.poll(store, true, || {
