@@ -682,7 +682,10 @@ fn pasted_utf8_signature_does_not_discard_a_valid_quoted_shortcut() {
         let quick = owned(settings);
         let result = import(settings, paths).unwrap();
 
-        assert_eq!(result.created, 1, "a leading UTF-8 signature must not turn a valid absolute path into an invalid one");
+        assert_eq!(
+            result.created, 1,
+            "a leading UTF-8 signature must not turn a valid absolute path into an invalid one"
+        );
         assert_eq!(result.updated, 0);
         assert_eq!(result.added.len(), 1);
         assert_eq!(result.failed.len(), 1);
