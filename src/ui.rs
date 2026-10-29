@@ -5206,3 +5206,6 @@ mod import_last_filter_tests;
 
 #[cfg(test)]
 mod clear_history_tests;
+
+#[cfg(test)]
+mod disabled_actions_tests;
