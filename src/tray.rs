@@ -296,7 +296,11 @@ impl TrayState {
                         )?;
                         Ok(latest.collect)
                     })?;
-                    crate::activity::set_enabled(collect);
+                    // Pausing must take effect immediately. The monitor owns
+                    // installing and enabling hooks when activity is resumed.
+                    if !collect {
+                        crate::activity::set_enabled(false);
+                    }
                     self.sync_icon(window)?;
                 }
                 4 => {

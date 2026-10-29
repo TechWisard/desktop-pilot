@@ -52,14 +52,16 @@ fn prepare_report(args: &[String]) -> Result<()> {
     }
     Ok(())
 }
-/// The input provenance hooks are only needed for a session which has not
-/// already been explicitly disabled. Admission is checked again after
-/// installation to handle an intervening Turn off.
+/// Input provenance hooks are needed only while activity collection is
+/// enabled. The monitor rechecks mode and shutdown after installation because
+/// Settings may pause collection or turn off background work concurrently.
 fn install_input_hooks_if_enabled<T>(
     store: &Store,
     install: impl FnOnce() -> Result<T>,
 ) -> Result<Option<T>> {
-    if store.get::<bool>("background_disabled")? {
+    if store.get::<bool>("background_disabled")?
+        || !store.get::<Config>("config")?.collect
+    {
         return Ok(None);
     }
     Ok(Some(install()?))
@@ -296,10 +298,8 @@ fn run(error_profile: &mut Option<PathBuf>) -> Result<()> {
             let Some(_instance) = native::try_exclusive("background", &h)? else {
                 return Ok(());
             };
-            let Some(_input_hooks) = install_input_hooks_if_enabled(&s, activity::Hooks::install)?
-            else {
-                return Ok(());
-            };
+            // Session admission precedes worker startup; the worker owns the
+            // input-hook lifetime and never installs hooks in manual-only mode.
             if !register_background_session(&s)? {
                 return Ok(());
             }
