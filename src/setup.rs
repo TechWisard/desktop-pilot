@@ -691,8 +691,7 @@ mod tests {
     }
 
     #[test]
-    fn turn_off_without_enabled_autostart_ignores_registry_refusal_but_keeps_strict_failure_for_enabled_startup()
-    {
+    fn turn_off_without_autostart_ignores_unavailable_registry() {
         // Use real disable_background, per-profile locks, SQLite and pending
         // command cancellation. Only the Windows registration boundary is
         // deliberately rejected; the test cannot modify the host registry.
