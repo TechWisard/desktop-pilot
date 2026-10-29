@@ -334,7 +334,7 @@ fn stale_collect_snapshot_cannot_keep_existing_hooks_after_permission_is_revoked
     let mut hooks: Option<CountedHook> = None;
     let installations = std::cell::Cell::new(0usize);
 
-    let mut sync = |hooks: &mut Option<CountedHook>| {
+    let sync = |hooks: &mut Option<CountedHook>| {
         engine::sync_input_hooks(&store, hooks, true, || {
             installations.set(installations.get() + 1);
             Ok(CountedHook(dropped.clone()))
