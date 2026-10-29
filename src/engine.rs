@@ -1996,6 +1996,35 @@ fn housekeeping_sessions(store: &Store, sessions: &mut HashMap<String, i64>) -> 
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 
+/// This is the monitor's actual input-hook lifecycle, not a separate model.
+/// Retain one installation across steady tracking; release it on pause.
+/// Recheck after a potentially blocking install to reject a concurrent Turn off
+/// or a Settings change that already disabled activity collection.
+pub(crate) fn sync_input_hooks<T>(
+    store: &Store,
+    current: &mut Option<T>,
+    collecting: bool,
+    install: impl FnOnce() -> Result<T>,
+) -> Result<bool> {
+    if !collecting {
+        *current = None;
+        return Ok(false);
+    }
+    if current.is_none() {
+        let candidate = crate::install_input_hooks_if_enabled(store, install)?;
+        let permitted = candidate.is_some()
+            && !store.get::<bool>("shutdown")?
+            && !store.get::<bool>("background_disabled")?
+            && store.get::<Config>("config")?.collect;
+        if !permitted {
+            // A just-installed hook is dropped before it could be activated.
+            return Ok(false);
+        }
+        *current = candidate;
+    }
+    Ok(true)
+}
+
 /// Keep startup and explicit commands responsive without rewriting the same
 /// SQLite heartbeat on every two-second idle monitor tick.
 fn publish_heartbeat_if_due(
@@ -2044,6 +2073,7 @@ pub fn monitor(home: PathBuf) -> Result<()> {
     let mut last_autostart = None;
     let mut autostart_retry: Option<Instant> = None;
     let mut previous_collect = None;
+    let mut input_hooks: Option<crate::activity::Hooks> = None;
     loop {
         // Keep stop intent visible until the process releases its mutex. Only
         // the next explicit startup may clear it and advertise readiness.
@@ -2131,7 +2161,18 @@ pub fn monitor(home: PathBuf) -> Result<()> {
         }
         let config: Config = store.get("config")?;
         config.validate()?;
-        crate::activity::set_enabled(config.collect);
+        // Pause capture before releasing callbacks. Resume only after the
+        // dedicated hook thread is installed and its permission revalidated.
+        if !config.collect {
+            crate::activity::set_enabled(false);
+        }
+        let tracking_ready = sync_input_hooks(
+            &store,
+            &mut input_hooks,
+            config.collect,
+            crate::activity::Hooks::install,
+        )?;
+        crate::activity::set_enabled(tracking_ready);
         if previous_collect != Some(config.collect) {
             previous_collect = Some(config.collect);
             usage = UsageAccumulator::default();

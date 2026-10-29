@@ -168,12 +168,48 @@ fn a_disabled_entry_never_installs_global_input_hooks() {
 }
 
 #[test]
+fn enabled_manual_only_entry_must_not_request_global_input_hooks() {
+    // Unlike explicit Turn off, this mode keeps the tray and manual commands
+    // available. It has no permission to observe keyboard or mouse activity.
+    let home = test_home();
+    let store = Store::open(&home).unwrap();
+    store.set("setup_complete", &true).unwrap();
+    store.set("background_disabled", &false).unwrap();
+    let config = Config {
+        collect: false,
+        automatic: false,
+        learning_enabled: false,
+        ..Default::default()
+    };
+    store.set("config", &config).unwrap();
+    let mut attempted = 0;
+    let hooks = install_input_hooks_if_enabled(&store, || -> Result<()> {
+        attempted += 1;
+        Ok(())
+    })
+    .unwrap();
+    assert!(
+        hooks.is_none(),
+        "manual-only mode needs no global input hooks"
+    );
+    assert_eq!(attempted, 0, "no hook initializer should be called");
+    assert!(register_background_session(&store).unwrap());
+    assert!(!store.get::<bool>("shutdown").unwrap());
+    assert_eq!(store.get::<Config>("config").unwrap(), config);
+    drop(store);
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn turning_off_during_input_hook_setup_still_rejects_session_registration() {
     let home = test_home();
     let store = Store::open(&home).unwrap();
     store.set("setup_complete", &true).unwrap();
     store.set("background_disabled", &false).unwrap();
     store.set("shutdown", &false).unwrap();
+    let mut config: Config = store.get("config").unwrap();
+    config.collect = true;
+    store.set("config", &config).unwrap();
     let mut attempts = 0usize;
     let installed = install_input_hooks_if_enabled(&store, || -> Result<()> {
         attempts += 1;
@@ -188,6 +224,72 @@ fn turning_off_during_input_hook_setup_still_rejects_session_registration() {
     assert!(!register_background_session(&store).unwrap());
     assert!(store.get::<bool>("background_disabled").unwrap());
     assert!(store.get::<bool>("shutdown").unwrap());
+    drop(store);
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn input_hooks_follow_manual_observe_manual_changes_and_concurrent_turn_off() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    struct FakeHook(Arc<AtomicUsize>);
+    impl Drop for FakeHook {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    // Run the exact production lifecycle against a saved SQLite configuration.
+    // The injector stands in for Windows registration so the operation counts
+    // are deterministic. No keyboard events or user files are recorded.
+    let home = test_home();
+    let store = Store::open(&home).unwrap();
+    store.set("background_disabled", &false).unwrap();
+    store.set("shutdown", &false).unwrap();
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let mut current: Option<FakeHook> = None;
+    let mut installs = 0usize;
+    let mut config = Config {
+        collect: false,
+        automatic: false,
+        learning_enabled: false,
+        ..Default::default()
+    };
+
+    for enabled in [false, false, true, true, false, true, false] {
+        config.collect = enabled;
+        store.set("config", &config).unwrap();
+        let active = engine::sync_input_hooks(&store, &mut current, enabled, || {
+            installs += 1;
+            Ok(FakeHook(dropped.clone()))
+        })
+        .unwrap();
+        assert_eq!(active, enabled);
+        assert_eq!(current.is_some(), enabled);
+    }
+    assert_eq!(installs, 2, "steady tracking must not register extra hooks");
+    assert_eq!(dropped.load(Ordering::SeqCst), 2);
+
+    // Stop while the real monitor's installation boundary is in progress.
+    // A successful OS registration must still be released, never activated.
+    config.collect = true;
+    store.set("config", &config).unwrap();
+    let allowed = engine::sync_input_hooks(&store, &mut current, true, || {
+        installs += 1;
+        store.set("background_disabled", &true)?;
+        store.set("shutdown", &true)?;
+        Ok(FakeHook(dropped.clone()))
+    })
+    .unwrap();
+    assert!(!allowed);
+    assert!(current.is_none());
+    assert_eq!(installs, 3);
+    assert_eq!(dropped.load(Ordering::SeqCst), 3);
+    assert!(store.get::<bool>("background_disabled").unwrap());
+    assert!(store.get::<bool>("shutdown").unwrap());
+
     drop(store);
     std::fs::remove_dir_all(home).unwrap();
 }
