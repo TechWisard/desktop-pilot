@@ -14,6 +14,8 @@ mod setup;
 mod store;
 mod tray;
 mod ui;
+#[cfg(test)]
+mod cli_startup_race_tests;
 use anyhow::{Context, Result, ensure};
 use model::*;
 use std::path::{Path, PathBuf};
@@ -50,6 +52,17 @@ fn prepare_report(args: &[String]) -> Result<()> {
 }
 fn background_running(home: &Path) -> Result<bool> {
     native::is_running("background", home)
+}
+
+/// Coordinate direct CLI changes with explicit Settings startup/disable.
+fn direct_cli_change<T>(store: &Store, action: impl FnOnce() -> Result<T>) -> Result<T> {
+    ensure!(
+        !background_running(&store.home)?,
+        "При работающем фоне используйте окно настроек"
+    );
+    #[cfg(test)]
+    cli_startup_race_tests::pause_before_change(&store.home);
+    action()
 }
 // Validate the original link on each legacy launch, rather than trusting
 // catalog data that could predate a drive removal or an application update.
@@ -146,6 +159,7 @@ fn run(error_profile: &mut Option<PathBuf>) -> Result<()> {
     }
     match args.first().map(String::as_str).unwrap_or("--settings") {
         "--init" => {
+            let _starting = native::exclusive("startup", &h)?;
             ensure!(
                 !background_running(&h)?,
                 "При работающем фоне используйте окно настроек"
@@ -201,32 +215,18 @@ fn run(error_profile: &mut Option<PathBuf>) -> Result<()> {
             &args,
             &serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"config":s.get::<Config>("config")?,"learning":s.get::<learning::Progress>("learning")?,"state":s.get::<State>("state")?,"preview":engine::preview(&s,!s.get::<State>("state")?.initialized)?,"heartbeat":s.get::<i64>("heartbeat")?,"status":s.get::<String>("status")?,"background":background_running(&h)?}),
         ),
-        "--apply-initial" => {
-            ensure!(
-                !background_running(&h)?,
-                "При работающем фоне используйте окно настроек"
-            );
+        "--apply-initial" => direct_cli_change(&s, || {
             ensure!(
                 !s.get::<State>("state")?.initialized,
                 "Первичное размещение уже выполнено"
             );
             emit(&args, &engine::apply(&s, true)?)
-        }
-        "--apply" => {
-            ensure!(
-                !background_running(&h)?,
-                "При работающем фоне используйте окно настроек"
-            );
-            emit(&args, &engine::apply(&s, false)?)
-        }
-        "--rollback" => {
-            ensure!(
-                !background_running(&h)?,
-                "При работающем фоне используйте окно настроек"
-            );
+        }),
+        "--apply" => direct_cli_change(&s, || emit(&args, &engine::apply(&s, false)?)),
+        "--rollback" => direct_cli_change(&s, || {
             let _lock = native::exclusive("changes", &h)?;
             emit(&args, &engine::rollback(&s)?)
-        }
+        }),
         "--launch" => {
             let id = args.get(1).context("Нет идентификатора ярлыка")?;
             let actual = checked_launch_source(&s, id)?;
