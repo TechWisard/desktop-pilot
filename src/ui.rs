@@ -1032,6 +1032,8 @@ impl Settings {
             // An explicitly disabled profile must remain disabled. Serialize
             // this decision with Turn off so this action cannot silently resume.
             if setup::start_background_if_enabled(&home)? {
+                #[cfg(test)]
+                setup::pause_before_enqueue(&home);
                 let store = Store::open(&home)?;
                 store.command(&action)?;
                 Ok(JobResult::Queued(store.db.last_insert_rowid(), action))
@@ -5226,3 +5228,6 @@ mod clear_history_tests;
 
 #[cfg(test)]
 mod disabled_actions_tests;
+
+#[cfg(test)]
+mod queue_race_tests;

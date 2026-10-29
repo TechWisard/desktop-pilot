@@ -257,6 +257,29 @@ pub fn start_background(home: &Path) -> Result<()> {
 
 /// A Settings command is not permission to resume explicitly disabled tracking.
 /// Serialize the decision with Turn off / explicit Start under the startup lock.
+
+#[cfg(test)]
+pub(crate) struct QueueTestPause {
+    pub home: PathBuf,
+    pub arrived: std::sync::mpsc::Sender<()>,
+    pub resume: std::sync::mpsc::Receiver<()>,
+}
+
+#[cfg(test)]
+pub(crate) static QUEUE_TEST_PAUSE: std::sync::Mutex<Option<QueueTestPause>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
+pub(crate) fn pause_before_enqueue(home: &Path) {
+    let gate = QUEUE_TEST_PAUSE.lock().unwrap();
+    if let Some(gate) = gate.as_ref().filter(|gate| gate.home == home) {
+        gate.arrived.send(()).expect("queue must reach the race checkpoint");
+        gate.resume
+            .recv_timeout(Duration::from_secs(20))
+            .expect("queue checkpoint must be released");
+    }
+}
+
 pub fn start_background_if_enabled(home: &Path) -> Result<bool> {
     let _starting = native::exclusive("startup", home)?;
     let store = Store::open(home)?;
