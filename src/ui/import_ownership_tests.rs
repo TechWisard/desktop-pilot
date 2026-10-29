@@ -650,7 +650,10 @@ fn partial_import_feedback_reports_success_and_rejected_lines_together() {
             assert!(Instant::now() < deadline, "the import did not complete");
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert!(settings.import_open, "the failed path stays available for correction");
+        assert!(
+            settings.import_open,
+            "the failed path stays available for correction"
+        );
         assert!(settings.import_error.contains("full shortcut path"));
         let notice = settings.notice.as_ref().expect("mixed-result notice");
         assert!(

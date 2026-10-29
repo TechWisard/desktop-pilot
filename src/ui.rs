@@ -288,7 +288,11 @@ fn shortcut_paths(value: &str) -> Result<Vec<PathBuf>> {
 // Reject bad selections individually in the worker. Other explicit file
 // selections must still be processed.
 fn validate_shortcut_path(path: &Path) -> Result<()> {
-    ensure!(path.is_absolute(), "Use a full shortcut path: {}", path.display());
+    ensure!(
+        path.is_absolute(),
+        "Use a full shortcut path: {}",
+        path.display()
+    );
     ensure!(
         path.extension().is_some_and(|extension| matches!(
             extension.to_str().map(str::to_ascii_lowercase).as_deref(),
@@ -1393,7 +1397,10 @@ impl Settings {
                                 if result.added.is_empty() {
                                     self.fail(explanation);
                                 } else {
-                                    self.fail(format!("{}\n{explanation}", import_summary(&result)));
+                                    self.fail(format!(
+                                        "{}\n{explanation}",
+                                        import_summary(&result)
+                                    ));
                                 }
                             }
                         }
@@ -4912,7 +4919,9 @@ mod tests {
         ] {
             let paths = shortcut_paths(invalid).unwrap();
             assert!(
-                paths.iter().all(|path| validate_shortcut_path(path).is_err()),
+                paths
+                    .iter()
+                    .all(|path| validate_shortcut_path(path).is_err()),
                 "invalid file type or relative path reached the native parser: {invalid}"
             );
         }
