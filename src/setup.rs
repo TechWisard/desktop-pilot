@@ -255,9 +255,7 @@ pub fn start_background(home: &Path) -> Result<()> {
     start_background_locked(&store)
 }
 
-/// A Settings command is not permission to resume explicitly disabled tracking.
-/// Serialize the decision with Turn off / explicit Start under the startup lock.
-
+// Test-only pause at the command write boundary; never shipped in release.
 #[cfg(test)]
 pub(crate) struct QueueTestPause {
     pub home: PathBuf,
