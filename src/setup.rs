@@ -691,6 +691,65 @@ mod tests {
     }
 
     #[test]
+    fn turn_off_without_enabled_autostart_ignores_registry_refusal_but_keeps_strict_failure_for_enabled_startup() {
+        // Use real disable_background, per-profile locks, SQLite and pending
+        // command cancellation. Only the Windows registration boundary is
+        // deliberately rejected; the test cannot modify the host registry.
+        for was_enabled in [false, true] {
+            let root = test_home(if was_enabled {
+                "disable-registry-enabled"
+            } else {
+                "disable-registry-already-off"
+            });
+            let store = Store::open(&root).unwrap();
+            let config = Config {
+                collect: true,
+                automatic: true,
+                autostart: was_enabled,
+                learning_enabled: true,
+                ..Default::default()
+            };
+            store.set("config", &config).unwrap();
+            let source = root.join("Important.url");
+            let source_bytes =
+                b"[InternetShortcut]\r\nURL=https://example.invalid/Important\r\n";
+            std::fs::write(&source, source_bytes).unwrap();
+            let app = native::read_link(&source).unwrap();
+            store.put_app(&app).unwrap();
+            store.observe(&app.id, 180, true, false).unwrap();
+            store.command("apply").unwrap();
+            let days = serde_json::to_value(store.days().unwrap()).unwrap();
+            let saved = store.app(&app.id).unwrap();
+            *TEST_REJECT_AUTOSTART_UPDATE.lock().unwrap() = Some(root.clone());
+            let result = disable_background(&root);
+            // Clear injection before assertions, including a failing baseline.
+            *TEST_REJECT_AUTOSTART_UPDATE.lock().unwrap() = None;
+            if was_enabled {
+                let error = result.expect_err("removing enabled startup still requires Windows");
+                assert!(format!("{error:#}").contains("Simulated Windows startup registration refusal"));
+                assert_eq!(store.get::<Config>("config").unwrap(), config);
+                assert!(!store.get::<bool>("background_disabled").unwrap());
+                assert!(!store.get::<bool>("shutdown").unwrap());
+                assert_eq!(store.pending().unwrap().len(), 1);
+            } else {
+                let disabled = result.expect(
+                    "Turn off must not need Windows startup access when startup was already off",
+                );
+                assert!(!disabled.collect && !disabled.automatic);
+                assert!(!disabled.autostart && !disabled.learning_enabled);
+                assert!(store.get::<bool>("background_disabled").unwrap());
+                assert!(store.get::<bool>("shutdown").unwrap());
+                assert!(store.pending().unwrap().is_empty());
+            }
+            assert_eq!(store.app(&app.id).unwrap(), saved);
+            assert_eq!(serde_json::to_value(store.days().unwrap()).unwrap(), days);
+            assert_eq!(std::fs::read(source).unwrap(), source_bytes);
+            drop(store);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
     fn disabling_a_profile_preserves_history_and_does_not_touch_another_profile() {
         let root = test_home("disable");
         let other_home = test_home("other-profile");
