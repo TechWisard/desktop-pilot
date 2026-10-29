@@ -167,7 +167,6 @@ fn a_disabled_entry_never_installs_global_input_hooks() {
     std::fs::remove_dir_all(home).unwrap();
 }
 
-
 #[test]
 fn enabled_manual_only_entry_must_not_request_global_input_hooks() {
     // Unlike explicit Turn off, this mode keeps the tray and manual commands
@@ -189,7 +188,10 @@ fn enabled_manual_only_entry_must_not_request_global_input_hooks() {
         Ok(())
     })
     .unwrap();
-    assert!(hooks.is_none(), "manual-only mode needs no global input hooks");
+    assert!(
+        hooks.is_none(),
+        "manual-only mode needs no global input hooks"
+    );
     assert_eq!(attempted, 0, "no hook initializer should be called");
     assert!(register_background_session(&store).unwrap());
     assert!(!store.get::<bool>("shutdown").unwrap());
