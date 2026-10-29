@@ -56,9 +56,12 @@ fn prepare_report(args: &[String]) -> Result<()> {
 /// already been explicitly disabled. Admission is checked again after
 /// installation to handle an intervening Turn off.
 fn install_input_hooks_if_enabled<T>(
-    _store: &Store,
+    store: &Store,
     install: impl FnOnce() -> Result<T>,
 ) -> Result<Option<T>> {
+    if store.get::<bool>("background_disabled")? {
+        return Ok(None);
+    }
     Ok(Some(install()?))
 }
 
