@@ -476,11 +476,21 @@ pub fn disable_background(home: &Path) -> Result<Config> {
     store
         .transaction(|| {
             let mut config: Config = store.get("config")?;
+            let startup_was_enabled = config.autostart;
             config.automatic = false;
             config.collect = false;
             config.autostart = false;
             config.learning_enabled = false;
-            save_config(&store, &config)?;
+            config.validate()?;
+            if startup_was_enabled {
+                // Removing an enabled Windows startup entry remains mandatory.
+                save_config(&store, &config)?;
+            } else {
+                // A saved startup-off choice needs no registry write. An OS
+                // registration failure must not block an explicit Turn off.
+                // Persisted background_disabled also rejects delayed launches.
+                store.set("config", &config)?;
+            }
             let message = "Command cancelled because background work was disabled.";
             let cancelled = store.db.execute(
                 "UPDATE commands SET status='error',message=?1 WHERE status IN ('pending','running')",
