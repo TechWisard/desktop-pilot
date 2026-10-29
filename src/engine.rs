@@ -2263,6 +2263,9 @@ pub fn monitor(home: PathBuf) -> Result<()> {
             };
             if let Some(result) = finished {
                 let requested = std::mem::take(&mut worker.requests);
+                // Requests received after this scan started require a fresh
+                // enumeration; an older snapshot cannot satisfy them.
+                let follow_up = std::mem::take(&mut worker.follow_up_requests);
                 scan = None;
                 let completed: Result<String> =
                     result.map(|_| "Список ярлыков и закрепления обновлены".into());
@@ -2285,6 +2288,13 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                         maintenance = Some(Instant::now());
                     }
                 }
+                if !follow_up.is_empty() {
+                    // One fresh scan satisfies all late refresh requests.
+                    // Keep their commands running until that scan completes.
+                    let mut next = scan_worker::start(&store.home);
+                    next.requests = follow_up;
+                    scan = Some(next);
+                }
             }
         }
         for (id, action) in store.pending()? {
@@ -2299,9 +2309,13 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                         Instant::now(),
                         true,
                     )?;
-                    scan.get_or_insert_with(|| scan_worker::start(&store.home))
-                        .requests
-                        .push(id);
+                    if let Some(worker) = scan.as_mut() {
+                        worker.follow_up_requests.push(id);
+                    } else {
+                        let mut worker = scan_worker::start(&store.home);
+                        worker.requests.push(id);
+                        scan = Some(worker);
+                    }
                 }
                 continue;
             }
