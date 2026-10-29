@@ -349,7 +349,10 @@ fn stale_collect_snapshot_cannot_keep_existing_hooks_after_permission_is_revoked
     // even when this monitor iteration still carries an older true snapshot.
     config.collect = false;
     settings.set("config", &config).unwrap();
-    assert!(!sync(&mut hooks), "paused observation must revoke the stale snapshot");
+    assert!(
+        !sync(&mut hooks),
+        "paused observation must revoke the stale snapshot"
+    );
     assert!(hooks.is_none());
     assert_eq!(dropped.load(Ordering::SeqCst), 1);
 
@@ -360,7 +363,10 @@ fn stale_collect_snapshot_cannot_keep_existing_hooks_after_permission_is_revoked
 
     // Turn off can also commit after the same snapshot, before the hook poll.
     settings.set("background_disabled", &true).unwrap();
-    assert!(!sync(&mut hooks), "Turn off must revoke already installed hooks");
+    assert!(
+        !sync(&mut hooks),
+        "Turn off must revoke already installed hooks"
+    );
     assert!(hooks.is_none());
     assert_eq!(dropped.load(Ordering::SeqCst), 2);
     assert_eq!(installations, 2, "revocation cannot register new hooks");
