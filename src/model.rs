@@ -1193,11 +1193,20 @@ mod tests {
             r"\\?\UnC\server\TEAM\Tools\launch.exe",
         ] {
             assert_eq!(norm(spelling), norm(ordinary));
-            let mut saved = App { target: ordinary.into(), ..Default::default() };
-            let mut discovered = App { target: spelling.into(), ..Default::default() };
+            let mut saved = App {
+                target: ordinary.into(),
+                ..Default::default()
+            };
+            let mut discovered = App {
+                target: spelling.into(),
+                ..Default::default()
+            };
             saved.assign_id();
             discovered.assign_id();
-            assert_eq!(saved.id, discovered.id, "a path-spelling change must not create an extra catalog application");
+            assert_eq!(
+                saved.id, discovered.id,
+                "a path-spelling change must not create an extra catalog application"
+            );
         }
         assert_ne!(norm(r"\\?\C:\Team\Tools\launch.exe"), norm(ordinary));
         assert_ne!(
