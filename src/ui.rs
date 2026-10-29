@@ -1028,23 +1028,13 @@ impl Settings {
         }
         let home = self.store.home.clone();
         let action = command.to_owned();
-        self.start_job("Sending the command…", move || {
-            // An explicitly disabled profile must remain disabled. Serialize
-            // this decision with Turn off so this action cannot silently resume.
-            if let Some(id) = setup::enqueue_settings_command_if_enabled(&home, &action)? {
-                Ok(JobResult::Queued(id, action))
-            } else {
-                // Explicit local actions do not need an installed executable or
-                // worker. Keep the established command, ownership and Undo guards.
-                let _com = native::Com::new()?;
-                let store = Store::open(&home)?;
-                ensure!(
-                    !native::is_running("background", &home)?,
-                    "Background work is still stopping. Try the action again."
-                );
-                Ok(JobResult::Completed(engine::command(&store, &action)?))
-            }
-        });
+        self.start_job(
+            "Sending the command…",
+            move || match setup::dispatch_settings_command(&home, &action)? {
+                setup::SettingsCommand::Queued(id) => Ok(JobResult::Queued(id, action)),
+                setup::SettingsCommand::Completed(message) => Ok(JobResult::Completed(message)),
+            },
+        );
     }
     fn change_policy(&mut self, id: String, policy: Policy) {
         if !self.busy() {
@@ -5246,3 +5236,6 @@ mod queue_race_tests;
 
 #[cfg(test)]
 mod save_disable_race_tests;
+
+#[cfg(test)]
+mod disabled_start_race_tests;
