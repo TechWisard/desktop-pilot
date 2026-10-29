@@ -1092,10 +1092,16 @@ impl Settings {
                 should_resume_background(store.get::<bool>("background_disabled")?, &base, &config);
             let mut native_applied = false;
             let result = store.transaction(|| {
-                let latest = store.get("config")?;
+                let latest: Config = store.get("config")?;
                 let merged = merge_config(&base, &config, &latest)?;
-                setup::save_config(&store, &merged)?;
-                native_applied = true;
+                if merged.autostart != latest.autostart {
+                    // Windows startup is an independent integration. Only an
+                    // actual startup preference change requires registry access.
+                    setup::save_config(&store, &merged)?;
+                    native_applied = true;
+                } else {
+                    store.set("config", &merged)?;
+                }
                 Ok(merged)
             });
             let merged = match result {
