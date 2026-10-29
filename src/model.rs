@@ -1263,3 +1263,6 @@ mod manual_mode_tests;
 
 #[cfg(test)]
 mod evidence_reason_tests;
+
+#[cfg(test)]
+mod selection_clock_tests;
