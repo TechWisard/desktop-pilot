@@ -367,6 +367,8 @@ pub fn rank(apps: &[App], days: &[Day], cfg: &Config, time: i64) -> Vec<Ranked> 
     output
 }
 
+// Direct selector tests keep the original real-time entry point.
+#[cfg(test)]
 pub fn select(
     apps: &[App],
     ranking: &[Ranked],
