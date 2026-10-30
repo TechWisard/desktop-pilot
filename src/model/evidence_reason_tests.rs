@@ -170,7 +170,9 @@ fn explicit_never_reason_survives_missing_original_and_restoration() {
     let parked = root.join("Source temporarily unavailable");
     let _com = native::Com::new().unwrap();
     let store = Store::open(&root).unwrap();
-    store.set("test_desktop", &desktop.to_string_lossy()).unwrap();
+    store
+        .set("test_desktop", &desktop.to_string_lossy())
+        .unwrap();
     store.set("setup_complete", &true).unwrap();
     store
         .set(
