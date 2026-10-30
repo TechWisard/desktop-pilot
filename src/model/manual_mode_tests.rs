@@ -365,6 +365,10 @@ fn saved_sqlite_preview_keeps_unmodified_copy_during_ten_day_outage_in_manual_mo
     assert!(offline.unavailable_since > 0);
     offline.unavailable_since = now() - 10 * 86_400;
     store.put_app(&offline).unwrap();
+    engine::refresh_apps(&store).unwrap();
+    let warning: String = store.get("catalog_warning").unwrap();
+    assert!(warning.contains("Manual mode keeps this existing quick shortcut"));
+    assert!(!warning.contains("72 hours"));
 
     let plan = engine::preview(&store, false).unwrap();
     assert_eq!(plan.selected, [saved.id.clone()]);
@@ -372,6 +376,9 @@ fn saved_sqlite_preview_keeps_unmodified_copy_during_ten_day_outage_in_manual_mo
     assert_eq!(std::fs::read(&quick).unwrap(), bytes);
     assert_eq!(std::fs::read(&parked).unwrap(), bytes);
     assert_eq!(store.get::<State>("state").unwrap().owned, state.owned);
+    assert!(engine::apply(&store, false).unwrap().contains("Проверено"));
+    assert_eq!(std::fs::read(&quick).unwrap(), bytes);
+    assert_eq!(std::fs::read(&parked).unwrap(), bytes);
 
     store.policy(&saved.id, Policy::Never).unwrap();
     assert_eq!(
