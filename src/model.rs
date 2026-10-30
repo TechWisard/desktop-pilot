@@ -428,6 +428,9 @@ pub(crate) fn select_at(
                     .get(id)
                     .is_some_and(|a| a.valid && a.policy != Policy::Never))
     };
+    // Manual-only Apply must not silently revoke a previously managed copy
+    // because an unrelated taskbar pin appeared since the last placement.
+    let manual_only = !cfg.automatic && !cfg.collect;
     let mut seen = HashSet::new();
     let mut result: Vec<String> = state
         .owned
@@ -436,7 +439,9 @@ pub(crate) fn select_at(
             allowed(&o.app)
                 || retained_offline(&o.app)
                 || by_id.get(o.app.as_str()).is_some_and(|a| {
-                    a.valid && a.policy == Policy::Auto && !(cfg.respect_taskbar_pins && a.pinned)
+                    a.valid
+                        && a.policy == Policy::Auto
+                        && (manual_only || !(cfg.respect_taskbar_pins && a.pinned))
                 })
         })
         .filter(|o| seen.insert(o.app.clone()))
@@ -478,7 +483,7 @@ pub(crate) fn select_at(
     // changes must only carry out explicit Always/Never choices and capacity
     // changes. Keep previously managed copies stable; stored usage may still
     // be displayed as guidance, but cannot insert or displace a shortcut.
-    if !cfg.automatic && !cfg.collect {
+    if manual_only {
         return result;
     }
     let mut replacements = 0;
