@@ -73,9 +73,14 @@ fn stalled_queue_does_not_block_a_real_independent_settings_save() {
         let status: String = settings
             .store
             .db
-            .query_row("SELECT status FROM commands WHERE id=?1", [id], |r| r.get(0))
+            .query_row("SELECT status FROM commands WHERE id=?1", [id], |r| {
+                r.get(0)
+            })
             .unwrap();
-        assert_eq!(status, "running", "an unrelated save cannot silently resolve work");
+        assert_eq!(
+            status, "running",
+            "an unrelated save cannot silently resolve work"
+        );
     });
 }
 
@@ -108,7 +113,9 @@ fn explicit_cleanup_marks_abandoned_commands_failed_and_keeps_undo_intact() {
         let status: String = settings
             .store
             .db
-            .query_row("SELECT status FROM commands WHERE id=?1", [id], |r| r.get(0))
+            .query_row("SELECT status FROM commands WHERE id=?1", [id], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(status, "error");
         assert_eq!(settings.active_commands, 0);
@@ -152,7 +159,9 @@ fn cleanup_refuses_to_cancel_live_work_after_a_stale_offline_snapshot() {
         let status: String = settings
             .store
             .db
-            .query_row("SELECT status FROM commands WHERE id=?1", [id], |r| r.get(0))
+            .query_row("SELECT status FROM commands WHERE id=?1", [id], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(status, "running");
         assert_eq!(settings.store.app(&anchor.id).unwrap(), previous);
