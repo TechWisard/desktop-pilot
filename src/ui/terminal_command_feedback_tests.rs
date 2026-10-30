@@ -51,7 +51,7 @@ fn cancelled_refresh_is_never_reported_as_success_when_old_worker_replies() {
     assert!(settings.pending_commands.is_empty());
     assert_eq!(settings.active_commands, 0);
     let notice = settings.notice.as_ref().expect("cancellation feedback");
-    assert_eq!(notice.kind, NoticeKind::Error);
+    assert!(notice.kind == NoticeKind::Error);
     assert_eq!(notice.text, canceled.1);
     assert!(!notice.text.contains("Stale successful refresh"));
 
@@ -71,7 +71,7 @@ fn cancelled_refresh_is_never_reported_as_success_when_old_worker_replies() {
     settings.reload().unwrap();
     assert!(settings.pending_commands.is_empty());
     let notice = settings.notice.as_ref().expect("fresh completion feedback");
-    assert_eq!(notice.kind, NoticeKind::Success);
+    assert!(notice.kind == NoticeKind::Success);
     assert_eq!(notice.text, "Verified fresh catalog");
     assert_eq!(
         settings.store.get::<Config>("config").unwrap(),
