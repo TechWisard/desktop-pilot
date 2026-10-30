@@ -23,7 +23,10 @@ fn dead_background_worker_does_not_hold_configuration_hostage_to_old_commands() 
             "a dead worker must not indefinitely prevent saving independent settings"
         );
         assert_eq!(settings.store.app(&anchor.id).unwrap(), app);
-        assert_eq!(settings.store.get::<State>("state").unwrap().owned, state.owned);
+        assert_eq!(
+            settings.store.get::<State>("state").unwrap().owned,
+            state.owned
+        );
         assert_eq!(
             serde_json::to_value(settings.store.days().unwrap()).unwrap(),
             history
