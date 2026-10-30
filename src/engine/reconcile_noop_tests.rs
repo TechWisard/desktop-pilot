@@ -89,3 +89,46 @@ fn unchanged_managed_shortcuts_do_not_rewrite_state_or_require_sqlite_writer() {
     drop(store);
     std::fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn repeating_a_monitor_status_does_not_write_during_unrelated_wal_work() {
+    let home = std::env::temp_dir().join(format!(
+        "desktop-pilot-unchanged-status-{}-{}",
+        std::process::id(),
+        SERIAL.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&home).unwrap();
+    let store = Store::open(&home).unwrap();
+    store.set("status", &"Учёт использования приостановлен").unwrap();
+    store.db.execute_batch(
+        "CREATE TABLE status_update_audit (id INTEGER);
+         CREATE TRIGGER status_update_count AFTER UPDATE ON kv
+         WHEN NEW.k='status'
+         BEGIN INSERT INTO status_update_audit VALUES (1); END;",
+    ).unwrap();
+    for _ in 0..4 {
+        assert!(!publish_monitor_status_if_changed(
+            &store,
+            "Учёт использования приостановлен"
+        ).unwrap());
+    }
+    let other = rusqlite::Connection::open(home.join("usage.sqlite")).unwrap();
+    other.execute_batch("BEGIN IMMEDIATE;").unwrap();
+    assert!(!publish_monitor_status_if_changed(
+        &store,
+        "Учёт использования приостановлен"
+    ).unwrap());
+    other.execute_batch("ROLLBACK;").unwrap();
+    assert!(publish_monitor_status_if_changed(&store, "Фоновый учёт работает").unwrap());
+    assert!(!publish_monitor_status_if_changed(&store, "Фоновый учёт работает").unwrap());
+    let changes: i64 = store.db.query_row(
+        "SELECT COUNT(*) FROM status_update_audit",
+        [],
+        |row| row.get(0)
+    ).unwrap();
+    assert_eq!(changes, 1, "publish only the one real status transition");
+    assert_eq!(store.get::<String>("status").unwrap(), "Фоновый учёт работает");
+    drop(other);
+    drop(store);
+    std::fs::remove_dir_all(home).unwrap();
+}
