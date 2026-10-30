@@ -572,11 +572,7 @@ fn details_placement_reason(
             )
             .to_owned();
         }
-        if *policy == Policy::Auto
-            && app.valid
-            && app.pinned
-            && saved_config.respect_taskbar_pins
-        {
+        if *policy == Policy::Auto && app.valid && app.pinned && saved_config.respect_taskbar_pins {
             return t(
                 "Уже размещено: в ручном режиме закрепление на панели задач не удалит этот быстрый ярлык.",
                 "Already on the desktop: in Manual mode, a taskbar pin will not remove this quick shortcut.",
