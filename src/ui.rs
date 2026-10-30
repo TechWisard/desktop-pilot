@@ -490,6 +490,21 @@ fn config_equal(a: &Config, b: &Config) -> bool {
     a == b
 }
 fn merge_config(base: &Config, draft: &Config, latest: &Config) -> Result<Config> {
+    // The two flags form one user-visible operating-mode decision. A fieldwise
+    // merge of competing choices can invent a mode neither side requested,
+    // including switching from observation to automatic changes.
+    let baseline_mode = (base.automatic, base.collect);
+    let requested_mode = (draft.automatic, draft.collect);
+    let current_mode = (latest.automatic, latest.collect);
+    ensure!(
+        requested_mode == baseline_mode
+            || current_mode == baseline_mode
+            || requested_mode == current_mode,
+        t(
+            "Режим работы изменён другим действием. Настройки не сохранены; обновите их и выберите режим снова.",
+            "The operating mode was changed elsewhere. Settings were not saved; refresh them and choose the mode again.",
+        )
+    );
     let base = serde_json::to_value(base)?;
     let draft = serde_json::to_value(draft)?;
     let mut latest = serde_json::to_value(latest)?;
