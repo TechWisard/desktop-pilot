@@ -118,3 +118,124 @@ fn observe_only_and_paused_automatic_mode_still_allow_saved_recommendations() {
         );
     }
 }
+
+#[test]
+fn manual_mode_does_not_remove_an_existing_auto_copy_just_because_it_is_taskbar_pinned() {
+    let mut pinned = app("already-placed", Policy::Auto, 25.0);
+    pinned.pinned = true;
+    let apps = vec![pinned.clone()];
+    let cfg = Config {
+        slots: 1,
+        respect_taskbar_pins: true,
+        ..Default::default()
+    };
+    let state = State {
+        owned: vec![owned("already-placed", false)],
+        initialized: true,
+        ..Default::default()
+    };
+    let ranking = rank(&apps, &[], &cfg, now());
+    assert!(!ranking[0].eligible);
+    assert_eq!(
+        select(&apps, &ranking, &state, &cfg, false),
+        ["already-placed"],
+        "Manual mode must not silently undo an earlier placement after an external taskbar pin"
+    );
+
+    // Outside manual-only mode, the user's taskbar-pin filter still works.
+    let observing = Config {
+        collect: true,
+        ..cfg.clone()
+    };
+    assert!(select(&apps, &ranking, &state, &observing, false).is_empty());
+
+    pinned.policy = Policy::Never;
+    let excluded = vec![pinned];
+    assert!(
+        select(
+            &excluded,
+            &rank(&excluded, &[], &cfg, now()),
+            &state,
+            &cfg,
+            false
+        )
+        .is_empty(),
+        "An explicit Never decision must still remove the existing copy"
+    );
+}
+
+#[test]
+fn saved_sqlite_preview_keeps_a_taskbar_pinned_copy_in_manual_mode() {
+    use crate::{engine, native, store::Store};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SERIAL: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "desktop-pilot-manual-pin-{}-{}",
+        std::process::id(),
+        SERIAL.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let root = crate::profile::ordinary_path(std::fs::canonicalize(&root).unwrap());
+    let desktop = root.join("Desktop");
+    std::fs::create_dir_all(&desktop).unwrap();
+    let original = root.join("Source.url");
+    let bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/manual-pin\r\n";
+    std::fs::write(&original, bytes).unwrap();
+    let quick = desktop.join("Saved.url");
+    std::fs::copy(&original, &quick).unwrap();
+
+    let store = Store::open(&root).unwrap();
+    store
+        .set("test_desktop", &desktop.to_string_lossy())
+        .unwrap();
+    let mut saved = native::read_link(&original).unwrap();
+    saved.pinned = true;
+    store.put_app(&saved).unwrap();
+    let cfg = Config {
+        slots: 1,
+        learning_enabled: false,
+        respect_taskbar_pins: true,
+        ..Default::default()
+    };
+    store.set("config", &cfg).unwrap();
+    let state = State {
+        owned: vec![Owned {
+            app: saved.id.clone(),
+            path: quick.to_string_lossy().into_owned(),
+            sha: hash(bytes),
+            position: Point::default(),
+            manual: false,
+            since: now(),
+            file_id: None,
+        }],
+        initialized: true,
+        ..Default::default()
+    };
+    store.set("state", &state).unwrap();
+    let preview = engine::preview(&store, false).unwrap();
+    assert_eq!(preview.selected, [saved.id.clone()]);
+    assert!(preview.added.is_empty() && preview.removed.is_empty());
+    assert_eq!(std::fs::read(&quick).unwrap(), bytes);
+    assert_eq!(std::fs::read(&original).unwrap(), bytes);
+
+    store.policy(&saved.id, Policy::Never).unwrap();
+    let explicit = engine::preview(&store, false).unwrap();
+    assert_eq!(explicit.removed, [saved.id.clone()]);
+    store.policy(&saved.id, Policy::Auto).unwrap();
+    store
+        .set(
+            "config",
+            &Config {
+                collect: true,
+                ..cfg
+            },
+        )
+        .unwrap();
+    let observing = engine::preview(&store, false).unwrap();
+    assert_eq!(observing.removed, [saved.id]);
+    assert_eq!(store.get::<State>("state").unwrap().owned, state.owned);
+    assert_eq!(std::fs::read(&quick).unwrap(), bytes);
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
