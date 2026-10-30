@@ -4007,3 +4007,6 @@ mod idle_review_tests;
 
 #[cfg(test)]
 mod hook_failure_tests;
+
+#[cfg(test)]
+mod reconcile_noop_tests;
