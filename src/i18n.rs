@@ -42,6 +42,10 @@ fn translate(value: &str, russian: bool) -> String {
             "The manually protected quick shortcut stays in place until you change its rule or remove it. The original source or target is unavailable:",
         ),
         (
+            "В ручном режиме этот быстрый ярлык сохраняется, пока вы не измените правило или не уменьшите число мест. Пока исходный ярлык или цель недоступны, новая копия не создаётся:",
+            "Manual mode keeps this existing quick shortcut until you change its rule or reduce available slots. No new copy is created while its original source or target is unavailable:",
+        ),
+        (
             "Существующая быстрая копия сохраняется до 72 часов; новые копии не создаются. Исходный ярлык или цель временно недоступны:",
             "The existing quick copy is held for up to 72 hours; new copies are not created. Original source or target is temporarily unavailable:",
         ),
@@ -927,6 +931,18 @@ mod tests {
         for (english, russian) in messages {
             assert_eq!(translate(english, true), russian);
             assert_eq!(translate(russian, false), english);
+        }
+    }
+
+    #[test]
+    fn manual_source_outage_warning_localizes_without_changing_shortcut_paths() {
+        let english = "Manual mode keeps this existing quick shortcut until you change its rule or reduce available slots. No new copy is created while its original source or target is unavailable:";
+        let russian = "В ручном режиме этот быстрый ярлык сохраняется, пока вы не измените правило или не уменьшите число мест. Пока исходный ярлык или цель недоступны, новая копия не создаётся:";
+        for path in [r"C:\Users\Tester\Work.url", r"\\server\drive\Work.url"] {
+            let original = format!("{english} {path}");
+            let translated = format!("{russian} {path}");
+            assert_eq!(translate(&original, true), translated);
+            assert_eq!(translate(&translated, false), original);
         }
     }
 
