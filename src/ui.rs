@@ -867,8 +867,8 @@ impl Settings {
     }
     fn busy(&self) -> bool {
         self.job.is_some()
-            || !self.pending_commands.is_empty()
-            || self.active_commands > 0
+            || (self.background_alive
+                && (!self.pending_commands.is_empty() || self.active_commands > 0))
             || (self.find_after_layout && self.layout_receiver.is_some())
     }
     fn modal_open(&self) -> bool {
@@ -1076,6 +1076,30 @@ impl Settings {
         self.start_job("Starting background work…", move || {
             setup::start_background(&home)?;
             Ok(JobResult::Started)
+        });
+    }
+    /// An abandoned SQLite queue must not require a background restart to
+    /// unlock Settings. Recheck both locks so a newly started monitor's
+    /// in-flight commands can never be cancelled from a stale UI snapshot.
+    fn recover_stalled_commands(&mut self) {
+        if self.job.is_some()
+            || self.background_alive
+            || (self.active_commands == 0 && self.pending_commands.is_empty())
+        {
+            return;
+        }
+        let home = self.store.home.clone();
+        self.start_job("Resolving interrupted commands…", move || {
+            let _starting = native::exclusive("startup", &home)?;
+            let _stopped = native::try_exclusive("background", &home)?.context(
+                "Background work resumed. Refresh the status before resolving interrupted commands.",
+            )?;
+            let store = Store::open(&home)?;
+            store.recover_commands()?;
+            Ok(JobResult::Completed(
+                "Interrupted commands were marked as failed. Shortcuts, settings and Undo are unchanged."
+                    .into(),
+            ))
         });
     }
     fn prepare_background(&mut self) {
@@ -2282,6 +2306,27 @@ impl Settings {
                     .clicked()
                     {
                         self.restart_background();
+                    }
+                    if self.active_commands > 0 || !self.pending_commands.is_empty() {
+                        ui.colored_label(
+                            WARNING,
+                            t(
+                                "После остановки фонового процесса остались незавершённые команды. Они не выполняются. Их можно отметить как прерванные без изменения ярлыков.",
+                                "Some commands were left unfinished when background work stopped. They are not running. Mark them as interrupted without changing shortcuts.",
+                            ),
+                        );
+                        if ui
+                            .add_enabled(
+                                self.job.is_none(),
+                                egui::Button::new(t(
+                                    "Снять ожидание команд",
+                                    "Clear interrupted commands",
+                                )),
+                            )
+                            .clicked()
+                        {
+                            self.recover_stalled_commands();
+                        }
                     }
                     if self.background_disabled
                         && ui
@@ -3526,8 +3571,18 @@ impl Settings {
             }
         } else if !self.pending_commands.is_empty() || self.active_commands > 0 {
             ui.horizontal_wrapped(|ui| {
-                ui.spinner();
-                ui.label(t("Выполняется команда…", "Running your command…"));
+                if self.background_alive {
+                    ui.spinner();
+                    ui.label(t("Выполняется команда…", "Running your command…"));
+                } else {
+                    ui.colored_label(
+                        WARNING,
+                        t(
+                            "Фоновый процесс остановлен. На главной можно снять ожидание прерванных команд.",
+                            "Background work stopped. Open Home to clear interrupted commands.",
+                        ),
+                    );
+                }
                 if let Some(command) = self.pending_commands.first() {
                     let label = match command.action.as_str() {
                         "apply" => t("Применение", "Apply"),
@@ -3538,7 +3593,7 @@ impl Settings {
                         _ => t("Сохранение правила", "Save rule"),
                     };
                     ui.small(label);
-                    if command.submitted.elapsed() > Duration::from_secs(30) {
+                    if self.background_alive && command.submitted.elapsed() > Duration::from_secs(30) {
                         ui.colored_label(
                             WARNING,
                             t(
@@ -5298,3 +5353,6 @@ mod terminal_command_feedback_tests;
 
 #[cfg(test)]
 mod mode_merge_tests;
+
+#[cfg(test)]
+mod stalled_command_tests;
