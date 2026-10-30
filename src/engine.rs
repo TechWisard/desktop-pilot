@@ -1062,6 +1062,12 @@ fn reconcile_manual_locked(store: &Store) -> Result<()> {
         }
         kept.push(o);
     }
+    // A routine check of unchanged managed shortcuts must not reserve
+    // SQLite's only WAL writer or invalidate Settings' catalog snapshot.
+    // Genuine user edits, exclusions, and ownership changes still commit.
+    if kept == state.owned && policies.is_empty() && messages.is_empty() {
+        return Ok(());
+    }
     state.owned = kept;
     store.transaction(|| {
         for (id, policy) in policies {
@@ -2241,6 +2247,16 @@ fn publish_heartbeat_if_due(
     Ok(true)
 }
 
+/// Do not trigger a full Settings catalog reload once a minute merely to
+/// repeat the same worker status. A real transition remains visible in SQLite.
+fn publish_monitor_status_if_changed(store: &Store, status: &str) -> Result<bool> {
+    if store.get::<String>("status")? == status {
+        return Ok(false);
+    }
+    store.set("status", &status)?;
+    Ok(true)
+}
+
 pub fn monitor(home: PathBuf) -> Result<()> {
     let _com = native::Com::new()?;
     let store = Store::open(&home)?;
@@ -2492,7 +2508,7 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                         status.push_str(&format!("\n{warning}"));
                     }
                 }
-                store.set("status", &status)?;
+                publish_monitor_status_if_changed(&store, &status)?;
             }
         }
         #[cfg(test)]
@@ -4007,3 +4023,6 @@ mod idle_review_tests;
 
 #[cfg(test)]
 mod hook_failure_tests;
+
+#[cfg(test)]
+mod reconcile_noop_tests;
