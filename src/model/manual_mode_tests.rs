@@ -276,10 +276,7 @@ fn manual_only_preserves_owned_auto_copy_after_a_long_source_outage() {
     assert_eq!(explicit_plan.added, ["new-explicit"]);
     assert_eq!(explicit_plan.removed, ["offline-project"]);
 
-    let lone_config = Config {
-        slots: 1,
-        ..config.clone()
-    };
+    let lone_config = Config { slots: 1, ..config.clone() };
     let lone_state = State {
         owned: vec![owned("offline-project", false)],
         initialized: true,
