@@ -535,7 +535,7 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
     // select a different original before these results are ready to persist.
     let scanned_sources: HashMap<_, _> = known
         .iter()
-        .map(|app| (app.id.clone(), norm(&app.source)))
+        .map(|app| (app.id.clone(), (norm(&app.source), app.clone())))
         .collect();
     #[cfg(test)]
     BEFORE_REFRESH_DISCOVERY.with(|slot| {
@@ -904,9 +904,29 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
                 // A newer import wins over a stale scanner snapshot. This also
                 // protects an app first discovered during the scan: if it was
                 // imported meanwhile, it did not exist in scanned_sources.
-                if scanned_sources
-                    .get(&app.id)
-                    .is_none_or(|source| source != &norm(&latest.source))
+                let Some((source, before_scan)) = scanned_sources.get(&app.id) else {
+                    continue;
+                };
+                if source != &norm(&latest.source) {
+                    continue;
+                }
+                // A manual reimport may update icon, name or launch metadata
+                // from the SAME original path after this scan parsed it.
+                // Preserve those newer source-derived values rather than
+                // publishing an obsolete snapshot. Policy, notes and usage
+                // are independent user edits and still merge as before.
+                if latest.source != before_scan.source
+                    || latest.name != before_scan.name
+                    || latest.category != before_scan.category
+                    || latest.target != before_scan.target
+                    || latest.arguments != before_scan.arguments
+                    || latest.cwd != before_scan.cwd
+                    || latest.icon != before_scan.icon
+                    || latest.icon_index != before_scan.icon_index
+                    || latest.valid != before_scan.valid
+                    || latest.unavailable_since != before_scan.unavailable_since
+                    || latest.pinned != before_scan.pinned
+                    || latest.observed_roots != before_scan.observed_roots
                 {
                     continue;
                 }
