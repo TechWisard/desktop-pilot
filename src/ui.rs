@@ -5280,3 +5280,6 @@ mod save_autostart_isolation_tests;
 
 #[cfg(test)]
 mod terminal_command_feedback_tests;
+
+#[cfg(test)]
+mod mode_merge_tests;
