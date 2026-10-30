@@ -11,6 +11,7 @@ use std::sync::{
 pub(super) struct ScanWorker {
     pub receiver: mpsc::Receiver<Result<()>>,
     pub requests: Vec<i64>,
+    pub follow_up_requests: Vec<i64>,
     cancelled: Arc<AtomicBool>,
 }
 
@@ -36,6 +37,7 @@ pub(super) fn start(home: &Path) -> ScanWorker {
     ScanWorker {
         receiver,
         requests: Vec::new(),
+        follow_up_requests: Vec::new(),
         cancelled,
     }
 }
