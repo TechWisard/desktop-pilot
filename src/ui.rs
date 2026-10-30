@@ -867,8 +867,8 @@ impl Settings {
     }
     fn busy(&self) -> bool {
         self.job.is_some()
-            || !self.pending_commands.is_empty()
-            || (self.active_commands > 0 && self.background_alive)
+            || (self.background_alive
+                && (!self.pending_commands.is_empty() || self.active_commands > 0))
             || (self.find_after_layout && self.layout_receiver.is_some())
     }
     fn modal_open(&self) -> bool {
