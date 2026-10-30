@@ -5356,3 +5356,6 @@ mod mode_merge_tests;
 
 #[cfg(test)]
 mod stalled_command_tests;
+
+#[cfg(test)]
+mod manual_placement_reason_tests;
