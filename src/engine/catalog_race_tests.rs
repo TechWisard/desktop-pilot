@@ -377,3 +377,27 @@ fn same_source_manual_reimport_cannot_lose_newer_metadata_to_stale_scan() {
         assert_eq!(std::fs::read(&source).unwrap(), new_bytes);
     });
 }
+
+#[test]
+fn concurrent_policy_only_edit_does_not_hide_verified_source_changes() {
+    with_profile(|store| {
+        let source = store.home.join("Verified.url");
+        let old_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/Stable\r\nIconFile=C:\\Icons\\old.ico\r\n";
+        let new_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/Stable\r\nIconFile=C:\\Icons\\new.ico\r\n";
+        std::fs::write(&source, old_bytes).unwrap();
+        let app = native::read_link(&source).unwrap();
+        store.put_app(&app).unwrap();
+        std::fs::write(&source, new_bytes).unwrap();
+
+        let id = app.id.clone();
+        at_commit(move |store| {
+            store.policy(&id, Policy::Never).unwrap();
+        });
+        refresh_apps(store).unwrap();
+        let saved = store.app(&app.id).unwrap();
+        let actual = native::read_link(&source).unwrap();
+        assert_eq!(saved.icon, actual.icon);
+        assert_eq!(saved.policy, Policy::Never);
+        assert_eq!(std::fs::read(&source).unwrap(), new_bytes);
+    });
+}
