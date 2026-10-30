@@ -322,7 +322,6 @@ fn elapsed_snapshot_checkpoint_rechecks_time_dependent_recommendations() {
     });
 }
 
-
 /// A cold Settings window must display the last committed manual choices
 /// immediately, even while another process holds the WAL writer for an edit.
 /// It must then pick up the committed choice rather than retaining a stale
@@ -341,9 +340,8 @@ fn cold_start_with_busy_writer_keeps_saved_catalog_and_refreshes_after_commit() 
         // The writer has not committed: the real Settings startup must remain
         // readable and must not disclose the incomplete rule transition.
         crate::store::CATALOG_READS.with(|reads| reads.set(0));
-        let mut fresh = Settings::new(home).expect(
-            "A complete saved catalog must open while another connection writes",
-        );
+        let mut fresh = Settings::new(home)
+            .expect("A complete saved catalog must open while another connection writes");
         crate::store::CATALOG_READS.with(|reads| {
             assert_eq!(reads.get(), 1, "Cold start must parse the catalog once");
         });
@@ -369,7 +367,12 @@ fn cold_start_with_busy_writer_keeps_saved_catalog_and_refreshes_after_commit() 
         writer.db.execute_batch("COMMIT").unwrap();
         fresh.reload().unwrap();
         assert_eq!(
-            fresh.apps.iter().find(|app| app.id == rare.id).unwrap().policy,
+            fresh
+                .apps
+                .iter()
+                .find(|app| app.id == rare.id)
+                .unwrap()
+                .policy,
             Policy::Never,
             "The newly committed manual prohibition must appear on refresh"
         );
