@@ -333,11 +333,17 @@ impl Store {
             Err(e) => ("error", format!("{e:#}")),
         };
         self.transaction(|| {
-            self.db.execute(
-                "UPDATE commands SET status=?1,message=?2 WHERE id=?3",
+            // A canceled, recovered or already completed command is final.
+            // A late worker must not turn that recorded outcome into success,
+            // and cannot produce duplicate audit events.
+            let updated = self.db.execute(
+                "UPDATE commands SET status=?1,message=?2 WHERE id=?3 AND status='running'",
                 params![status, message, id],
             )?;
-            self.event(status, &message)
+            if updated > 0 {
+                self.event(status, &message)?;
+            }
+            Ok(())
         })
     }
     pub fn housekeeping(&self) -> Result<()> {
@@ -662,3 +668,6 @@ mod catalog_rescan_tests;
 
 #[cfg(test)]
 mod open_writer_tests;
+
+#[cfg(test)]
+mod command_completion_tests;
