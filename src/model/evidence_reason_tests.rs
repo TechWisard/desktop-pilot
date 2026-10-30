@@ -151,3 +151,76 @@ fn recommendation_reasons_describe_observed_evidence_not_assumed_repetition() {
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn explicit_never_reason_survives_missing_original_and_restoration() {
+    static SERIAL: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "desktop-pilot-exclusion-outage-{}-{}",
+        std::process::id(),
+        SERIAL.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let root = crate::profile::ordinary_path(std::fs::canonicalize(&root).unwrap());
+    let desktop = root.join("Desktop");
+    std::fs::create_dir_all(&desktop).unwrap();
+    let source = desktop.join("Excluded project.url");
+    let original = b"[InternetShortcut]\\r\\nURL=https://example.invalid/ExcludedProject\\r\\n";
+    std::fs::write(&source, original).unwrap();
+    let parked = root.join("Source temporarily unavailable");
+    let _com = native::Com::new().unwrap();
+    let store = Store::open(&root).unwrap();
+    store.set("test_desktop", &desktop.to_string_lossy()).unwrap();
+    store.set("setup_complete", &true).unwrap();
+    store
+        .set(
+            "config",
+            &Config {
+                collect: true,
+                learning_enabled: false,
+                respect_taskbar_pins: false,
+                ..Config::default()
+            },
+        )
+        .unwrap();
+    let mut excluded = native::read_link(&source).unwrap();
+    assert!(excluded.valid);
+    excluded.policy = Policy::Never;
+    store.put_app(&excluded).unwrap();
+    store.observe(&excluded.id, 1200, true, false).unwrap();
+
+    let before_history = serde_json::to_value(store.days().unwrap()).unwrap();
+    let before = engine::preview(&store, true).unwrap();
+    assert_eq!(reason(&before, &excluded), "Исключено вручную");
+    assert!(!before.selected.contains(&excluded.id));
+
+    // Use the actual catalog scanner and SQLite preview, not a duplicate
+    // ranking model. A temporarily disconnected source must not erase the
+    // user's explicit Never decision or misstate why it was excluded.
+    std::fs::rename(&source, &parked).unwrap();
+    engine::refresh_apps(&store).unwrap();
+    let offline = store.app(&excluded.id).unwrap();
+    assert!(!offline.valid);
+    assert_eq!(offline.policy, Policy::Never);
+    let during = engine::preview(&store, true).unwrap();
+    assert_eq!(reason(&during, &excluded), "Исключено вручную");
+    assert!(!during.selected.contains(&excluded.id));
+    assert!(during.added.is_empty());
+
+    std::fs::rename(&parked, &source).unwrap();
+    engine::refresh_apps(&store).unwrap();
+    let restored = store.app(&excluded.id).unwrap();
+    assert!(restored.valid);
+    assert_eq!(restored.policy, Policy::Never);
+    let after = engine::preview(&store, true).unwrap();
+    assert_eq!(reason(&after, &excluded), "Исключено вручную");
+    assert!(!after.selected.contains(&excluded.id));
+    assert_eq!(
+        serde_json::to_value(store.days().unwrap()).unwrap(),
+        before_history
+    );
+    assert!(store.get::<State>("state").unwrap().owned.is_empty());
+    assert_eq!(std::fs::read(&source).unwrap(), original);
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
