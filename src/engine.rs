@@ -619,6 +619,11 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
                     "The manually protected quick shortcut stays in place until you change its rule or remove it. The original source or target is unavailable: {}",
                     app.source
                 ));
+            } else if !config.automatic && !config.collect {
+                warnings.push(format!(
+                    "Manual mode keeps this existing quick shortcut until you change its rule or reduce available slots. No new copy is created while its original source or target is unavailable: {}",
+                    app.source
+                ));
             } else if scanned_at.saturating_sub(app.unavailable_since) < UNAVAILABLE_GRACE_SECONDS {
                 warnings.push(format!(
                     "The existing quick copy is held for up to 72 hours; new copies are not created. Original source or target is temporarily unavailable: {}",

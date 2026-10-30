@@ -397,10 +397,11 @@ pub(crate) fn select_at(
     let by_id: HashMap<_, _> = apps.iter().map(|a| (a.id.as_str(), a)).collect();
     let scores: HashMap<_, _> = ranking.iter().map(|r| (r.id.as_str(), r)).collect();
     let score = |id: &str| scores.get(id).map_or(0.0, |r| r.score);
-    // Already managed copies tolerate source outages. Auto copies get 72 hours;
-    // a copy the user explicitly protected or moved must not disappear merely
-    // because its unchanged source is unavailable. An identity change is not
-    // treated as a temporary outage, and Never always takes precedence.
+    let manual_only = !cfg.automatic && !cfg.collect;
+    // Already managed copies tolerate source outages. In active observation,
+    // ordinary Auto copies have a 72-hour grace period. In Manual mode, the
+    // user's existing arrangement stays intact through longer absences.
+    // Explicit Never, identity changes and reduced capacity still take priority.
     let retained_offline = |id: &str| {
         by_id.get(id).is_some_and(|a| {
             !a.valid
@@ -408,6 +409,7 @@ pub(crate) fn select_at(
                 && a.unavailable_since > 0
                 && (a.policy == Policy::Always
                     || state.owned.iter().any(|o| o.app == id && o.manual)
+                    || (manual_only && a.policy == Policy::Auto)
                     // A backwards clock correction can place the saved outage
                     // checkpoint in the future. Its age is unknown, not expired.
                     // Keep only existing Auto copies until the next rescan.
@@ -419,7 +421,9 @@ pub(crate) fn select_at(
     let fixed = |id: &str| {
         by_id.get(id).is_some_and(|a| a.policy == Policy::Always)
             || state.owned.iter().any(|o| o.app == id && o.manual)
-            || (!capacity_reduced && retained_offline(id))
+            // In Manual mode an unchanged offline Auto copy remains selected,
+            // but cannot block an explicit new Always choice when space is full.
+            || (!capacity_reduced && !manual_only && retained_offline(id))
     };
     let allowed = |id: &str| {
         scores.get(id).is_some_and(|r| r.eligible)
@@ -428,9 +432,8 @@ pub(crate) fn select_at(
                     .get(id)
                     .is_some_and(|a| a.valid && a.policy != Policy::Never))
     };
-    // Manual-only Apply must not silently revoke a previously managed copy
-    // because an unrelated taskbar pin appeared since the last placement.
-    let manual_only = !cfg.automatic && !cfg.collect;
+    // Manual-only Apply must not silently revoke a managed copy because a
+    // taskbar pin appeared or an unchanged original stayed offline.
     let mut seen = HashSet::new();
     let mut result: Vec<String> = state
         .owned
