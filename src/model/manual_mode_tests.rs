@@ -186,7 +186,9 @@ fn saved_sqlite_preview_keeps_a_taskbar_pinned_copy_in_manual_mode() {
     std::fs::copy(&original, &quick).unwrap();
 
     let store = Store::open(&root).unwrap();
-    store.set("test_desktop", &desktop.to_string_lossy()).unwrap();
+    store
+        .set("test_desktop", &desktop.to_string_lossy())
+        .unwrap();
     let mut saved = native::read_link(&original).unwrap();
     saved.pinned = true;
     store.put_app(&saved).unwrap();
@@ -222,7 +224,13 @@ fn saved_sqlite_preview_keeps_a_taskbar_pinned_copy_in_manual_mode() {
     assert_eq!(explicit.removed, [saved.id.clone()]);
     store.policy(&saved.id, Policy::Auto).unwrap();
     store
-        .set("config", &Config { collect: true, ..cfg })
+        .set(
+            "config",
+            &Config {
+                collect: true,
+                ..cfg
+            },
+        )
         .unwrap();
     let observing = engine::preview(&store, false).unwrap();
     assert_eq!(observing.removed, [saved.id]);
