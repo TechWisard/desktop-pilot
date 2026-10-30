@@ -147,7 +147,7 @@ fn explicit_turn_off_cannot_be_undone_by_an_older_adaptive_settings_draft() {
 
         let source_bytes = std::fs::read(&anchor.source).unwrap();
         let source_app = settings.store.app(&anchor.id).unwrap();
-        let history = settings.store.days().unwrap();
+        let history = serde_json::to_value(settings.store.days().unwrap()).unwrap();
         let original_state: State = settings.store.get("state").unwrap();
         setup::disable_background(&settings.store.home).unwrap();
         assert!(settings.store.get::<bool>("background_disabled").unwrap());
@@ -166,7 +166,10 @@ fn explicit_turn_off_cannot_be_undone_by_an_older_adaptive_settings_draft() {
         assert!(!persisted.automatic && !persisted.collect && !persisted.autostart);
         assert!(settings.store.get::<bool>("background_disabled").unwrap());
         assert_eq!(settings.store.app(&anchor.id).unwrap(), source_app);
-        assert_eq!(settings.store.days().unwrap(), history);
+        assert_eq!(
+            serde_json::to_value(settings.store.days().unwrap()).unwrap(),
+            history
+        );
         assert_eq!(
             settings.store.get::<State>("state").unwrap().owned,
             original_state.owned
