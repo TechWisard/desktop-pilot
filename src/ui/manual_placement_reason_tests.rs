@@ -1,3 +1,15 @@
+fn collect_text(shape: &egui::epaint::Shape, fragments: &mut Vec<String>) {
+    match shape {
+        egui::epaint::Shape::Text(text) => fragments.push(text.galley.text().to_owned()),
+        egui::epaint::Shape::Vec(shapes) => {
+            for shape in shapes {
+                collect_text(shape, fragments);
+            }
+        }
+        _ => {}
+    }
+}
+
 use super::*;
 
 fn details_text(settings: &mut Settings, id: &str) -> String {
@@ -16,18 +28,11 @@ fn details_text(settings: &mut Settings, id: &str) -> String {
             },
             |ctx| settings.app_details(ctx),
         );
-        rendered = output
-            .shapes
-            .iter()
-            .filter_map(|shape| {
-                if let egui::epaint::Shape::Text(text) = &shape.shape {
-                    Some(text.galley.text())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let mut fragments = Vec::new();
+        for shape in &output.shapes {
+            collect_text(&shape.shape, &mut fragments);
+        }
+        rendered = fragments.join("\n");
     }
     rendered
 }
