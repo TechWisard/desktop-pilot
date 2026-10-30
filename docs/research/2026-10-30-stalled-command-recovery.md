@@ -17,3 +17,9 @@ Production-path regressions cover (1) a claimed rescan abandoned after worker ex
 ## Verification and follow-up
 
 The baseline failure-first [Windows run 41028192739](https://github.com/TechWisard/desktop-pilot/actions/runs/41028192739) is reproducible. The correction must pass fresh locked Rust tests, formatting, strict Clippy, locked build, native integrations and publication guards on Windows 2022/2025; a PR must be rechecked before merge. Only a fully verified deliverable may be released, with main/tag/artifact consistency. Physical Windows 11 at 200% DPI, real network-drive disconnections, long-running project changes and measured task-time savings remain separate acceptance work in [issue #22](https://github.com/TechWisard/desktop-pilot/issues/22).
+
+## Additional same-window recovery regression
+
+The original abandoned-row test covered a queue reopened by a different Settings window. An additional production-path sequence now keeps `Settings.pending_commands` for the action queued by **the same** open Settings window when its background worker disappears. A locally remembered pending ID must not keep independently editable settings read-only if there is no live worker; the abandoned SQL row is not silently erased. The independent asynchronous save is then exercised with that ID still in memory, preserving source bytes, manual rules, usage, and Undo. Cleanup remains explicit and serialized with worker startup.
+
+One unrelated timing-sensitive scan-heartbeat check failed in a Windows 2025 PR run while the same head's separate push run passed. A new validation run is required; a single green run does not establish reliability of that timing bound. Do not relax or bypass the existing check. Physical Windows 11 and real UX timing remain unmeasured.
