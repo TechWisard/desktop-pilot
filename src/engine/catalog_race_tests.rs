@@ -308,3 +308,70 @@ fn independent_alias_is_still_allowed_after_a_concurrent_manual_placement() {
         assert!(alias.exists() && offline.exists());
     });
 }
+
+#[test]
+fn same_source_manual_reimport_cannot_lose_newer_metadata_to_stale_scan() {
+    with_profile(|store| {
+        let source = store.home.join("Custom.url");
+        let original_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/Work\r\nIconFile=C:\\Icons\\old.ico\r\n";
+        let new_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/Work\r\nIconFile=C:\\Icons\\new.ico\r\n";
+        std::fs::write(&source, original_bytes).unwrap();
+        let mut app = native::read_link(&source).unwrap();
+        app.policy = Policy::Always;
+        app.note = "Keep this shortcut and position".into();
+        store.put_app(&app).unwrap();
+        store.observe(&app.id, 180, true, false).unwrap();
+        apply(store, true).unwrap();
+
+        let before: State = store.get("state").unwrap();
+        let history = serde_json::to_value(store.days().unwrap()).unwrap();
+        let copy = before.owned[0].clone();
+        let copy_bytes = std::fs::read(&copy.path).unwrap();
+        assert_ne!(app.icon, native::read_link(&source).unwrap().target);
+
+        let changed_source = source.clone();
+        at_commit(move |store| {
+            // The real Settings import replaces the catalog row and advances
+            // catalog_epoch. Reproduce those same durable writes after this
+            // scan read the old original, but before its SQLite commit.
+            std::fs::write(&changed_source, new_bytes).unwrap();
+            let mut imported = native::read_link(&changed_source).unwrap();
+            let saved = store.app(&imported.id).unwrap();
+            imported.policy = saved.policy;
+            imported.note = saved.note;
+            imported.category = saved.category;
+            imported.seed = saved.seed;
+            imported.seed_at = saved.seed_at;
+            imported.pinned = saved.pinned;
+            imported.observed_roots = saved.observed_roots;
+            store
+                .transaction(|| {
+                    store.put_app(&imported)?;
+                    let epoch: u64 = store.get("catalog_epoch")?;
+                    store.set("catalog_epoch", &(epoch + 1))
+                })
+                .unwrap();
+        });
+
+        refresh_apps(store).unwrap();
+        let expected = native::read_link(&source).unwrap();
+        let saved = store.app(&app.id).unwrap();
+        assert_eq!(
+            saved.icon, expected.icon,
+            "an older scan must not revert a newer same-source import"
+        );
+        assert_eq!(saved.icon_index, expected.icon_index);
+        assert_eq!(saved.policy, Policy::Always);
+        assert_eq!(saved.note, app.note);
+        assert_eq!(std::fs::read(&source).unwrap(), new_bytes);
+        assert_eq!(serde_json::to_value(store.days().unwrap()).unwrap(), history);
+        assert_eq!(store.get::<State>("state").unwrap().owned, before.owned);
+        assert_eq!(std::fs::read(&copy.path).unwrap(), copy_bytes);
+
+        refresh_apps(store).unwrap();
+        assert_eq!(store.app(&app.id).unwrap().icon, expected.icon);
+        rollback(store).unwrap();
+        assert!(!Path::new(&copy.path).exists());
+        assert_eq!(std::fs::read(&source).unwrap(), new_bytes);
+    });
+}
