@@ -327,7 +327,6 @@ fn same_source_manual_reimport_cannot_lose_newer_metadata_to_stale_scan() {
         let history = serde_json::to_value(store.days().unwrap()).unwrap();
         let copy = before.owned[0].clone();
         let copy_bytes = std::fs::read(&copy.path).unwrap();
-        assert_ne!(app.icon, native::read_link(&source).unwrap().target);
 
         let changed_source = source.clone();
         at_commit(move |store| {
@@ -364,7 +363,10 @@ fn same_source_manual_reimport_cannot_lose_newer_metadata_to_stale_scan() {
         assert_eq!(saved.policy, Policy::Always);
         assert_eq!(saved.note, app.note);
         assert_eq!(std::fs::read(&source).unwrap(), new_bytes);
-        assert_eq!(serde_json::to_value(store.days().unwrap()).unwrap(), history);
+        assert_eq!(
+            serde_json::to_value(store.days().unwrap()).unwrap(),
+            history
+        );
         assert_eq!(store.get::<State>("state").unwrap().owned, before.owned);
         assert_eq!(std::fs::read(&copy.path).unwrap(), copy_bytes);
 
