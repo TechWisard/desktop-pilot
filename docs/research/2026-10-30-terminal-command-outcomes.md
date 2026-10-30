@@ -16,7 +16,7 @@ The fix changes one UPDATE to `WHERE id=? AND status='running'`. Its affected-ro
 
 ## Reproduction and acceptance
 
-The initial test commit failed Rust formatting on both standard runners and is not counted as behavior evidence. After formatting, [baseline CI 41003946435](https://github.com/TechWisard/desktop-pilot/actions/runs/41003946435) runs the unchanged production implementation with the new regression tests; use its actual logs, not the expected failure alone, to establish the red result.
+The initial test commit failed Rust formatting on both standard runners and is not counted as behavior evidence. After formatting, [baseline CI 41003946435](https://github.com/TechWisard/desktop-pilot/actions/runs/41003946435) executed the unchanged production implementation: **both Windows 2022 and 2025 runners passed 308 existing tests and failed exactly the two new regressions**. The canceled job was incorrectly rewritten as `(done, "A stale scan says the catalog is fresh")`, and an unclaimed pending command was incorrectly rewritten as done. These are observed failure-first Windows test results, not a measured production incident. The final Turn off regression and corrected existing fixture are part of the green candidate.
 
 Required for a candidate: standard Windows 2022/2025 README guard, nine publication guards, `cargo fmt --check`, `cargo test --locked`, strict Clippy, locked build and native fixtures. Independently require main/release checks and matched tag, source, executable and hashes before release is claimed. Any failed preliminary run must not be described as a verified release.
 
