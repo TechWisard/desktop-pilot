@@ -18,7 +18,8 @@ fn cancelled_refresh_is_never_reported_as_success_when_old_worker_replies() {
 
     let mut settings = Settings::new(home.clone()).unwrap();
     let initial_config: Config = settings.store.get("config").unwrap();
-    let initial_state = serde_json::to_value(settings.store.get::<State>("state").unwrap()).unwrap();
+    let initial_state =
+        serde_json::to_value(settings.store.get::<State>("state").unwrap()).unwrap();
     settings.store.command("rescan").unwrap();
     let id = settings.store.db.last_insert_rowid();
     assert!(settings.store.claim_command(id).unwrap());
@@ -33,9 +34,11 @@ fn cancelled_refresh_is_never_reported_as_success_when_old_worker_replies() {
     restarted.recover_commands().unwrap();
     let canceled: (String, String) = restarted
         .db
-        .query_row("SELECT status,message FROM commands WHERE id=?1", [id], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
+        .query_row(
+            "SELECT status,message FROM commands WHERE id=?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
         .unwrap();
     assert_eq!(canceled.0, "error");
     let events = restarted.events().unwrap();
@@ -70,7 +73,10 @@ fn cancelled_refresh_is_never_reported_as_success_when_old_worker_replies() {
     let notice = settings.notice.as_ref().expect("fresh completion feedback");
     assert_eq!(notice.kind, NoticeKind::Success);
     assert_eq!(notice.text, "Verified fresh catalog");
-    assert_eq!(settings.store.get::<Config>("config").unwrap(), initial_config);
+    assert_eq!(
+        settings.store.get::<Config>("config").unwrap(),
+        initial_config
+    );
     assert_eq!(
         serde_json::to_value(settings.store.get::<State>("state").unwrap()).unwrap(),
         initial_state
