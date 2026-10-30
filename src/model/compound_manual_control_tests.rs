@@ -83,7 +83,13 @@ fn manual_taskbar_pin_offline_source_explicit_choice_and_undo_are_consistent() {
     };
     store.set("state", &before).unwrap();
     let ranking = rank(&apps, &[], &config, now());
-    assert!(!ranking.iter().find(|item| item.id == apps[0].id).unwrap().eligible);
+    assert!(
+        !ranking
+            .iter()
+            .find(|item| item.id == apps[0].id)
+            .unwrap()
+            .eligible
+    );
     let planned = engine::preview_loaded(&config, &apps, &[], &before, false, now()).unwrap();
     assert_eq!(planned.selected, [apps[0].id.clone(), apps[2].id.clone()]);
     assert_eq!(planned.added, [apps[2].id.clone()]);
