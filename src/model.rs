@@ -421,7 +421,9 @@ pub(crate) fn select_at(
     let fixed = |id: &str| {
         by_id.get(id).is_some_and(|a| a.policy == Policy::Always)
             || state.owned.iter().any(|o| o.app == id && o.manual)
-            || (!capacity_reduced && retained_offline(id))
+            // In Manual mode an unchanged offline Auto copy remains selected,
+            // but cannot block an explicit new Always choice when space is full.
+            || (!capacity_reduced && !manual_only && retained_offline(id))
     };
     let allowed = |id: &str| {
         scores.get(id).is_some_and(|r| r.eligible)
