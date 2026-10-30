@@ -66,19 +66,29 @@ fn only_claimed_commands_finish_and_terminal_outcomes_are_final() {
         let original = command_state(store, id);
         assert_eq!(original.0, "pending");
 
-        store.finish(id, &Ok("Not actually executed".into())).unwrap();
+        store
+            .finish(id, &Ok("Not actually executed".into()))
+            .unwrap();
         assert_eq!(command_state(store, id), original);
         assert!(store.events().unwrap().is_empty());
 
         assert!(store.claim_command(id).unwrap());
         store.finish(id, &Ok("Applied once".into())).unwrap();
-        assert_eq!(command_state(store, id), ("done".into(), "Applied once".into()));
+        assert_eq!(
+            command_state(store, id),
+            ("done".into(), "Applied once".into())
+        );
         let events = store.events().unwrap();
         assert_eq!(events.len(), 1);
 
-        store.finish(id, &Err(anyhow::anyhow!("Late conflicting answer"))).unwrap();
+        store
+            .finish(id, &Err(anyhow::anyhow!("Late conflicting answer")))
+            .unwrap();
         store.finish(id, &Ok("Duplicate success".into())).unwrap();
-        assert_eq!(command_state(store, id), ("done".into(), "Applied once".into()));
+        assert_eq!(
+            command_state(store, id),
+            ("done".into(), "Applied once".into())
+        );
         assert_eq!(store.events().unwrap(), events);
     });
 }
