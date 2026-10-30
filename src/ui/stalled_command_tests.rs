@@ -14,9 +14,17 @@ fn dead_background_worker_does_not_hold_configuration_hostage_to_old_commands() 
         settings.store.command("rescan").unwrap();
         let id = settings.store.db.last_insert_rowid();
         assert!(settings.store.claim_command(id).unwrap());
+        // Model the actual Settings window that queued this action before
+        // the monitor died, not only an orphaned database row on reopen.
+        settings.pending_commands.push(PendingCommand {
+            id,
+            action: "rescan".into(),
+            submitted: Instant::now(),
+        });
         settings.reload().unwrap();
 
         assert!(!settings.background_alive, "no monitor process was started");
+        assert_eq!(settings.pending_commands.len(), 1);
         assert_eq!(settings.active_commands, 1);
         assert!(
             !settings.busy(),
@@ -45,7 +53,14 @@ fn stalled_queue_does_not_block_a_real_independent_settings_save() {
         settings.store.command("rescan").unwrap();
         let id = settings.store.db.last_insert_rowid();
         assert!(settings.store.claim_command(id).unwrap());
+        settings.pending_commands.push(PendingCommand {
+            id,
+            action: "rescan".into(),
+            submitted: Instant::now(),
+        });
         settings.reload().unwrap();
+        assert!(!settings.background_alive);
+        assert_eq!(settings.pending_commands.len(), 1);
 
         let initial: Config = settings.store.get("config").unwrap();
         settings.config.slots = initial.slots + 1;
