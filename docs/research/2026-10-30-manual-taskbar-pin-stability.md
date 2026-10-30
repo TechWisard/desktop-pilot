@@ -21,3 +21,9 @@ Tests use production ranking/selection and real SQLite preview, not a physical W
 ## UI caveat
 
 The recommendation list can still state that a taskbar-pinned candidate is ineligible for *new* placement while a previously managed copy remains in Manual mode. These are different rules; a physical UI comprehensibility check is still required.
+
+## Recorded red-to-green acceptance
+
+- Failure-first branch fix/manual-mode-retain-pinned-copy-20261030 at commit 3492e2db4dc3d397ecc7e235997e1fe0b5809cd2: [Windows CI 41060484604](https://github.com/TechWisard/desktop-pilot/actions/runs/41060484604) ran actual unchanged production logic. Both Windows 2022 and 2025 completed formatting and all 323 preexisting Rust tests passed; **both new regression tests failed** (an empty Manual selection where the prior managed app should remain). This is direct reproducible behavioral evidence, not a CI formatting or compilation problem.
+- Corrected branch at 0ab3f8c3114321a9e7aef09f8a0f8268666328c1: [Windows CI 41060491809](https://github.com/TechWisard/desktop-pilot/actions/runs/41060491809) **passed on Windows 2022 and 2025**, including locked Rust tests, native fixtures, strict Clippy, locked build, formatting, README and nine publication guards. Both new production-path regressions now pass. Full OS taskbar interaction is still untested.
+- Releasing must use a separately checked final commit that includes version metadata and release notes, and the tag/commit/binary hashes must be independently verified. No claim of measured human time savings.
