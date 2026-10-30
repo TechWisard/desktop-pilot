@@ -1326,3 +1326,6 @@ mod evidence_reason_tests;
 
 #[cfg(test)]
 mod selection_clock_tests;
+
+#[cfg(test)]
+mod compound_manual_control_tests;
