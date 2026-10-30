@@ -662,3 +662,6 @@ mod catalog_rescan_tests;
 
 #[cfg(test)]
 mod open_writer_tests;
+
+#[cfg(test)]
+mod command_completion_tests;
