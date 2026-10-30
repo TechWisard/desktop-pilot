@@ -553,6 +553,36 @@ fn requested_scale(ctx: &egui::Context, current: f32) -> Option<f32> {
         _ => 1.0,
     })
 }
+// A ranking reason describes eligibility for a *new* placement. In Manual
+// mode, an already owned shortcut is intentionally retained under a different
+// rule. Explain both facts together instead of implying that Apply removes it.
+fn details_placement_reason(
+    app: &App,
+    policy: &Policy,
+    ranked: &Ranked,
+    state: &State,
+    saved_config: &Config,
+) -> String {
+    let already_owned = state.owned.iter().any(|owned| owned.app == app.id);
+    if already_owned && !saved_config.automatic && !saved_config.collect {
+        if *policy != Policy::Never && !app.valid && app.unavailable_since > 0 {
+            return t(
+                "Исходный ярлык или цель недоступны. В ручном режиме существующий быстрый ярлык остаётся на месте, но запуск может не работать.",
+                "The source shortcut or target is unavailable. In Manual mode the existing quick shortcut stays in place, but launching may fail.",
+            )
+            .to_owned();
+        }
+        if *policy == Policy::Auto && app.valid && app.pinned && saved_config.respect_taskbar_pins {
+            return t(
+                "Уже размещено: в ручном режиме закрепление на панели задач не удалит этот быстрый ярлык.",
+                "Already on the desktop: in Manual mode, a taskbar pin will not remove this quick shortcut.",
+            )
+            .to_owned();
+        }
+    }
+    i18n::runtime(&ranked.reason)
+}
+
 fn search_text(app: &App) -> String {
     let category_alias = match app.category.as_str() {
         "Manual" => "Добавлено вами Added by you",
@@ -2999,7 +3029,13 @@ impl Settings {
                 "The rule is saved immediately. Review and apply the next shortcut selection on Home.",
             ));
                 if let Some(ranked) = &ranked {
-                    ui.label(i18n::runtime(&ranked.reason));
+                    ui.label(details_placement_reason(
+                        &app,
+                        &policy,
+                        ranked,
+                        &self.state,
+                        &self.saved_config,
+                    ));
                     ui.separator();
                     ui.heading(t("Использование", "Usage"));
                     ui.label(format!(
@@ -5356,3 +5392,6 @@ mod mode_merge_tests;
 
 #[cfg(test)]
 mod stalled_command_tests;
+
+#[cfg(test)]
+mod manual_placement_reason_tests;
