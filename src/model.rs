@@ -322,10 +322,13 @@ pub fn rank(apps: &[App], days: &[Day], cfg: &Config, time: i64) -> Vec<Ranked> 
         }
         let enough = active_days.len() >= cfg.min_days
             || (seed_is_valid && time.saturating_sub(app.seed_at) <= 30 * 86400);
-        let (eligible, reason) = if !app.valid {
-            (false, "Исходный ярлык или цель недоступны")
-        } else if app.policy == Policy::Never {
+        // An explicit Never choice is still the reason a shortcut is excluded
+        // while its original is offline. Don't replace the user's rule with
+        // a transient availability diagnosis in the recommendation list.
+        let (eligible, reason) = if app.policy == Policy::Never {
             (false, "Исключено вручную")
+        } else if !app.valid {
+            (false, "Исходный ярлык или цель недоступны")
         } else if app.policy == Policy::Always {
             (true, "Постоянно: ручной выбор")
         } else if cfg.respect_taskbar_pins && app.pinned {
