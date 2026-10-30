@@ -165,7 +165,7 @@ fn explicit_never_reason_survives_missing_original_and_restoration() {
     let desktop = root.join("Desktop");
     std::fs::create_dir_all(&desktop).unwrap();
     let source = desktop.join("Excluded project.url");
-    let original = b"[InternetShortcut]\\r\\nURL=https://example.invalid/ExcludedProject\\r\\n";
+    let original = b"[InternetShortcut]\r\nURL=https://example.invalid/ExcludedProject\r\n";
     std::fs::write(&source, original).unwrap();
     let parked = root.join("Source temporarily unavailable");
     let _com = native::Com::new().unwrap();
