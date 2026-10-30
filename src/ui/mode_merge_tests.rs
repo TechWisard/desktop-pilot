@@ -130,10 +130,10 @@ fn a_collection_pause_and_a_concurrent_mode_change_cannot_invent_manual_mode() {
 }
 
 #[test]
-fn explicit_turn_off_cannot_be_undone_by_an_older_adaptive_settings_draft() {
+fn explicit_turn_off_cannot_be_misreported_as_a_successful_observe_save() {
     with_profile(|settings, anchor| {
         let base = Config {
-            automatic: false,
+            automatic: true,
             collect: true,
             learning_enabled: true,
             slots: 3,
@@ -141,7 +141,7 @@ fn explicit_turn_off_cannot_be_undone_by_an_older_adaptive_settings_draft() {
         };
         settings.store.set("config", &base).unwrap();
         let mut editor = Settings::new(settings.store.home.clone()).unwrap();
-        apply_mode(&mut editor.config, OperatingMode::Adaptive);
+        apply_mode(&mut editor.config, OperatingMode::Observe);
         editor.refresh_dirty();
         assert!(editor.dirty);
 
@@ -160,7 +160,7 @@ fn explicit_turn_off_cannot_be_undone_by_an_older_adaptive_settings_draft() {
             .expect("conflicting save completion");
         assert!(
             outcome.is_err(),
-            "explicit Turn off must not be replaced by a stale mode"
+            "Turn off cannot silently satisfy an out-of-date Observe choice"
         );
         let persisted: Config = settings.store.get("config").unwrap();
         assert!(!persisted.automatic && !persisted.collect && !persisted.autostart);
