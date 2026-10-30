@@ -92,3 +92,29 @@ fn only_claimed_commands_finish_and_terminal_outcomes_are_final() {
         assert_eq!(store.events().unwrap(), events);
     });
 }
+
+#[test]
+fn turning_off_background_preserves_cancellation_against_late_completion() {
+    with_profile(|store| {
+        store.command("rescan").unwrap();
+        let id = store.db.last_insert_rowid();
+        assert!(store.claim_command(id).unwrap());
+
+        // Exercise the actual settings-side Turn off transaction rather than
+        // replacing the command state directly in a test model.
+        let disabled = crate::setup::disable_background(&store.home).unwrap();
+        assert!(!disabled.collect);
+        let canceled = command_state(store, id);
+        assert_eq!(canceled.0, "error");
+        assert!(canceled.1.contains("background work was disabled"));
+        let events = store.events().unwrap();
+
+        store
+            .finish(id, &Ok("Outdated success after Turn off".into()))
+            .unwrap();
+        assert_eq!(command_state(store, id), canceled);
+        assert_eq!(store.events().unwrap(), events);
+        assert!(store.get::<bool>("background_disabled").unwrap());
+        assert!(store.get::<bool>("shutdown").unwrap());
+    });
+}

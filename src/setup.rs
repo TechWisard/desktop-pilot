@@ -818,6 +818,8 @@ mod tests {
         store.command("rescan").unwrap();
         let commands = store.pending().unwrap();
         assert!(store.claim_command(commands[1].0).unwrap());
+        // A real worker must claim work before publishing a terminal result.
+        assert!(store.claim_command(commands[2].0).unwrap());
         store
             .finish(commands[2].0, &Ok("Completed earlier".into()))
             .unwrap();
