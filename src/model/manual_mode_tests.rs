@@ -399,7 +399,7 @@ fn saved_sqlite_preview_keeps_unmodified_copy_during_ten_day_outage_in_manual_mo
     assert!(!warning.contains("72 hours"));
 
     let plan = engine::preview(&store, false).unwrap();
-    assert_eq!(plan.selected, [saved.id.clone()]);
+    assert_eq!(plan.selected.as_slice(), std::slice::from_ref(&saved.id));
     assert!(plan.added.is_empty() && plan.removed.is_empty());
     assert_eq!(std::fs::read(&quick).unwrap(), bytes);
     assert_eq!(std::fs::read(&parked).unwrap(), bytes);
@@ -410,8 +410,8 @@ fn saved_sqlite_preview_keeps_unmodified_copy_during_ten_day_outage_in_manual_mo
 
     store.policy(&saved.id, Policy::Never).unwrap();
     assert_eq!(
-        engine::preview(&store, false).unwrap().removed,
-        [saved.id.clone()]
+        engine::preview(&store, false).unwrap().removed.as_slice(),
+        std::slice::from_ref(&saved.id)
     );
     store.policy(&saved.id, Policy::Auto).unwrap();
     std::fs::rename(&parked, &original).unwrap();
