@@ -107,17 +107,23 @@ fn real_settings_save_rejects_competing_mode_without_touching_profile_or_undo() 
     });
 }
 
-
 #[test]
 fn a_collection_pause_and_a_concurrent_mode_change_cannot_invent_manual_mode() {
-    let base = Config { automatic: true, collect: true, ..Config::default() };
+    let base = Config {
+        automatic: true,
+        collect: true,
+        ..Config::default()
+    };
     let mut paused = base.clone();
     paused.collect = false;
     let mut observing = base.clone();
     observing.automatic = false;
     assert!(merge_config(&base, &paused, &observing).is_err());
     assert!(merge_config(&base, &observing, &paused).is_err());
-    let unrelated = Config { slots: 6, ..base.clone() };
+    let unrelated = Config {
+        slots: 6,
+        ..base.clone()
+    };
     let merged = merge_config(&base, &unrelated, &paused).unwrap();
     assert!(merged.automatic && !merged.collect);
     assert_eq!(merged.slots, 6);
@@ -127,8 +133,11 @@ fn a_collection_pause_and_a_concurrent_mode_change_cannot_invent_manual_mode() {
 fn explicit_turn_off_cannot_be_undone_by_an_older_adaptive_settings_draft() {
     with_profile(|settings, anchor| {
         let base = Config {
-            automatic: false, collect: true, learning_enabled: true,
-            slots: 3, ..Config::default()
+            automatic: false,
+            collect: true,
+            learning_enabled: true,
+            slots: 3,
+            ..Config::default()
         };
         settings.store.set("config", &base).unwrap();
         let mut editor = Settings::new(settings.store.home.clone()).unwrap();
@@ -145,15 +154,23 @@ fn explicit_turn_off_cannot_be_undone_by_an_older_adaptive_settings_draft() {
 
         editor.save();
         let job = editor.job.take().expect("asynchronous Settings save");
-        let outcome = job.receiver.recv_timeout(Duration::from_secs(15))
+        let outcome = job
+            .receiver
+            .recv_timeout(Duration::from_secs(15))
             .expect("conflicting save completion");
-        assert!(outcome.is_err(), "explicit Turn off must not be replaced by a stale mode");
+        assert!(
+            outcome.is_err(),
+            "explicit Turn off must not be replaced by a stale mode"
+        );
         let persisted: Config = settings.store.get("config").unwrap();
         assert!(!persisted.automatic && !persisted.collect && !persisted.autostart);
         assert!(settings.store.get::<bool>("background_disabled").unwrap());
         assert_eq!(settings.store.app(&anchor.id).unwrap(), source_app);
         assert_eq!(settings.store.days().unwrap(), history);
-        assert_eq!(settings.store.get::<State>("state").unwrap().owned, original_state.owned);
+        assert_eq!(
+            settings.store.get::<State>("state").unwrap().owned,
+            original_state.owned
+        );
         assert_eq!(std::fs::read(&anchor.source).unwrap(), source_bytes);
     });
 }
