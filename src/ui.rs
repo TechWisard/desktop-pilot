@@ -5298,3 +5298,6 @@ mod terminal_command_feedback_tests;
 
 #[cfg(test)]
 mod mode_merge_tests;
+
+#[cfg(test)]
+mod stalled_command_tests;
