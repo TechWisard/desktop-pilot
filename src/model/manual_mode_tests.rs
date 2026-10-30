@@ -240,7 +240,6 @@ fn saved_sqlite_preview_keeps_a_taskbar_pinned_copy_in_manual_mode() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-
 #[test]
 fn manual_only_preserves_owned_auto_copy_after_a_long_source_outage() {
     use crate::engine;
@@ -256,7 +255,10 @@ fn manual_only_preserves_owned_auto_copy_after_a_long_source_outage() {
         ..Default::default()
     };
     let current = State {
-        owned: vec![owned("offline-project", false), owned("available-project", false)],
+        owned: vec![
+            owned("offline-project", false),
+            owned("available-project", false),
+        ],
         initialized: true,
         ..Default::default()
     };
@@ -269,16 +271,14 @@ fn manual_only_preserves_owned_auto_copy_after_a_long_source_outage() {
         collect: true,
         ..config.clone()
     };
-    let observe_plan =
-        engine::preview_loaded(&observing, &apps, &[], &current, false, at).unwrap();
+    let observe_plan = engine::preview_loaded(&observing, &apps, &[], &current, false, at).unwrap();
     assert_eq!(observe_plan.removed, ["offline-project"]);
 
     // A deliberate Never choice, a changed original identity, and an explicit
     // reduction in capacity must continue to take precedence in Manual mode.
     unavailable.policy = Policy::Never;
     let excluded = vec![unavailable.clone(), available.clone()];
-    let never_plan =
-        engine::preview_loaded(&config, &excluded, &[], &current, false, at).unwrap();
+    let never_plan = engine::preview_loaded(&config, &excluded, &[], &current, false, at).unwrap();
     assert_eq!(never_plan.removed, ["offline-project"]);
 
     unavailable.policy = Policy::Auto;
@@ -289,10 +289,7 @@ fn manual_only_preserves_owned_auto_copy_after_a_long_source_outage() {
     assert_eq!(identity_plan.removed, ["offline-project"]);
 
     unavailable.unavailable_since = at - 10 * 86_400;
-    let reduced = Config {
-        slots: 1,
-        ..config
-    };
+    let reduced = Config { slots: 1, ..config };
     let capacity_plan = engine::preview_loaded(
         &reduced,
         &[unavailable, available],
@@ -377,7 +374,10 @@ fn saved_sqlite_preview_keeps_unmodified_copy_during_ten_day_outage_in_manual_mo
     assert_eq!(store.get::<State>("state").unwrap().owned, state.owned);
 
     store.policy(&saved.id, Policy::Never).unwrap();
-    assert_eq!(engine::preview(&store, false).unwrap().removed, [saved.id.clone()]);
+    assert_eq!(
+        engine::preview(&store, false).unwrap().removed,
+        [saved.id.clone()]
+    );
     store.policy(&saved.id, Policy::Auto).unwrap();
     std::fs::rename(&parked, &original).unwrap();
     engine::refresh_apps(&store).unwrap();
