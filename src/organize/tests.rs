@@ -295,7 +295,12 @@ fn undo_conflict_preserves_both_objects_and_can_be_retried() {
     assert!(undo(&f.store, &id).is_err());
     assert_eq!(disk::read(&a.source).unwrap(), b"new user file");
     assert!(Path::new(&destination).is_file());
-    assert!(status(&f.store).unwrap().pending);
+    // A known foreign collision is detected before a recovery barrier or any
+    // partial move. The original operation stays available for a safe retry.
+    assert!(!status(&f.store).unwrap().pending);
+    assert_eq!(load(&f.store, &id).unwrap().phase, Phase::Committed);
+    assert_eq!(status(&f.store).unwrap().undo.as_deref(), Some(id.as_str()));
+    assert!(!f.desktop.join("Beta.url").exists());
     disk::rename(&a.source, f.desktop.join("new-user-file.txt")).unwrap();
     undo(&f.store, &id).unwrap();
     assert_eq!(
