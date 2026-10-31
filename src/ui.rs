@@ -1557,7 +1557,13 @@ impl Settings {
                         Ok(JobResult::OrganizationReset) => {
                             self.organization_plan = None;
                             self.organization_reset_confirm = false;
-                            self.inform(t("Исключения сброшены. Следующий анализ будет новым.", "Exclusions reset. The next analysis will start fresh."), NoticeKind::Info);
+                            self.inform(
+                                t(
+                                    "Исключения сброшены. Следующий анализ будет новым.",
+                                    "Exclusions reset. The next analysis will start fresh.",
+                                ),
+                                NoticeKind::Info,
+                            );
                         }
                         Ok(JobResult::OrganizationAccepted(warning)) => {
                             self.organization_plan = None;
