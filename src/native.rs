@@ -1494,15 +1494,16 @@ mod tests {
         std::fs::create_dir_all(&directory).unwrap();
         let broken = directory.join("Malformed port.url");
         let working = directory.join("Working.url");
-        let broken_bytes =
-            b"[InternetShortcut]\r\nURL=https://example.invalid:word/project\r\n";
-        let working_bytes =
-            b"[InternetShortcut]\r\nURL=https://example.invalid:8443/project\r\n";
+        let broken_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid:word/project\r\n";
+        let working_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid:8443/project\r\n";
         std::fs::write(&broken, broken_bytes).unwrap();
         std::fs::write(&working, working_bytes).unwrap();
         let mut broken_app = read_link(&broken).unwrap();
         let mut working_app = read_link(&working).unwrap();
-        assert!(!broken_app.valid, "a nonnumeric HTTP port is not launchable");
+        assert!(
+            !broken_app.valid,
+            "a nonnumeric HTTP port is not launchable"
+        );
         assert!(working_app.valid);
         let now = crate::model::now();
         broken_app.seed = 500.0;
@@ -1525,7 +1526,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(preview.selected, [working_app.id]);
-        assert!(!preview.ranking.iter().find(|r| r.id == broken_app.id).unwrap().eligible);
+        assert!(
+            !preview
+                .ranking
+                .iter()
+                .find(|r| r.id == broken_app.id)
+                .unwrap()
+                .eligible
+        );
         assert_eq!(std::fs::read(&broken).unwrap(), broken_bytes);
         assert_eq!(std::fs::read(&working).unwrap(), working_bytes);
         std::fs::remove_dir_all(directory).unwrap();
@@ -1541,7 +1549,10 @@ mod tests {
             "https://[::1]:99999/",
         ] {
             assert!(
-                !valid_target(&App { target: target.into(), ..Default::default() }),
+                !valid_target(&App {
+                    target: target.into(),
+                    ..Default::default()
+                }),
                 "{target}"
             );
         }
@@ -1554,7 +1565,10 @@ mod tests {
             "https://example.invalid:/existing-shortcut",
         ] {
             assert!(
-                valid_target(&App { target: target.into(), ..Default::default() }),
+                valid_target(&App {
+                    target: target.into(),
+                    ..Default::default()
+                }),
                 "{target}"
             );
         }
