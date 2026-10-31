@@ -139,6 +139,94 @@ fn with_profile(test: impl FnOnce(&Store, &App, &std::path::Path)) {
 }
 
 #[test]
+fn duplicated_legacy_ownership_does_not_evict_an_offline_shortcut_during_grace() {
+    with_profile(|store, _initial, desktop| {
+        let now = now();
+        let mut cfg: Config = store.get("config").unwrap();
+        cfg.automatic = true;
+        cfg.collect = true;
+        cfg.slots = 2;
+        cfg.max_changes = 1;
+        store.set("config", &cfg).unwrap();
+
+        let make = |name: &str| {
+            let source = store.home.join(format!("{name}.url"));
+            std::fs::write(
+                &source,
+                format!("[InternetShortcut]\r\nURL=https://example.invalid/{name}\r\n"),
+            )
+            .unwrap();
+            let shortcut = crate::native::read_link(&source).unwrap();
+            (source, shortcut)
+        };
+        let (missing_source, mut offline) = make("TemporarilyOffline");
+        let (_rare_source, mut rare) = make("RareManual");
+        let (_new_source, mut newcomer) = make("NewProject");
+        rare.policy = Policy::Always;
+        newcomer.seed = 200.0;
+        newcomer.seed_at = now;
+        let offline_copy = desktop.join("TemporarilyOffline.url");
+        let rare_copy = desktop.join("RareManual.url");
+        std::fs::copy(&missing_source, &offline_copy).unwrap();
+        std::fs::copy(&rare.source, &rare_copy).unwrap();
+        let original_copy = std::fs::read(&offline_copy).unwrap();
+        let rare_bytes = std::fs::read(&rare_copy).unwrap();
+        std::fs::remove_file(&missing_source).unwrap();
+        offline.valid = false;
+        offline.unavailable_since = now - 3600;
+        for app in [&offline, &rare, &newcomer] {
+            store.put_app(app).unwrap();
+        }
+        let own = |app: &App, path: &std::path::Path| Owned {
+            app: app.id.clone(),
+            path: path.to_string_lossy().into_owned(),
+            sha: hash(&std::fs::read(path).unwrap()),
+            position: Point::default(),
+            manual: false,
+            since: now - 86400,
+            file_id: None,
+        };
+        let offline_owned = own(&offline, &offline_copy);
+        let state = State {
+            // Old SQLite profiles may contain duplicate ownership records for
+            // the same logical shortcut. Only two distinct desktop copies exist.
+            owned: vec![offline_owned.clone(), offline_owned, own(&rare, &rare_copy)],
+            initialized: true,
+            ..Default::default()
+        };
+        store.set("state", &state).unwrap();
+
+        for _ in 0..3 {
+            let preview = engine::preview(store, false).unwrap();
+            assert_eq!(preview.selected, [offline.id.clone(), rare.id.clone()]);
+            assert!(preview.added.is_empty());
+            assert!(preview.removed.is_empty());
+        }
+        assert_eq!(std::fs::read(&offline_copy).unwrap(), original_copy);
+        assert_eq!(std::fs::read(&rare_copy).unwrap(), rare_bytes);
+        assert!(!missing_source.exists());
+
+        // A genuinely reduced capacity still releases the unprotected offline
+        // Auto copy, without overruling a user's explicit Always choice.
+        cfg.slots = 1;
+        store.set("config", &cfg).unwrap();
+        let reduced = engine::preview(store, false).unwrap();
+        assert_eq!(reduced.selected, [rare.id.clone()]);
+        assert!(!reduced.selected.contains(&offline.id));
+
+        // Restoring capacity does not override a later explicit exclusion.
+        cfg.slots = 2;
+        store.set("config", &cfg).unwrap();
+        store.policy(&offline.id, Policy::Never).unwrap();
+        let excluded = engine::preview(store, false).unwrap();
+        assert!(!excluded.selected.contains(&offline.id));
+        assert!(excluded.selected.contains(&rare.id));
+        assert_eq!(std::fs::read(&offline_copy).unwrap(), original_copy);
+        assert_eq!(std::fs::read(&rare_copy).unwrap(), rare_bytes);
+    });
+}
+
+#[test]
 fn actual_store_preview_apply_and_undo_wait_for_repeated_demand() {
     with_profile(|store, app, desktop| {
         // Observe mode permits an explicit Apply of usage-driven suggestions.
