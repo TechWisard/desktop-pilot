@@ -1,3 +1,5 @@
+mod organization;
+
 use crate::{
     engine,
     i18n::{self, text as t},
@@ -171,6 +173,9 @@ enum JobResult {
     Prepared,
     Added(ImportResult),
     Disabled(Config),
+    OrganizationPlan(crate::organize::Plan),
+    OrganizationChanged(crate::organize::Outcome, Option<String>),
+    OrganizationAccepted(Option<String>),
 }
 struct Job {
     label: &'static str,
@@ -239,6 +244,11 @@ pub struct Settings {
     confirm_setup_close: bool,
     confirm_disable: bool,
     import_open: bool,
+    organization_open: bool,
+    organization_plan: Option<crate::organize::Plan>,
+    organization_files: bool,
+    organization_query: String,
+    organization_accept_confirm: bool,
     import_paths: String,
     import_error: String,
     focus_import: bool,
@@ -876,6 +886,11 @@ impl Settings {
             confirm_setup_close: false,
             confirm_disable: false,
             import_open: false,
+            organization_open: false,
+            organization_plan: None,
+            organization_files: false,
+            organization_query: String::new(),
+            organization_accept_confirm: false,
             import_paths: String::new(),
             import_error: String::new(),
             focus_import: false,
@@ -927,6 +942,7 @@ impl Settings {
             || self.confirm_setup_close
             || self.confirm_disable
             || self.import_open
+            || self.organization_open
             || self.notice_details
             || self.details_app.is_some()
     }
@@ -1506,6 +1522,25 @@ impl Settings {
                                 }
                             }
                         }
+                        Ok(JobResult::OrganizationPlan(plan)) => {
+                            self.organization_plan = Some(plan);
+                            self.inform(t("План готов. Проверьте объекты перед применением.", "Plan ready. Review the objects before applying."), NoticeKind::Info);
+                        }
+                        Ok(JobResult::OrganizationChanged(outcome, warning)) => {
+                            self.organization_plan = None;
+                            self.organization_accept_confirm = false;
+                            self.refresh_layout(self.onboarding);
+                            let mut message = format!("{}: {} · {}: {}", t("Перемещено", "Moved"), outcome.moved, t("Восстановлено", "Restored"), outcome.restored);
+                            for warning in outcome.warnings { message.push_str(&format!("\n{warning}")); }
+                            if let Some(warning) = warning { message.push_str(&format!("\n{warning}")); }
+                            self.inform(message, NoticeKind::Success);
+                        }
+                        Ok(JobResult::OrganizationAccepted(warning)) => {
+                            self.organization_plan = None;
+                            self.organization_accept_confirm = false;
+                            self.refresh_layout(self.onboarding);
+                            self.inform(warning.unwrap_or_else(|| t("Текущее расположение принято; журнал сохранён.", "Current locations accepted; journal retained.").to_owned()), NoticeKind::Info);
+                        }
                         Err(e) => {
                             self.close_after_save = false;
                             self.pending_policy = None;
@@ -1905,6 +1940,9 @@ impl Settings {
         ));
     }
     fn zone(&mut self, ui: &mut egui::Ui) {
+        if primary(ui, !self.busy(), t("Навести порядок и освободить место", "Organize desktop and free space")).clicked() {
+            self.organization_open = true;
+        }
         ui.label(t(
             "Выберите место прямо на схеме или поручите подбор программе.",
             "Choose a place on the layout, or let the app find one.",
@@ -2324,6 +2362,9 @@ impl Settings {
     }
     fn overview(&mut self, ui: &mut egui::Ui) {
         ui.heading(RichText::new(t("Ваш рабочий стол", "Your desktop")).size(28.0));
+        if primary(ui, !self.busy(), t("Навести порядок на рабочем столе", "Organize desktop")).clicked() {
+            self.organization_open = true;
+        }
         if ui.available_width() >= 700.0 {
             ui.label(t(
                 "Нужные приложения рядом. Привычный порядок сохранён.",
@@ -4043,6 +4084,9 @@ impl Settings {
         }
         if self.import_open {
             self.import_dialog(ctx);
+        }
+        if self.organization_open {
+            self.organization_dialog(ctx);
         }
     }
     fn screenshots(&mut self, ctx: &egui::Context) {
