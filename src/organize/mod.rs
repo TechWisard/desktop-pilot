@@ -6,9 +6,12 @@ mod plan;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
 pub use journal::{accept_current, apply, undo};
 pub(crate) use journal::{accept_current_stopped, apply_stopped, undo_stopped};
-pub use plan::{analyze, find_free_zone};
+pub use plan::analyze;
+#[cfg(test)]
+pub use plan::find_free_zone;
 
 use crate::{
     model::{Config, Point, Policy, State, norm},
