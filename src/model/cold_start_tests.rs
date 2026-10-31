@@ -645,7 +645,6 @@ fn paused_collection_must_not_apply_stale_adaptive_recommendations() {
     });
 }
 
-
 #[test]
 fn a_recent_clock_rewind_must_not_evict_a_familiar_shortcut() {
     with_profile(|store, incumbent, desktop| {
