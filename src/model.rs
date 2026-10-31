@@ -442,7 +442,15 @@ pub(crate) fn select_at(
                     || at.saturating_sub(a.unavailable_since) < UNAVAILABLE_GRACE_SECONDS)
         })
     };
-    let capacity_reduced = state.owned.len() > cfg.slots;
+    // Legacy profiles may contain repeated ownership rows for one logical
+    // shortcut. These are not additional quick slots: deduplicating below
+    // must not accidentally disable the outage grace of an existing copy.
+    let distinct_owned = state
+        .owned
+        .iter()
+        .map(|owned| owned.app.as_str())
+        .collect::<HashSet<_>>();
+    let capacity_reduced = distinct_owned.len() > cfg.slots;
     let fixed = |id: &str| {
         by_id.get(id).is_some_and(|a| a.policy == Policy::Always)
             || state.owned.iter().any(|o| o.app == id && o.manual)
