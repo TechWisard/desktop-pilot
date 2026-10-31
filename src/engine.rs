@@ -2090,14 +2090,25 @@ fn retry_locked_usage(mut write: impl FnMut() -> Result<()>) -> Result<()> {
     }
     unreachable!("the last attempt always returns")
 }
-fn record_usage(
+// Make a committed observation pause authoritative at the SQLite write boundary.
+// Checking only the hook/poll snapshot can persist a stale in-flight sample.
+fn collection_permission(store: &Store) -> Result<Option<Config>> {
+    if store.get::<bool>("shutdown")? || store.get::<bool>("background_disabled")? {
+        return Ok(None);
+    }
+    let config: Config = store.get("config")?;
+    Ok(config.collect.then_some(config))
+}
+
+fn record_usage_inner(
     store: &Store,
     session_times: &mut HashMap<String, i64>,
     id: &str,
     seconds: u32,
     first: bool,
     time: i64,
-) -> Result<()> {
+    require_collection: bool,
+) -> Result<bool> {
     let session = first
         && session_times.get(id).is_none_or(|last| {
             // A clearly future checkpoint can result from correcting the
@@ -2108,6 +2119,11 @@ fn record_usage(
     // Stage the in-memory session state until both usage and the checkpoint
     // have committed. A storage error must not advance only one of the two.
     let next_times = store.transaction(|| {
+        // The writer lock serializes this check with an acknowledged Settings
+        // pause: a queued foreground sample cannot cross the permission boundary.
+        if require_collection && collection_permission(store)?.is_none() {
+            return Ok(None);
+        }
         store.observe(id, seconds, session, false)?;
         // Measure the gap from the last confirmed activity, not the beginning
         // of a possibly hours-long session. Persist it with the usage counters
@@ -2118,11 +2134,53 @@ fn record_usage(
         // after a forward clock correction. Retention belongs to the guarded
         // SQLite housekeeping path, not to the foreground usage writer.
         store.set("app_session_times", &updated)?;
-        Ok(updated)
+        Ok(Some(updated))
     })?;
-    *session_times = next_times;
-    Ok(())
+    if let Some(next_times) = next_times {
+        *session_times = next_times;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
+
+// Existing low-level session/retention tests intentionally exercise the
+// transaction writer without starting the full background monitor.
+#[cfg(test)]
+fn record_usage(
+    store: &Store,
+    session_times: &mut HashMap<String, i64>,
+    id: &str,
+    seconds: u32,
+    first: bool,
+    time: i64,
+) -> Result<()> {
+    record_usage_inner(store, session_times, id, seconds, first, time, false).map(|_| ())
+}
+
+fn record_learning_if_permitted(store: &Store, seconds: u32) -> Result<bool> {
+    store.transaction(|| {
+        let Some(config) = collection_permission(store)? else {
+            return Ok(false);
+        };
+        if !config.learning_enabled {
+            return Ok(false);
+        }
+        let mut progress: Progress = store.get("learning")?;
+        if progress.completed_at != 0 {
+            return Ok(false);
+        }
+        progress.observe(
+            now(),
+            &chrono::Local::now().date_naive().to_string(),
+            seconds,
+        );
+        progress.finish_if_ready(&config, now());
+        store.set("learning", &progress)?;
+        Ok(true)
+    })
+}
+
 fn housekeeping_sessions(store: &Store, sessions: &mut HashMap<String, i64>) -> Result<()> {
     store.housekeeping()?;
     // The worker must discard any entries expired by the authoritative cleanup,
@@ -2502,26 +2560,18 @@ pub fn monitor(home: PathBuf) -> Result<()> {
             let seconds = learning_fraction.floor() as u32;
             if seconds > 0 {
                 learning_fraction -= f64::from(seconds);
-                store.transaction(|| {
-                    let mut progress: Progress = store.get("learning")?;
-                    if progress.completed_at == 0 {
-                        progress.observe(
-                            now(),
-                            &chrono::Local::now().date_naive().to_string(),
-                            seconds.min(4),
-                        );
-                        progress.finish_if_ready(&config, now());
-                        store.set("learning", &progress)?;
-                    }
-                    Ok(())
-                })?;
+                if !record_learning_if_permitted(&store, seconds.min(4))? {
+                    // Do not carry a stale fractional sample across a pause.
+                    learning_fraction = 0.0;
+                }
             }
         } else {
             learning_fraction = 0.0;
         }
         if let Some((id, seconds, first)) = usage.sample(active_id.as_deref(), elapsed) {
             retry_locked_usage(|| {
-                record_usage(&store, &mut session_times, &id, seconds, first, now())
+                record_usage_inner(&store, &mut session_times, &id, seconds, first, now(), true)
+                    .map(|_| ())
             })?;
         }
         let _ = publish_heartbeat_if_due(&store, &mut last_heartbeat, Instant::now(), false)?;
@@ -2910,6 +2960,78 @@ mod tests {
             );
         });
     }
+    #[test]
+    fn paused_collection_rejects_in_flight_usage_and_learning_writes() {
+        with_store(|store| {
+            let app = add_test_app(store, "Tracked sample", "steam://rungameid/9781");
+            let source_bytes = std::fs::read(&app.source).unwrap();
+            let settings = Store::open(&store.home).unwrap();
+            let mut config: Config = store.get("config").unwrap();
+            config.collect = true;
+            config.learning_enabled = true;
+            settings.set("config", &config).unwrap();
+
+            let mut times = HashMap::new();
+            let at = now();
+            assert!(record_usage_inner(store, &mut times, &app.id, 30, true, at, true).unwrap());
+            assert!(record_learning_if_permitted(store, 30).unwrap());
+            let before_days = serde_json::to_value(store.days().unwrap()).unwrap();
+            let before_times: HashMap<String, i64> = store.get("app_session_times").unwrap();
+            let before_learning =
+                serde_json::to_value(store.get::<Progress>("learning").unwrap()).unwrap();
+
+            // The foreground sampler still holds a pre-pause observation.
+            // Settings commits the user's pause through another real connection.
+            config.collect = false;
+            settings.set("config", &config).unwrap();
+            assert!(
+                !record_usage_inner(store, &mut times, &app.id, 600, true, at + 1800, true)
+                    .unwrap()
+            );
+            assert!(!record_learning_if_permitted(store, 600).unwrap());
+            assert_eq!(
+                serde_json::to_value(store.days().unwrap()).unwrap(),
+                before_days
+            );
+            assert_eq!(
+                store
+                    .get::<HashMap<String, i64>>("app_session_times")
+                    .unwrap(),
+                before_times
+            );
+            assert_eq!(times, before_times);
+            assert_eq!(
+                serde_json::to_value(store.get::<Progress>("learning").unwrap()).unwrap(),
+                before_learning
+            );
+
+            // A separately committed Turn off also blocks a stale sample,
+            // even if the saved mode still says collection is enabled.
+            config.collect = true;
+            settings.set("config", &config).unwrap();
+            settings.set("background_disabled", &true).unwrap();
+            assert!(
+                !record_usage_inner(store, &mut times, &app.id, 600, true, at + 2000, true)
+                    .unwrap()
+            );
+            assert!(!record_learning_if_permitted(store, 600).unwrap());
+            assert_eq!(
+                serde_json::to_value(store.days().unwrap()).unwrap(),
+                before_days
+            );
+            settings.set("background_disabled", &false).unwrap();
+
+            // Resuming with fresh permission must still record real activity.
+            assert!(
+                record_usage_inner(store, &mut times, &app.id, 30, true, at + 2400, true).unwrap()
+            );
+            assert!(record_learning_if_permitted(store, 30).unwrap());
+            assert_eq!(store.days().unwrap()[0].sessions, 2);
+            assert_eq!(std::fs::read(&app.source).unwrap(), source_bytes);
+            assert!(store.get::<State>("state").unwrap().owned.is_empty());
+        });
+    }
+
     #[test]
     fn brief_switches_after_long_use_and_restart_do_not_create_new_sessions() {
         with_store(|store| {
