@@ -226,10 +226,9 @@ pub(super) fn rename_file(
             10,
         );
         if status < 0 {
-            return Err(std::io::Error::from_raw_os_error(
-                RtlNtStatusToDosError(status) as i32,
-            )
-            .into());
+            return Err(
+                std::io::Error::from_raw_os_error(RtlNtStatusToDosError(status) as i32).into(),
+            );
         }
     }
     ensure!(
@@ -293,19 +292,36 @@ mod rename_tests {
         std::fs::create_dir_all(home.join("Dest")).unwrap();
         let first = home.join("first.url");
         let second = home.join("second.url");
-        std::fs::write(&first, b"[InternetShortcut]\\r\\nURL=https://example.invalid/one\\r\\n")
-            .unwrap();
-        std::fs::write(&second, b"[InternetShortcut]\\r\\nURL=https://example.invalid/two\\r\\n")
-            .unwrap();
+        std::fs::write(
+            &first,
+            b"[InternetShortcut]\r\nURL=https://example.invalid/one\r\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &second,
+            b"[InternetShortcut]\r\nURL=https://example.invalid/two\r\n",
+        )
+        .unwrap();
         let original = inspect(&first, true).unwrap();
         let second_original = std::fs::read(&second).unwrap();
         let target = directory(&home.join("Dest")).unwrap();
         rename_file(&first, &target, "renamed.url", &original, true).unwrap();
         assert!(absent(&first).unwrap());
-        assert_eq!(inspect(&home.join("Dest/renamed.url"), true).unwrap(), original);
+        assert_eq!(
+            inspect(&home.join("Dest/renamed.url"), true).unwrap(),
+            original
+        );
         assert_eq!(std::fs::read(&second).unwrap(), second_original);
-        assert!(rename_file(&second, &target, "renamed.url", &inspect(&second, true).unwrap(), true)
-            .is_err());
+        assert!(
+            rename_file(
+                &second,
+                &target,
+                "renamed.url",
+                &inspect(&second, true).unwrap(),
+                true
+            )
+            .is_err()
+        );
         assert_eq!(std::fs::read(&second).unwrap(), second_original);
         rename_file(
             &home.join("Dest/renamed.url"),

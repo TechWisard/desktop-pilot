@@ -270,7 +270,10 @@ fn reopened_profile_recovers_a_rename_and_blocks_stale_catalog_writers() {
     assert!(
         reopened
             .db
-            .execute("INSERT INTO transactions VALUES('blocked',1,'prepared','{}')", [])
+            .execute(
+                "INSERT INTO transactions VALUES('blocked',1,'prepared','{}')",
+                []
+            )
             .is_err()
     );
     undo(&reopened, &id).unwrap();
@@ -564,7 +567,24 @@ fn projected_space_counts_folders_and_respects_deselection() {
     };
     assert!(find_free_zone(plan.layout.as_ref().unwrap(), &config).is_none());
     assert_eq!(plan.summary(), (2, 1, 1));
-    let proposed = plan.projected_zone(&config).unwrap();
+    let proposed = plan.projected_zone(&config).unwrap_or_else(|| {
+        eprintln!("summary: {:?}", plan.summary());
+        eprintln!(
+            "items: {:?}",
+            plan.items
+                .iter()
+                .map(|item| (&item.name, item.selected, &item.position))
+                .collect::<Vec<_>>()
+        );
+        eprintln!(
+            "movements: {:?}",
+            plan.movements()
+                .iter()
+                .map(|movement| (&movement.item.name, &movement.folder))
+                .collect::<Vec<_>>()
+        );
+        panic!("A freed cell was not located in the projected desktop layout");
+    });
     assert_eq!(proposed.zone_col, 2);
     assert_eq!(proposed.zone_row, 0);
 }
