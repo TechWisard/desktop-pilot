@@ -190,11 +190,7 @@ fn duplicated_legacy_ownership_does_not_evict_an_offline_shortcut_during_grace()
         let state = State {
             // Old SQLite profiles may contain duplicate ownership records for
             // the same logical shortcut. Only two distinct desktop copies exist.
-            owned: vec![
-                offline_owned.clone(),
-                offline_owned,
-                own(&rare, &rare_copy),
-            ],
+            owned: vec![offline_owned.clone(), offline_owned, own(&rare, &rare_copy)],
             initialized: true,
             ..Default::default()
         };
