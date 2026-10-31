@@ -113,3 +113,36 @@ fn offline_startup_manual_and_observation_states_keep_their_priority() {
         Health::Attention
     );
 }
+
+#[test]
+fn paused_adaptive_capture_is_not_reported_as_active_rearrangement() {
+    let at = now();
+    let mut config = Config {
+        automatic: true,
+        collect: false,
+        learning_enabled: false,
+        ..Config::default()
+    };
+    let progress = Progress::default();
+    assert_eq!(
+        health(true, at, at, "", &config, &progress),
+        Health::ObservationPaused
+    );
+
+    config.collect = true;
+    assert_eq!(
+        health(true, at, at, "", &config, &progress),
+        Health::Automatic
+    );
+    config.automatic = false;
+    assert_eq!(
+        health(true, at, at, "", &config, &progress),
+        Health::Suggestions
+    );
+    config.collect = false;
+    assert_eq!(health(true, at, at, "", &config, &progress), Health::Manual);
+    assert_eq!(
+        health(false, at, at, "", &config, &progress),
+        Health::Offline
+    );
+}

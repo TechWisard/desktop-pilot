@@ -407,3 +407,82 @@ fn changing_projects_after_a_gap_keeps_the_rare_manual_shortcut_and_undo_is_resp
         }
     });
 }
+
+#[test]
+fn paused_collection_must_not_apply_stale_adaptive_recommendations() {
+    with_profile(|store, old, desktop| {
+        // This unusual but supported state is reachable through Settings'
+        // concurrent-edit merge: automatic permission remains enabled while
+        // input collection is explicitly paused.
+        let mut config: Config = store.get("config").unwrap();
+        config.automatic = true;
+        config.collect = true;
+        config.learning_enabled = false;
+        config.slots = 1;
+        config.max_changes = 1;
+        store.set("config", &config).unwrap();
+
+        let mut previous = store.app(&old.id).unwrap();
+        previous.seed = 30.0;
+        previous.seed_at = now();
+        store.put_app(&previous).unwrap();
+        engine::apply(store, true).unwrap();
+        let initial: State = store.get("state").unwrap();
+        assert_eq!(initial.owned.len(), 1);
+        assert_eq!(initial.owned[0].app, old.id);
+        let initial_copy = initial.owned[0].clone();
+        let original_bytes = std::fs::read(&old.source).unwrap();
+
+        let new_source = store.home.join("NewProject.url");
+        let new_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/NewProject\r\n";
+        std::fs::write(&new_source, new_bytes).unwrap();
+        let mut candidate = crate::native::read_link(&new_source).unwrap();
+        candidate.seed = 160.0;
+        candidate.seed_at = now();
+        store.put_app(&candidate).unwrap();
+
+        let mut due = initial.clone();
+        due.last_review = now() - 8 * 86_400;
+        store.set("state", &due).unwrap();
+        let proposal = engine::preview(store, false).unwrap();
+        assert_eq!(
+            proposal.added.as_slice(),
+            std::slice::from_ref(&candidate.id)
+        );
+        assert_eq!(proposal.removed.as_slice(), std::slice::from_ref(&old.id));
+
+        // Pausing foreground collection is not permission to quietly rearrange
+        // the desktop using a now-stale historical preference.
+        config.collect = false;
+        store.set("config", &config).unwrap();
+        assert!(
+            !engine::automatic_review(store, true).unwrap(),
+            "a paused tracker must not make unattended desktop changes"
+        );
+        let paused: State = store.get("state").unwrap();
+        assert_eq!(paused.owned, due.owned);
+        assert_eq!(paused.last_review, due.last_review);
+        assert_eq!(std::fs::read(&initial_copy.path).unwrap(), original_bytes);
+        assert_eq!(std::fs::read(&old.source).unwrap(), original_bytes);
+        assert_eq!(std::fs::read(&new_source).unwrap(), new_bytes);
+        assert_eq!(std::fs::read_dir(desktop).unwrap().count(), 1);
+
+        // Resuming explicitly restores scheduled changes and the usual Undo.
+        config.collect = true;
+        store.set("config", &config).unwrap();
+        assert!(engine::automatic_review(store, true).unwrap());
+        let changed: State = store.get("state").unwrap();
+        assert_eq!(changed.owned.len(), 1);
+        assert_eq!(changed.owned[0].app, candidate.id);
+        assert!(!std::path::Path::new(&initial_copy.path).exists());
+        assert_eq!(std::fs::read(&changed.owned[0].path).unwrap(), new_bytes);
+        engine::command(store, "rollback").unwrap();
+        let restored: State = store.get("state").unwrap();
+        assert_eq!(restored.owned.len(), 1);
+        assert_eq!(restored.owned[0].app, old.id);
+        assert_eq!(std::fs::read(&initial_copy.path).unwrap(), original_bytes);
+        assert_eq!(std::fs::read(&old.source).unwrap(), original_bytes);
+        assert_eq!(std::fs::read(&new_source).unwrap(), new_bytes);
+        assert!(!store.get::<Config>("config").unwrap().automatic);
+    });
+}

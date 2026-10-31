@@ -452,7 +452,10 @@ fn health(
             Health::ObservationPaused
         };
     }
-    if config.automatic {
+    if config.automatic && !config.collect {
+        // A temporary capture pause also suspends unattended adaptation.
+        Health::ObservationPaused
+    } else if config.automatic {
         Health::Automatic
     } else if config.collect {
         Health::Suggestions
