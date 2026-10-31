@@ -212,7 +212,10 @@ fn foreign_name_collision_rejects_undo_before_partial_moves_and_allows_retry() {
         format!("{error:#}").contains("original desktop name is occupied"),
         "{error:#}"
     );
-    assert_eq!(disk::read(&alpha.source).unwrap(), b"new user-owned content");
+    assert_eq!(
+        disk::read(&alpha.source).unwrap(),
+        b"new user-owned content"
+    );
     assert_eq!(
         fs::inspect(Path::new(&alpha.source), false).unwrap().id,
         foreign_id
@@ -222,18 +225,25 @@ fn foreign_name_collision_rejects_undo_before_partial_moves_and_allows_retry() {
         "Beta must not move before the conflict is reported"
     );
     assert_eq!(
-        fs::inspect(&f.desktop.join("Sites/Alpha.url"), true).unwrap().id,
+        fs::inspect(&f.desktop.join("Sites/Alpha.url"), true)
+            .unwrap()
+            .id,
         alpha_id
     );
     assert_eq!(
-        fs::inspect(&f.desktop.join("Sites/Beta.url"), true).unwrap().id,
+        fs::inspect(&f.desktop.join("Sites/Beta.url"), true)
+            .unwrap()
+            .id,
         beta_id
     );
     assert_eq!(f.store.apps().unwrap(), catalog);
     assert_eq!(f.store.get::<Vec<String>>(HISTORY).unwrap(), history);
     assert_eq!(load(&f.store, &operation).unwrap().phase, Phase::Committed);
     assert!(!status(&f.store).unwrap().pending);
-    assert_eq!(status(&f.store).unwrap().undo.as_deref(), Some(operation.as_str()));
+    assert_eq!(
+        status(&f.store).unwrap().undo.as_deref(),
+        Some(operation.as_str())
+    );
 
     // The user resolves the conflict without losing the replacement file's
     // contents. A subsequent Undo must complete with the original identities.
