@@ -430,8 +430,7 @@ fn pausing_while_a_due_review_is_queued_does_not_rearrange_shortcuts() {
         let original_copy = original.owned[0].path.clone();
 
         let new_source = store.home.join("LaterProject.url");
-        let new_bytes =
-            b"[InternetShortcut]\r\nURL=https://example.invalid/LaterProject\r\n";
+        let new_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/LaterProject\r\n";
         std::fs::write(&new_source, new_bytes).unwrap();
         let mut candidate = crate::native::read_link(&new_source).unwrap();
         candidate.seed = 160.0;
@@ -466,7 +465,10 @@ fn pausing_while_a_due_review_is_queued_does_not_rearrange_shortcuts() {
         resume_tx.send(()).unwrap();
         let changed = review.join().unwrap();
 
-        assert!(!changed, "a committed observation pause must cancel a queued unattended review");
+        assert!(
+            !changed,
+            "a committed observation pause must cancel a queued unattended review"
+        );
         let after: State = store.get("state").unwrap();
         assert_eq!(after.owned, due.owned);
         assert_eq!(after.last_review, due.last_review);
