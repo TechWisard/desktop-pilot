@@ -123,6 +123,9 @@ fn render(
             ..Default::default()
         },
         |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.label("Desktop Pilot test host");
+            });
             let rect = app.organization_dialog(ctx);
             assert!(rect.width() <= ctx.screen_rect().width() + 1.0, "{rect:?}");
             assert!(
