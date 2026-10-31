@@ -141,5 +141,8 @@ fn paused_adaptive_capture_is_not_reported_as_active_rearrangement() {
     );
     config.collect = false;
     assert_eq!(health(true, at, at, "", &config, &progress), Health::Manual);
-    assert_eq!(health(false, at, at, "", &config, &progress), Health::Offline);
+    assert_eq!(
+        health(false, at, at, "", &config, &progress),
+        Health::Offline
+    );
 }
