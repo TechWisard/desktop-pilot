@@ -644,3 +644,67 @@ fn paused_collection_must_not_apply_stale_adaptive_recommendations() {
         assert!(!store.get::<Config>("config").unwrap().automatic);
     });
 }
+
+
+#[test]
+fn a_recent_clock_rewind_must_not_evict_a_familiar_shortcut() {
+    with_profile(|store, incumbent, desktop| {
+        let mut config: Config = store.get("config").unwrap();
+        config.collect = true;
+        config.slots = 1;
+        config.max_changes = 1;
+        config.respect_taskbar_pins = false;
+        store.set("config", &config).unwrap();
+
+        let mut familiar = incumbent.clone();
+        familiar.seed = 100.0;
+        familiar.seed_at = now();
+        store.put_app(&familiar).unwrap();
+        engine::apply(store, true).unwrap();
+        let before: State = store.get("state").unwrap();
+        assert_eq!(before.owned.len(), 1);
+        assert_eq!(before.owned[0].app, familiar.id);
+        let quick_path = before.owned[0].path.clone();
+        let original_bytes = std::fs::read(&familiar.source).unwrap();
+        let quick_bytes = std::fs::read(&quick_path).unwrap();
+
+        // A new project has a legitimate but weaker current-time signal.
+        let other_source = store.home.join("CurrentProject.url");
+        let other_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/CurrentProject\r\n";
+        std::fs::write(&other_source, other_bytes).unwrap();
+        let mut challenger = crate::native::read_link(&other_source).unwrap();
+        assert!(challenger.valid);
+        challenger.seed = 40.0;
+        challenger.seed_at = now();
+        store.put_app(&challenger).unwrap();
+
+        // A four-hour Windows clock correction makes the existing recent
+        // checkpoint appear to be in the future. It is not evidence that the
+        // familiar app ceased being useful and must not erase its entire rank.
+        familiar.seed_at = now() + 4 * 3600;
+        store.put_app(&familiar).unwrap();
+        let rewind_preview = engine::preview(store, false).unwrap();
+        assert_eq!(
+            rewind_preview.selected,
+            [familiar.id.clone()],
+            "a small backward clock correction must not displace a stronger familiar shortcut"
+        );
+        assert!(rewind_preview.added.is_empty());
+        assert!(rewind_preview.removed.is_empty());
+
+        // Explicit user intent still wins, even when history was kept.
+        familiar.policy = Policy::Never;
+        store.put_app(&familiar).unwrap();
+        let excluded = engine::preview(store, false).unwrap();
+        assert_eq!(excluded.selected, [challenger.id.clone()]);
+        assert_eq!(excluded.removed, [familiar.id.clone()]);
+        assert_eq!(excluded.added, [challenger.id.clone()]);
+
+        // This is a read-only preview sequence, not an actual rearrangement.
+        assert_eq!(std::fs::read(&familiar.source).unwrap(), original_bytes);
+        assert_eq!(std::fs::read(&quick_path).unwrap(), quick_bytes);
+        assert_eq!(std::fs::read(&other_source).unwrap(), other_bytes);
+        assert_eq!(std::fs::read_dir(desktop).unwrap().count(), 1);
+        assert_eq!(store.get::<State>("state").unwrap().owned, before.owned);
+    });
+}
