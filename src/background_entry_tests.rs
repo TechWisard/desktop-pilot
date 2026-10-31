@@ -34,12 +34,13 @@ fn cleanup_test_home(home: &std::path::Path) {
     loop {
         match std::fs::remove_dir_all(home) {
             Ok(()) => return,
-            Err(error)
-                if error.raw_os_error() == Some(32) && Instant::now() < deadline =>
-            {
+            Err(error) if error.raw_os_error() == Some(32) && Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(50));
             }
-            Err(error) => panic!("Cannot remove isolated test profile {}: {error}", home.display()),
+            Err(error) => panic!(
+                "Cannot remove isolated test profile {}: {error}",
+                home.display()
+            ),
         }
     }
 }
@@ -75,7 +76,10 @@ fn cleanup_waits_for_a_transient_windows_sharing_violation() {
     drop(reader);
     let removed = complete.recv_timeout(Duration::from_secs(5)).unwrap();
     worker.join().unwrap();
-    assert!(!removed.exists(), "a released lock must leave no test files");
+    assert!(
+        !removed.exists(),
+        "a released lock must leave no test files"
+    );
 }
 
 #[test]
