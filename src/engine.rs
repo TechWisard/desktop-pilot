@@ -1943,7 +1943,11 @@ pub fn automatic_review(store: &Store, quiet: bool) -> Result<bool> {
         // A large backwards wall-clock correction must not block automatic
         // reviews for weeks. The usual quiet/learning checks still apply.
         || state.last_review > review_at.saturating_add(86400);
+    // An Adaptive profile may temporarily pause collection while retaining
+    // its mode preference. Stored rankings alone must not cause unattended
+    // desktop changes during that pause; explicit Apply remains available.
     if config.automatic
+        && config.collect
         && progress.ready(&config)
         && review_due
         && quiet
