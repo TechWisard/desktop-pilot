@@ -166,7 +166,10 @@ fn unknown_shortcut_dependencies_keep_files_but_not_independent_site_shortcuts()
         disk::read(f.desktop.join("Important.txt")).unwrap(),
         b"original document"
     );
-    assert_eq!(disk::read(&broken).unwrap(), b"not a valid Windows Shell link");
+    assert_eq!(
+        disk::read(&broken).unwrap(),
+        b"not a valid Windows Shell link"
+    );
     let id = status(&f.store).unwrap().undo.unwrap();
     undo(&f.store, &id).unwrap();
     disk::remove_file(broken).unwrap();
