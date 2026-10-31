@@ -116,7 +116,9 @@ fn render(
     viewport: egui::Vec2,
     events: Vec<egui::Event>,
 ) -> egui::FullOutput {
-    let time = ctx.input(|input| input.time) + 1.0 / 60.0;
+    // Areas use an initial sizing pass and a timed fade-in. Advance input time
+    // as the real event loop does, retaining the parallel fixture correction.
+    let time = ctx.input(|input| input.time) + 0.25;
     ctx.run(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, viewport)),
@@ -259,17 +261,22 @@ fn organization_modal_keeps_close_feedback_and_progress_inside_scaled_viewports(
             i18n::set(language);
             f.app.fail("A source changed; no object was overwritten.");
             settle(&ctx, &mut f.app, viewport);
-            for _ in 0..3 {
+            for frame in 0..3 {
                 let output = render(&ctx, &mut f.app, viewport, Vec::new());
                 let text = rendered_text(&output);
-                let (_, feedback) = text
-                    .iter()
-                    .find(|(value, _)| {
-                        value.contains("Действие не завершено")
-                            || value.contains("The action did not complete")
-                    })
-                    .expect("Operation feedback must be painted after the sizing pass");
-                assert!(ctx.screen_rect().contains_rect(*feedback));
+                let feedback = text.iter().find(|(value, _)| {
+                    value.contains("Действие не завершено")
+                        || value.contains("The action did not complete")
+                });
+                assert!(
+                    feedback.is_some(),
+                    "language={language}, scale={scale}, frame={frame}, painted={:?}, shapes={}",
+                    text.iter()
+                        .map(|(value, _)| value.as_str())
+                        .collect::<Vec<_>>(),
+                    output.shapes.len()
+                );
+                assert!(ctx.screen_rect().contains_rect(feedback.unwrap().1));
                 let (_, close) = text
                     .iter()
                     .find(|(value, _)| matches!(value.as_str(), "Close" | "Закрыть"))
