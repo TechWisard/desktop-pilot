@@ -24,6 +24,8 @@ Failure-first regression `model::cold_start_tests::paused_collection_must_not_ap
 
 An independent acceptance in [mixed-project clock recovery](2026-10-31-mixed-project-clock-recovery.md) checks preserved session counters and timestamps for two projects after a large clock correction. Its first hypothesis was rejected against the existing verified recovery behavior; it is not a production algorithm change.
 
+Two older clock-correction tests had treated `automatic=true` alone as full adaptive permission, relying on the previous unguarded behavior. Their fixtures now explicitly enable collection for normal automatic review; the manual-shortcut test also asserts that a paused intermediate state **does not** review. This preserves their original clock-correction guarantees while extending the opt-in gate, rather than disabling or deleting a test.
+
 No change to UI density, new settings, permissions, dependencies, log collection, telemetry, originals or rollback format. The fix does not claim to solve an in-flight race where the user pauses **during** an already-running apply; that requires separate synchronization analysis and a deterministic test.
 
 ## Verification and remaining work
