@@ -346,12 +346,18 @@ fn renamed_category_folder_rejects_undo_before_any_restore() {
     disk::write(original_folder.join("notes.txt"), b"user-owned").unwrap();
 
     let error = undo(&f.store, &operation).unwrap_err();
-    assert!(format!("{error:#}").contains("category directory changed"), "{error:#}");
+    assert!(
+        format!("{error:#}").contains("category directory changed"),
+        "{error:#}"
+    );
     assert!(!Path::new(&alpha.source).exists());
     assert!(!Path::new(&beta.source).exists());
     assert!(renamed_folder.join("Alpha.url").is_file());
     assert!(renamed_folder.join("Beta.url").is_file());
-    assert_eq!(disk::read(original_folder.join("notes.txt")).unwrap(), b"user-owned");
+    assert_eq!(
+        disk::read(original_folder.join("notes.txt")).unwrap(),
+        b"user-owned"
+    );
     assert_eq!(f.store.apps().unwrap(), catalog);
     assert_eq!(load(&f.store, &operation).unwrap().phase, Phase::Committed);
     assert!(!status(&f.store).unwrap().pending);

@@ -22,3 +22,7 @@ On a still-Committed operation, before persisting the Undoing phase or moving an
 - A renamed category folder with a new different folder occupying the original name: reject before any move, retain the new folder's bytes, restore the original folder and complete Undo.
 
 No real user desktop or shortcuts were touched. Strict Windows CI and physical Windows 11/OneDrive/100%-200% interactive GUI acceptance remain separate gates. No new release is warranted before those checks.
+
+## CI regression follow-up
+
+The first full Windows Server 2022/2025 runs on commit `acef00d9` found two formatting differences and one existing regression fixture that assumed every replaced-source Undo must enter the interrupted-recovery state. The new preflight correctly refuses that state transition before moving anything, so the fixture now explicitly verifies Committed-phase retention and retries Undo after returning the identity-matched original. This preserves stronger behavior without weakening acceptance checks. The first run was **red**: 387 passed, 1 failed on each OS (and formatting failed). Validation of this follow-up commit must be evaluated separately.

@@ -321,10 +321,22 @@ fn replacement_with_identical_bytes_is_not_moved_by_undo() {
     let bytes = disk::read(&destination).unwrap();
     disk::rename(&destination, f.desktop.join("retained-original.url")).unwrap();
     disk::write(&destination, &bytes).unwrap();
-    assert!(undo(&f.store, &id).is_err());
+    let error = undo(&f.store, &id).unwrap_err();
+    assert!(
+        format!("{error:#}").contains("organized object is missing or has been replaced"),
+        "{error:#}"
+    );
     assert_eq!(disk::read(&destination).unwrap(), bytes);
     assert!(f.desktop.join("retained-original.url").is_file());
-    accept_current(&f.store, &id).unwrap();
+    // Identical bytes do not confer ownership. The new preflight leaves the
+    // original journal Committed, so ordinary Undo can be retried safely.
+    assert!(!status(&f.store).unwrap().pending);
+    assert_eq!(load(&f.store, &id).unwrap().phase, Phase::Committed);
+    disk::rename(&destination, f.desktop.join("user-replacement.url")).unwrap();
+    disk::rename(f.desktop.join("retained-original.url"), &destination).unwrap();
+    assert_eq!(undo(&f.store, &id).unwrap().restored, 2);
+    assert!(Path::new(&a.source).is_file());
+    assert_eq!(disk::read(f.desktop.join("user-replacement.url")).unwrap(), bytes);
     assert!(!status(&f.store).unwrap().pending);
 }
 
