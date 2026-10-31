@@ -32,10 +32,8 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let home = std::env::temp_dir().join(format!(
-            "test-organization-{}",
-            fs::operation_id().unwrap()
-        ));
+        let home =
+            std::env::temp_dir().join(format!("test-organization-{}", fs::operation_id().unwrap()));
         let store = Store::open(&home).unwrap();
         let desktop = home.join("Desktop");
         disk::create_dir(&desktop).unwrap();
@@ -563,4 +561,72 @@ fn projected_space_counts_folders_and_respects_deselection() {
     let proposed = plan.projected_zone(&config).unwrap();
     assert_eq!(proposed.zone_col, 2);
     assert_eq!(proposed.zone_row, 0);
+}
+
+#[test]
+fn free_zone_search_matches_placement_for_dense_offset_and_negative_layouts() {
+    let f = Fixture::new();
+    for left in [-500, 0, 100] {
+        for count in 0..40 {
+            let layout = native::Layout {
+                items: (0..count)
+                    .map(|index| native::Item {
+                        path: f.desktop.join(format!("icon-{index}")).display().to_string(),
+                        name: format!("icon-{index}"),
+                        position: Point {
+                            x: left + 16 + (index / 5) * 100,
+                            y: 2 + (index % 5) * 100,
+                        },
+                    })
+                    .collect(),
+                spacing: Point { x: 100, y: 100 },
+                origin: Point::default(),
+                work: [left, 0, left + 800, 500],
+                flags: 0,
+                topology: "offset-grid".into(),
+                icon_size: 32,
+            };
+            for slots in [1, 4, 8] {
+                let cfg = Config {
+                    slots,
+                    ..Default::default()
+                };
+                let result = find_free_zone(&layout, &cfg);
+                let mut possible = false;
+                for columns in [cfg.zone_columns, 1, 2, slots as i32] {
+                    for col in 0..8 {
+                        for row in 0..5 {
+                            let candidate = Config {
+                                zone_col: col,
+                                zone_row: row,
+                                zone_columns: columns,
+                                ..cfg.clone()
+                            };
+                            possible |= crate::engine::reserve_positions(
+                                &layout,
+                                &candidate,
+                                &State::default(),
+                                &[],
+                                slots,
+                            )
+                            .is_ok();
+                        }
+                    }
+                }
+                assert_eq!(result.is_some(), possible);
+                if let Some(result) = result {
+                    assert!(
+                        crate::engine::reserve_positions(
+                            &layout,
+                            &result,
+                            &State::default(),
+                            &[],
+                            slots,
+                        )
+                        .is_ok()
+                    );
+                }
+            }
+        }
+    }
 }

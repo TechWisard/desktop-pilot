@@ -5,9 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 fn plain_group(extension: &str) -> Option<Group> {
     match extension {
-        "txt" | "pdf" | "rtf" | "doc" | "docx" | "odt" | "ppt" | "pptx" => {
-            Some(Group::Documents)
-        }
+        "txt" | "pdf" | "rtf" | "doc" | "docx" | "odt" | "ppt" | "pptx" => Some(Group::Documents),
         "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tif" | "tiff" | "heic" => {
             Some(Group::Images)
         }
@@ -94,8 +92,8 @@ impl Dependencies {
                 self.paths.insert(norm(&expanded));
             }
         }
-        self.desktop_working_directory |= !app.cwd.is_empty()
-            && norm(&app.cwd) == norm(&root.to_string_lossy());
+        self.desktop_working_directory |=
+            !app.cwd.is_empty() && norm(&app.cwd) == norm(&root.to_string_lossy());
     }
     pub(super) fn check(&self, path: &Path, shortcut: bool) -> Result<()> {
         ensure!(
@@ -173,6 +171,17 @@ pub fn analyze(
     let state: State = store.get("state")?;
     let apps = store.apps()?;
     let keep: HashSet<String> = store.get::<Vec<String>>(KEEP)?.into_iter().collect();
+    let managed_paths: HashSet<_> = state.owned.iter().map(|o| norm(&o.path)).collect();
+    let managed_ids: HashSet<_> = state
+        .owned
+        .iter()
+        .filter_map(|o| o.file_id.as_deref())
+        .collect();
+    let manual_paths: HashSet<_> = apps
+        .iter()
+        .filter(|a| a.policy != Policy::Auto)
+        .map(|a| norm(&a.source))
+        .collect();
     let mut plan = Plan {
         root: root.to_string_lossy().into_owned(),
         root_id,
@@ -212,17 +221,13 @@ pub fn analyze(
                 !keep.contains(&stamp.id),
                 "You chose to keep this object on the desktop"
             );
+            let normalized = norm(&path.to_string_lossy());
             ensure!(
-                !state.owned.iter().any(|o| {
-                    norm(&o.path) == norm(&path.to_string_lossy())
-                        || o.file_id.as_ref() == Some(&stamp.id)
-                }),
+                !managed_paths.contains(&normalized) && !managed_ids.contains(stamp.id.as_str()),
                 "Managed quick shortcut: left in place"
             );
             ensure!(
-                !apps.iter().any(|a| {
-                    a.policy != Policy::Auto && norm(&a.source) == norm(&path.to_string_lossy())
-                }),
+                !manual_paths.contains(&normalized),
                 "Manual shortcut rule: left in place"
             );
             dependencies.check(&path, shortcut)?;
@@ -230,7 +235,7 @@ pub fn analyze(
             let position = plan.layout.as_ref().and_then(|l| {
                 l.items
                     .iter()
-                    .find(|i| norm(&i.path) == norm(&path.to_string_lossy()))
+                    .find(|i| norm(&i.path) == normalized)
                     .map(|i| i.position.clone())
             });
             Ok(Item {
@@ -314,7 +319,11 @@ impl Plan {
             .iter()
             .filter(|f| f.created && movements.iter().any(|m| m.folder == f.name))
             .count();
-        (movements.len(), created, movements.len().saturating_sub(created))
+        (
+            movements.len(),
+            created,
+            movements.len().saturating_sub(created),
+        )
     }
 
     pub fn destination(&self, item: &Item) -> String {
@@ -326,7 +335,18 @@ impl Plan {
     }
 
     pub fn will_move(&self, item: &Item) -> bool {
-        self.movements().iter().any(|m| m.item.name == item.name)
+        item.selected
+            && self.folders.iter().any(|folder| {
+                folder.group == item.group
+                    && (!folder.created
+                        || self
+                            .items
+                            .iter()
+                            .filter(|i| i.selected && i.group == item.group)
+                            .take(2)
+                            .count()
+                            == 2)
+            })
     }
 
     /// Projection accounts for the space used by new folders. It is not a
@@ -334,12 +354,11 @@ impl Plan {
     pub fn projected_zone(&self, config: &Config) -> Option<Config> {
         let mut projected = self.layout.clone()?;
         let movements = self.movements();
-        projected.items.retain(|item| {
-            !movements.iter().any(|m| {
-                norm(&Path::new(&self.root).join(&m.item.name).to_string_lossy())
-                    == norm(&item.path)
-            })
-        });
+        let moved: HashSet<_> = movements
+            .iter()
+            .map(|m| norm(&Path::new(&self.root).join(&m.item.name).to_string_lossy()))
+            .collect();
+        projected.items.retain(|item| !moved.contains(&norm(&item.path)));
         for folder in self.folders.iter().filter(|f| f.created) {
             if let Some(movement) = movements.iter().find(|m| m.folder == folder.name)
                 && let Some(position) = &movement.item.position
@@ -359,14 +378,79 @@ impl Plan {
 }
 
 pub fn find_free_zone(layout: &native::Layout, config: &Config) -> Option<Config> {
-    if layout.flags & 1 != 0 {
+    if layout.flags & 1 != 0 || config.validate().is_err() {
         return None;
     }
+    let anchor_config = Config {
+        slots: 1,
+        zone_col: 0,
+        zone_row: 0,
+        zone_columns: 1,
+        ..config.clone()
+    };
+    let anchor = crate::engine::zone_candidates(layout, &anchor_config)
+        .ok()?
+        .into_iter()
+        .next()?;
+    let sx = i64::from(layout.spacing.x);
+    let sy = i64::from(layout.spacing.y);
+    let bx = i64::from(anchor.x).rem_euclid(sx);
+    let by = i64::from(anchor.y).rem_euclid(sy);
+    // At most 40 starting columns/rows plus the seven remaining slots. Build
+    // occupancy once instead of probing thousands of paths for every candidate.
+    const SIDE: usize = 48;
+    let point = |col: usize, row: usize| {
+        (
+            i64::from(anchor.x) + col as i64 * sx,
+            i64::from(anchor.y) + row as i64 * sy,
+        )
+    };
+    let mut free = [[false; SIDE]; SIDE];
+    for (row, cells) in free.iter_mut().enumerate() {
+        for (col, cell) in cells.iter_mut().enumerate() {
+            let (x, y) = point(col, row);
+            *cell = x - bx >= i64::from(layout.work[0])
+                && y - by >= i64::from(layout.work[1])
+                && x - bx + sx <= i64::from(layout.work[2])
+                && y - by + sy <= i64::from(layout.work[3])
+                && i32::try_from(x).is_ok()
+                && i32::try_from(y).is_ok();
+        }
+    }
+    for item in &layout.items {
+        let col = (i64::from(item.position.x) - i64::from(anchor.x)).div_euclid(sx);
+        let row = (i64::from(item.position.y) - i64::from(anchor.y)).div_euclid(sy);
+        for r in (row - 1).max(0)..=(row + 1).min(SIDE as i64 - 1) {
+            for c in (col - 1).max(0)..=(col + 1).min(SIDE as i64 - 1) {
+                let (x, y) = point(c as usize, r as usize);
+                if (i64::from(item.position.x) - x).abs() < sx - 2
+                    && (i64::from(item.position.y) - y).abs() < sy - 2
+                {
+                    free[r as usize][c as usize] = false;
+                }
+            }
+        }
+    }
     let fits = |cfg: &Config| {
-        crate::engine::reserve_positions(layout, cfg, &State::default(), &[], cfg.slots).is_ok()
+        (0..cfg.slots).all(|index| {
+            let col = cfg.zone_col as usize + index % cfg.zone_columns as usize;
+            let row = cfg.zone_row as usize + index / cfg.zone_columns as usize;
+            free[row][col]
+        })
+    };
+    let verify = |candidate: Config| {
+        crate::engine::reserve_positions(
+            layout,
+            &candidate,
+            &State::default(),
+            &[],
+            candidate.slots,
+        )
+        .ok()
+        .map(|_| candidate)
     };
     if fits(config) {
-        return Some(config.clone());
+        return verify(config.clone());
     }
     let mut shapes = vec![config.zone_columns, 1, 2, config.slots as i32];
     shapes.dedup();
@@ -380,7 +464,7 @@ pub fn find_free_zone(layout: &native::Layout, config: &Config) -> Option<Config
                     ..config.clone()
                 };
                 if fits(&candidate) {
-                    return Some(candidate);
+                    return verify(candidate);
                 }
             }
         }

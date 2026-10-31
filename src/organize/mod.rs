@@ -140,6 +140,27 @@ pub struct Outcome {
     pub warnings: Vec<String>,
 }
 
+fn reject_network_root(root: &Path) -> Result<()> {
+    let text = root
+        .to_str()
+        .context("The desktop path cannot be represented losslessly")?;
+    ensure!(
+        !norm(text).starts_with(r"\\"),
+        "Network desktops are not moved automatically. Use a local desktop."
+    );
+    if text.as_bytes().get(1) == Some(&b':') {
+        let drive = native::wide(&format!("{}\\", &text[..2]));
+        let kind = unsafe {
+            windows::Win32::Storage::FileSystem::GetDriveTypeW(windows::core::PCWSTR(drive.as_ptr()))
+        };
+        ensure!(
+            kind != 4,
+            "Network desktops are not moved automatically. Use a local desktop."
+        );
+    }
+    Ok(())
+}
+
 fn root(store: &Store) -> Result<PathBuf> {
     let custom: String = store.get("test_desktop")?;
     let root = if custom.is_empty() {
@@ -147,12 +168,10 @@ fn root(store: &Store) -> Result<PathBuf> {
     } else {
         custom.into()
     };
+    // Reject UNC/mapped network desktops before canonicalization can perform I/O.
+    reject_network_root(&root)?;
     let root = crate::profile::ordinary_path(std::fs::canonicalize(root)?);
-    let text = root.to_str().context("The desktop path cannot be represented losslessly")?;
-    ensure!(
-        !norm(text).starts_with(r"\\"),
-        "Network desktops are not moved automatically. Use a local desktop."
-    );
+    reject_network_root(&root)?;
     Ok(root)
 }
 

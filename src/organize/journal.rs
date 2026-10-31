@@ -1,6 +1,6 @@
 use super::*;
 use anyhow::bail;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 fn checked_root(journal: &Journal, store: &Store) -> Result<std::fs::File> {
     ensure!(
@@ -27,6 +27,10 @@ fn checked_folder(root: &Path, folder: &Folder) -> Result<std::fs::File> {
 
 fn update_catalog(store: &Store, journal: &Journal, undo: bool) -> Result<()> {
     let mut apps = store.apps()?;
+    let mut sources = HashMap::<String, Vec<usize>>::new();
+    for (index, app) in apps.iter().enumerate() {
+        sources.entry(norm(&app.source)).or_default().push(index);
+    }
     for movement in &journal.movements {
         let original = Path::new(&journal.root).join(&movement.item.name);
         let organized = Path::new(&journal.root)
@@ -37,13 +41,14 @@ fn update_catalog(store: &Store, journal: &Journal, undo: bool) -> Result<()> {
         } else {
             (&original, &organized)
         };
-        for app in &mut apps {
-            if norm(&app.source) == norm(&from.to_string_lossy())
-                && movement.item.launch.as_ref() == Some(&app.identity())
-            {
-                // Update only the source path, never user preferences/history.
-                app.source = to.to_string_lossy().into_owned();
-                store.put_app(app)?;
+        if let Some(indices) = sources.get(&norm(&from.to_string_lossy())) {
+            for &index in indices {
+                let app = &mut apps[index];
+                if movement.item.launch.as_ref() == Some(&app.identity()) {
+                    // Update only the source path, never preferences/history.
+                    app.source = to.to_string_lossy().into_owned();
+                    store.put_app(app)?;
+                }
             }
         }
     }
@@ -192,6 +197,17 @@ pub fn apply(store: &Store, plan: &Plan, cancel: &AtomicBool) -> Result<Outcome>
     let apps = store.apps()?;
     let paths = plan::paths(root, cancel)?;
     let dependencies = plan::dependencies(root, &paths, &apps, cancel)?;
+    let managed_paths: HashSet<_> = state.owned.iter().map(|o| norm(&o.path)).collect();
+    let managed_ids: HashSet<_> = state
+        .owned
+        .iter()
+        .filter_map(|o| o.file_id.as_deref())
+        .collect();
+    let manual_paths: HashSet<_> = apps
+        .iter()
+        .filter(|a| a.policy != Policy::Auto)
+        .map(|a| norm(&a.source))
+        .collect();
     for movement in &journal.movements {
         fs::leaf(&movement.item.name)?;
         fs::leaf(&movement.folder)?;
@@ -201,17 +217,13 @@ pub fn apply(store: &Store, plan: &Plan, cancel: &AtomicBool) -> Result<Outcome>
             actual == movement.item.stamp,
             "An object changed after preview; refresh the plan"
         );
+        let normalized = norm(&path.to_string_lossy());
         ensure!(
-            !state.owned.iter().any(|o| {
-                o.file_id.as_ref() == Some(&actual.id)
-                    || norm(&o.path) == norm(&path.to_string_lossy())
-            }),
+            !managed_ids.contains(actual.id.as_str()) && !managed_paths.contains(&normalized),
             "This object became a managed quick shortcut; refresh the plan"
         );
         ensure!(
-            !apps.iter().any(|a| {
-                a.policy != Policy::Auto && norm(&a.source) == norm(&path.to_string_lossy())
-            }),
+            !manual_paths.contains(&normalized),
             "A manual rule changed after preview; refresh the plan"
         );
         dependencies.check(&path, plan::is_shortcut(&path))?;
@@ -428,10 +440,9 @@ fn undo_locked(store: &Store, journal: &mut Journal) -> Result<Outcome> {
                 if let Err(error) =
                     fs::remove_empty_directory(&path, folder.id.as_deref().unwrap_or(""))
                 {
-                    outcome.warnings.push(format!(
-                        "Folder was preserved: {} ({error})",
-                        folder.name
-                    ));
+                    outcome
+                        .warnings
+                        .push(format!("Folder was preserved: {} ({error})", folder.name));
                 }
             }
             Err(error) => outcome
@@ -466,7 +477,10 @@ pub fn undo(store: &Store, id: &str) -> Result<Outcome> {
         "A newer operation exists; refresh organization history"
     );
     ensure!(
-        matches!(journal.phase, Phase::Prepared | Phase::Committed | Phase::Undoing),
+        matches!(
+            journal.phase,
+            Phase::Prepared | Phase::Committed | Phase::Undoing
+        ),
         "This operation cannot be undone"
     );
     no_placement_in_progress(store)?;
