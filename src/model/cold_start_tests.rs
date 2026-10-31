@@ -677,6 +677,17 @@ fn a_recent_clock_rewind_must_not_evict_a_familiar_shortcut() {
         challenger.seed_at = now();
         store.put_app(&challenger).unwrap();
 
+        // A *new* shortcut with an unsupported future score must not gain
+        // eligibility from this recovery rule, even if its claimed score
+        // dwarfs the already owned candidate's confirmed history.
+        let untrusted_source = store.home.join("UntrustedFuture.url");
+        let untrusted_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/UntrustedFuture\r\n";
+        std::fs::write(&untrusted_source, untrusted_bytes).unwrap();
+        let mut untrusted = crate::native::read_link(&untrusted_source).unwrap();
+        untrusted.seed = 3000.0;
+        untrusted.seed_at = now() + 4 * 3600;
+        store.put_app(&untrusted).unwrap();
+
         // A four-hour Windows clock correction makes the existing recent
         // checkpoint appear to be in the future. It is not evidence that the
         // familiar app ceased being useful and must not erase its entire rank.
@@ -712,6 +723,7 @@ fn a_recent_clock_rewind_must_not_evict_a_familiar_shortcut() {
         assert_eq!(std::fs::read(&familiar.source).unwrap(), original_bytes);
         assert_eq!(std::fs::read(&quick_path).unwrap(), quick_bytes);
         assert_eq!(std::fs::read(&other_source).unwrap(), other_bytes);
+        assert_eq!(std::fs::read(&untrusted_source).unwrap(), untrusted_bytes);
         assert_eq!(std::fs::read_dir(desktop).unwrap().count(), 1);
         assert_eq!(store.get::<State>("state").unwrap().owned, before.owned);
     });
