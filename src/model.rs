@@ -285,6 +285,20 @@ const MIN_NEW_SHORTCUT_SCORE: f64 = 2.5;
 const MIN_REPLACEMENT_MARGIN: f64 = 3.0;
 
 pub fn rank(apps: &[App], days: &[Day], cfg: &Config, time: i64) -> Vec<Ranked> {
+    rank_with_owned(apps, days, cfg, time, &[])
+}
+
+// Only an already managed shortcut has evidence that its historical score
+// existed before a small wall-clock rewind. An unowned future-dated score
+// must never become a fresh placement recommendation by itself.
+pub(crate) fn rank_with_owned(
+    apps: &[App],
+    days: &[Day],
+    cfg: &Config,
+    time: i64,
+    owned: &[Owned],
+) -> Vec<Ranked> {
+    let managed: HashSet<&str> = owned.iter().map(|entry| entry.app.as_str()).collect();
     // Group retained rows once. Scanning every day's history for every shortcut
     // made a large catalog quadratic and blocked regular Settings refreshes.
     let mut history: HashMap<&str, Vec<&Day>> = HashMap::new();
@@ -303,7 +317,9 @@ pub fn rank(apps: &[App], days: &[Day], cfg: &Config, time: i64) -> Vec<Ranked> 
         let seed_is_valid = app.seed.is_finite()
             && app.seed > 0.0
             && app.seed_at > 0
-            && app.seed_at <= time.saturating_add(86_400);
+            && (app.seed_at <= time
+                || (managed.contains(app.id.as_str())
+                    && app.seed_at <= time.saturating_add(86_400)));
         let seed_age = time.saturating_sub(app.seed_at).max(0);
         let mut score = if seed_is_valid {
             app.seed * 2f64.powf(-(seed_age as f64) / (86400.0 * cfg.half_life_days))
