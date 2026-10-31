@@ -1,6 +1,6 @@
 use super::*;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static HOME_SERIAL: AtomicU64 = AtomicU64::new(0);
 
@@ -24,6 +24,62 @@ fn test_home() -> PathBuf {
             .unwrap()
             .as_nanos(),
     )
+}
+
+// A short-lived Windows reader (indexer/AV) may outlive SQLite's own handles.
+// Retrying only ERROR_SHARING_VIOLATION preserves a genuine cleanup failure:
+// no test is allowed to silently leave a temporary user-like profile behind.
+fn cleanup_test_home(home: &std::path::Path) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        match std::fs::remove_dir_all(home) {
+            Ok(()) => return,
+            Err(error) if error.raw_os_error() == Some(32) && Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => panic!(
+                "Cannot remove isolated test profile {}: {error}",
+                home.display()
+            ),
+        }
+    }
+}
+
+#[test]
+fn cleanup_waits_for_a_transient_windows_sharing_violation() {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows::Win32::Storage::FileSystem::FILE_SHARE_READ;
+
+    let home = test_home();
+    let held_path = home.join("held.txt");
+    std::fs::write(&held_path, b"temporary fixture").unwrap();
+    let reader = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ.0)
+        .open(&held_path)
+        .unwrap();
+
+    assert_eq!(
+        std::fs::remove_dir_all(&home).unwrap_err().raw_os_error(),
+        Some(32),
+        "Windows must refuse deletion while another handle denies delete sharing"
+    );
+    let (finished, complete) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        cleanup_test_home(&home);
+        finished.send(home).unwrap();
+    });
+    assert!(
+        complete.recv_timeout(Duration::from_millis(150)).is_err(),
+        "cleanup must not report success while the file is still locked"
+    );
+    drop(reader);
+    let removed = complete.recv_timeout(Duration::from_secs(5)).unwrap();
+    worker.join().unwrap();
+    assert!(
+        !removed.exists(),
+        "a released lock must leave no test files"
+    );
 }
 
 #[test]
@@ -83,7 +139,7 @@ fn a_disabled_profile_cannot_be_resurrected_by_a_late_background_entry() {
     });
     let saved_bytes = std::fs::read(&original).unwrap();
     drop(store);
-    std::fs::remove_dir_all(home).unwrap();
+    cleanup_test_home(&home);
     assert!(
         !admitted,
         "a background launch must respect explicit Turn off"
@@ -113,7 +169,7 @@ fn a_permitted_background_entry_can_resume_without_resetting_preferences() {
     );
     assert_eq!(store.get::<Config>("config").unwrap(), config);
     drop(store);
-    std::fs::remove_dir_all(home).unwrap();
+    cleanup_test_home(&home);
 }
 
 #[test]
@@ -142,7 +198,7 @@ fn explicit_start_grants_background_entry_and_restores_turn_off_after_failure() 
     assert!(!store.get::<bool>("background_disabled").unwrap());
     assert!(!store.get::<bool>("shutdown").unwrap());
     drop(store);
-    std::fs::remove_dir_all(home).unwrap();
+    cleanup_test_home(&home);
 }
 
 #[test]
@@ -192,7 +248,7 @@ fn a_disabled_entry_never_installs_global_input_hooks() {
     assert_eq!(before, after);
     assert_eq!(std::fs::read(&source).unwrap(), bytes);
     drop(store);
-    std::fs::remove_dir_all(home).unwrap();
+    cleanup_test_home(&home);
 }
 
 #[test]
@@ -225,7 +281,7 @@ fn enabled_manual_only_entry_must_not_request_global_input_hooks() {
     assert!(!store.get::<bool>("shutdown").unwrap());
     assert_eq!(store.get::<Config>("config").unwrap(), config);
     drop(store);
-    std::fs::remove_dir_all(home).unwrap();
+    cleanup_test_home(&home);
 }
 
 #[test]
@@ -253,7 +309,7 @@ fn turning_off_during_input_hook_setup_still_rejects_session_registration() {
     assert!(store.get::<bool>("background_disabled").unwrap());
     assert!(store.get::<bool>("shutdown").unwrap());
     drop(store);
-    std::fs::remove_dir_all(home).unwrap();
+    cleanup_test_home(&home);
 }
 
 #[test]
@@ -319,7 +375,7 @@ fn input_hooks_follow_manual_observe_manual_changes_and_concurrent_turn_off() {
     assert!(store.get::<bool>("shutdown").unwrap());
 
     drop(store);
-    std::fs::remove_dir_all(home).unwrap();
+    cleanup_test_home(&home);
 }
 
 #[test]
@@ -419,5 +475,5 @@ fn stale_collect_snapshot_cannot_keep_existing_hooks_after_permission_is_revoked
     assert_eq!(std::fs::read(&original).unwrap(), original_bytes);
     drop(settings);
     drop(store);
-    std::fs::remove_dir_all(home).unwrap();
+    cleanup_test_home(&home);
 }
