@@ -2,7 +2,7 @@
 
 ## Status
 
-Work in progress on `feature/desktop-organization-20261031`, based on `87ac2c95c5c0e9fa7773c5c53a7668e35e464baf` (0.2.76). The filesystem engine is initially compiled by the existing test target. The user interface, first-run entry, worker quiescence and final integration are not yet exposed. This document does not claim a successful test run or a new release.
+Work in progress on `feature/desktop-organization-ui-20261031`, based on the earlier engine branch `feature/desktop-organization-20261031`, branched from 0.2.76. The feature is now integrated into the main executable and Settings: a read-only plan, explicit preview/selection, manual apply, Undo, recovery, worker quiescence and first-run cleanup entry. A strict compilation, native runtime and UI acceptance gate is required before merging; this document does not claim a release.
 
 ## User problem and intended contract
 
@@ -56,15 +56,22 @@ occupied. This fix requires a successful Windows CI rerun before acceptance.
 Supporting primary Windows API documentation:
 https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle
 
+## Integration progress and verified boundaries (October 31)
+
+- Existing isolated Windows test fixtures are preserved. A public Windows CI run on the integrated branch passed **390 Rust tests on each Windows Server 2022 and 2025 runner** before failing on strict lint, primarily because the original filesystem test shim was mistakenly imported a second time. The duplicate module was removed; see [the recorded failing run](https://github.com/TechWisard/desktop-pilot/actions/runs/41204892746). This is a synthetic regression count, not a usability measurement.
+- First-run Settings now offers desktop organization before placement. Ordinary objects are moved only after explicit Apply; documents/media are opt-in. Preview offers per-item exclusions, a filtered list, a projected freed-space count and an interrupt-recovery path.
+- The organizer now runs with the startup mutex held while the background worker is stopped. A formerly active worker restarts after the journal is resolved; stopped profiles remain stopped. Startup refuses a pending recovery, including after a process crash.
+- UI state and functional journal are kept distinct; no automatic recurring cleanup or hidden telemetrics were introduced. Remaining acceptance: final green CI after integration, read-through of static UI at 200% and an actual Windows 11 desktop operation with rollback.
+
 ## Reproducible fixtures
 
 `src/organize/tests.rs` uses the real SQLite Store, Windows `.lnk` parser, `.url` files and Windows handle-based renames in isolated temporary directories. It covers read-only preview, apply/undo, failed writes, interrupted renames/reopen, collisions, replaced files/folders, same-file edits, profile separation, cancellation, manual exclusions, managed copies, existing placement journals, dependency protection and folder-aware layout projections. No real desktop is mutated and no test shortcut target is launched.
 
 ## Acceptance still required
 
-1. Run the unchanged Windows checks, resolve compiler/format/lint/runtime failures and record the actual results.
-2. Complete the readable RU/EN preview/selection/recovery interface and first-run flow; test at 100% and 200% scale.
-3. Exercise worker shutdown/resume and concurrent settings against the real public entry points. Do not silently enable observation or Windows startup.
+1. Verify the integrated Windows checks on both CI environments without loosening test, lint or build gates.
+2. Test the full RU/EN preview, scrolling, action confirmation and recovery at 100% and 200% scale in the running GUI.
+3. Exercise worker shutdown/resume and concurrent settings on the actual Windows desktop and confirm existing observation/startup preferences are preserved.
 4. Verify actual quick-placement/Undo integration after originals move and return; preserve policies/history.
 5. Only publish a version after all gates pass and the tag, source commit and distribution files agree.
 
