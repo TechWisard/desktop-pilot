@@ -147,6 +147,7 @@ fn restore_layout(journal: &Journal, undo: bool) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 pub fn apply(store: &Store, plan: &Plan, cancel: &AtomicBool) -> Result<Outcome> {
     let _stopped = native::exclusive("background", &store.home)?;
     apply_stopped(store, plan, cancel)
@@ -470,6 +471,7 @@ fn undo_locked(store: &Store, journal: &mut Journal) -> Result<Outcome> {
     Ok(outcome)
 }
 
+#[cfg(test)]
 pub fn undo(store: &Store, id: &str) -> Result<Outcome> {
     let _stopped = native::exclusive("background", &store.home)?;
     undo_stopped(store, id)
@@ -497,6 +499,7 @@ pub(crate) fn undo_stopped(store: &Store, id: &str) -> Result<Outcome> {
 
 /// Explicit recovery escape hatch, with a separate confirmation in the UI.
 /// No filesystem writes: reconcile verified paths and retain the journal.
+#[cfg(test)]
 pub fn accept_current(store: &Store, id: &str) -> Result<()> {
     let _stopped = native::exclusive("background", &store.home)?;
     accept_current_stopped(store, id)
