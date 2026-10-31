@@ -31,33 +31,35 @@ jobs:
       - run: cargo test --locked
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo build --locked
-      - name: Native executable integration
-        shell: pwsh
-        run: ./scripts/test-native.ps1 -ReportDirectory target/organizer-acceptance/native
-      - name: Actual graphical application smoke
+      - name: Native executable integration without instrumentation
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          $home = Join-Path $env:RUNNER_TEMP ('test-organizer-gui-' + [guid]::NewGuid().ToString('N'))
-          $output = Join-Path $pwd 'target/organizer-acceptance/gui'
-          New-Item -ItemType Directory -Force $output | Out-Null
-          $exe = (Resolve-Path target/debug/desktop-pilot.exe).Path
-          $p = Start-Process $exe -ArgumentList @('--home', ('"' + $home + '"'), '--ui-smoke', ('"' + $output + '"')) -PassThru
-          try {
-            if (-not $p.WaitForExit(60000)) { throw 'The actual GUI did not finish within 60 seconds' }
-            if ($p.ExitCode -ne 0) { throw "GUI exited with code $($p.ExitCode)" }
-            if (@(Get-ChildItem $output -Filter *.png).Count -eq 0) { throw 'The actual renderer produced no screenshots' }
-          } finally {
-            if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
-            if (Test-Path $home) {
-              Get-ChildItem $home -Filter '*error*' | Copy-Item -Destination $output
-              Remove-Item $home -Recurse -Force
-            }
-          }
+          ./scripts/test-native.ps1 -ReportDirectory target/organizer-acceptance/native
+          Get-FileHash target/debug/desktop-pilot.exe -Algorithm SHA256 | Format-List | Out-File target/organizer-acceptance/production-executable.txt
+      - name: Prepare separate input and screenshot acceptance harness
+        shell: pwsh
+        run: |
+          python scripts/prepare-organizer-acceptance.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo fmt --manifest-path target/organizer-acceptance-source/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --exit-code
+      - name: Build actual application with acceptance-only input probes
+        shell: pwsh
+        run: |
+          cargo clippy --locked --manifest-path target/organizer-acceptance-source/Cargo.toml --target-dir target --bin desktop-pilot -- -D warnings
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --locked --manifest-path target/organizer-acceptance-source/Cargo.toml --target-dir target --bin desktop-pilot
+      - name: Actual mouse interaction, screenshots, Explorer and worker lifecycle
+        shell: pwsh
+        env:
+          DP_ALLOW_DISPOSABLE_DESKTOP_TEST: YES_SYNTHETIC_FIXTURES_ONLY
+        run: python scripts/run-organizer-acceptance.py --executable target/debug/desktop-pilot.exe --output target/organizer-acceptance/runtime --desktop
       - name: Record inspected source and evidence manifest
         if: always()
         shell: pwsh
         run: |
+          New-Item -ItemType Directory -Force target/organizer-acceptance | Out-Null
           git rev-parse HEAD | Set-Content target/organizer-acceptance/source-commit.txt
           git archive --format=zip --output=target/organizer-acceptance/public-reviewed-source.zip HEAD
           Get-ChildItem target/organizer-acceptance -Recurse -File | Get-FileHash -Algorithm SHA256 | Select-Object Hash,Path | ConvertTo-Json | Set-Content target/organizer-acceptance/manifest.json

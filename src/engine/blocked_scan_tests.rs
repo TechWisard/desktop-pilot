@@ -94,12 +94,19 @@ fn slow_catalog_read_cannot_delay_manual_policy_heartbeat_or_shutdown() {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    // Continue holding the filesystem boundary for a full heartbeat interval.
-    while started.elapsed() < Duration::from_secs(19) {
+    // A manual command deliberately forces a heartbeat and resets its monotonic
+    // deadline. Measure the NEXT periodic signal after that command, not a fixed
+    // 19 seconds after enqueueing. The exact 15-second scheduling boundary is
+    // separately asserted with controlled Instants in heartbeat_tests.
+    let command_heartbeat: i64 = store.get("heartbeat").unwrap();
+    let periodic_started = Instant::now();
+    let periodic_deadline = periodic_started + HEARTBEAT_INTERVAL + Duration::from_secs(6);
+    let mut refreshed_heartbeat: i64 = store.get("heartbeat").unwrap();
+    while refreshed_heartbeat <= command_heartbeat && Instant::now() < periodic_deadline {
         std::thread::sleep(Duration::from_millis(100));
+        refreshed_heartbeat = store.get("heartbeat").unwrap();
     }
-    let refreshed_heartbeat: i64 = store.get("heartbeat").unwrap();
-    let heartbeat_advanced = refreshed_heartbeat >= first_heartbeat + 15;
+    let heartbeat_advanced = refreshed_heartbeat > command_heartbeat;
 
     // A later user edit during shutdown must never be committed by the old
     // scanner after its owning monitor has exited.
@@ -141,7 +148,7 @@ fn slow_catalog_read_cannot_delay_manual_policy_heartbeat_or_shutdown() {
     );
     assert!(
         heartbeat_advanced,
-        "A slow catalog scan stopped normal heartbeat updates"
+        "A slow scan stopped periodic updates after the command: initial={first_heartbeat}, command={command_heartbeat}, final={refreshed_heartbeat}"
     );
     assert!(
         stopped_while_scan_waited,
