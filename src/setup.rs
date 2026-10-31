@@ -775,18 +775,19 @@ mod tests {
             Some("Background work remains stopped until recovery".into()),
         );
         let details = format!("{:#}", failed.unwrap_err());
-        assert!(details.contains("Move aborted after a source changed"), "{details}");
+        assert!(
+            details.contains("Move aborted after a source changed"),
+            "{details}"
+        );
         assert!(
             details.contains("Background work remains stopped until recovery"),
             "{details}"
         );
         let unchanged: Result<(usize, Option<String>)> =
             organization_result_with_warning(Err(anyhow::anyhow!("Original failure")), None);
-        assert!(
-            format!("{:#}", unchanged.unwrap_err()).contains("Original failure")
-        );
-        let success = organization_result_with_warning(Ok(7), Some("Restart warning".into()))
-            .unwrap();
+        assert!(format!("{:#}", unchanged.unwrap_err()).contains("Original failure"));
+        let success =
+            organization_result_with_warning(Ok(7), Some("Restart warning".into())).unwrap();
         assert_eq!(success, (7, Some("Restart warning".into())));
     }
 

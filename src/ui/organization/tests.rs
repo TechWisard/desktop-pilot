@@ -229,14 +229,23 @@ fn organization_modal_keeps_close_feedback_and_progress_inside_scaled_viewports(
             f.app.config.language = language.into();
             i18n::set(language);
             f.app.fail("A source changed; no object was overwritten.");
-            let _ = render(&ctx, &mut f.app, viewport, Vec::new());
+            // Layout and zoom changes may need more than one sizing pass.
             for _ in 0..3 {
+                let _ = render(&ctx, &mut f.app, viewport, Vec::new());
+            }
+            for frame in 0..3 {
                 let output = render(&ctx, &mut f.app, viewport, Vec::new());
                 let text = rendered_text(&output);
-                assert!(text.iter().any(|(value, _)| {
+                let summary_visible = text.iter().any(|(value, _)| {
                     value.contains("Действие не завершено")
                         || value.contains("The action did not complete")
-                }));
+                });
+                assert!(
+                    summary_visible,
+                    "language={language}, scale={scale}, frame={frame}, painted={:?}, shapes={}",
+                    text.iter().map(|(value, _)| value.as_str()).collect::<Vec<_>>(),
+                    output.shapes.len()
+                );
                 let (_, close) = text
                     .iter()
                     .find(|(value, _)| matches!(value.as_str(), "Close" | "Закрыть"))
