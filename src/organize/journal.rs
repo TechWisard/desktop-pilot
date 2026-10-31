@@ -377,6 +377,30 @@ fn undo_locked(store: &Store, journal: &mut Journal) -> Result<Outcome> {
     let root_handle = checked_root(journal, store)?;
     let root_path = PathBuf::from(&journal.root);
     let root = root_path.as_path();
+    if journal.phase == Phase::Committed {
+        // Placement may legitimately reuse the vacated original filename. Do
+        // not begin partial organization Undo or install its durable barrier:
+        // that would also prevent the quick-placement Undo needed to free it.
+        // Verify current ownership by file ID, never by identical shortcut bytes.
+        let state: State = store.get("state")?;
+        for movement in &journal.movements {
+            fs::leaf(&movement.item.name)?;
+            let original = root.join(&movement.item.name);
+            let original_path = norm(&original.to_string_lossy());
+            if let Some(copy) = state.owned.iter().find(|o| norm(&o.path) == original_path)
+                && let Some(id) = &copy.file_id
+                && id != &movement.item.stamp.id
+                && fs::matches_id(&original, id)?
+            {
+                let message = if store.get::<Config>("config")?.language == "ru" {
+                    "Сначала отмените размещение быстрых ярлыков на главной странице, затем повторите отмену уборки. Быстрый ярлык занимает прежнее имя оригинала. Файлы не изменены."
+                } else {
+                    "Undo quick shortcut placement on Home first, then retry organization Undo. A quick shortcut occupies an original name. No files were changed."
+                };
+                bail!("{message}");
+            }
+        }
+    }
     journal.phase = Phase::Undoing;
     store.db.pragma_update(None, "synchronous", "FULL")?;
     store.transaction(|| {
