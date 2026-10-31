@@ -108,7 +108,6 @@ pub fn stop_background(home: &Path) -> Result<()> {
     store.set("shutdown", &true)
 }
 
- 
 /// Run a user-confirmed desktop organization while holding both the startup
 /// and background locks. No worker or auto-start may race the filesystem move.
 /// The previous worker is restarted only after the journal is fully resolved.
@@ -129,9 +128,9 @@ pub(crate) fn with_organization_paused<T>(
                     .to_owned(),
             ),
             Ok(_) if store.get::<bool>("background_disabled")? => None,
-            Ok(_) => start_background_locked(&store)
-                .err()
-                .map(|error| format!("Changes are saved, but background work could not restart: {error:#}")),
+            Ok(_) => start_background_locked(&store).err().map(|error| {
+                format!("Changes are saved, but background work could not restart: {error:#}")
+            }),
             Err(error) => Some(format!(
                 "Could not verify organization recovery status. Background work remains stopped: {error:#}"
             )),
