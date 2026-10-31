@@ -259,6 +259,35 @@ fn simulate_interruption(f: &Fixture, plan: &Plan) -> String {
 }
 
 #[test]
+fn interrupted_apply_can_be_explicitly_accepted_without_moving_any_other_files() {
+    let f = Fixture::new();
+    let (alpha, beta) = f.two_sites();
+    let original = f.store.apps().unwrap();
+    let operation = simulate_interruption(&f, &f.plan(false));
+    assert!(status(&f.store).unwrap().pending);
+    assert!(f.desktop.join("Sites/Alpha.url").is_file());
+    assert!(f.desktop.join("Beta.url").is_file());
+
+    // Explicitly accept the interrupted mixed state; only verified catalog
+    // paths change. No other desktop entry, preference or file is overwritten.
+    accept_current(&f.store, &operation).unwrap();
+    assert!(!status(&f.store).unwrap().pending);
+    assert_eq!(load(&f.store, &operation).unwrap().phase, Phase::Accepted);
+    assert_eq!(f.store.app(&beta.id).unwrap().source, beta.source);
+    assert_eq!(
+        norm(&f.store.app(&alpha.id).unwrap().source),
+        norm(&f.desktop.join("Sites/Alpha.url").to_string_lossy())
+    );
+    assert!(f.desktop.join("Sites/Alpha.url").is_file());
+    assert!(f.desktop.join("Beta.url").is_file());
+    assert!(!f.desktop.join("Alpha.url").exists());
+    assert_eq!(f.store.apps().unwrap().len(), original.len());
+    assert!(ensure_ready(&f.store).is_ok());
+    f.store.policy(&beta.id, Policy::Never).unwrap();
+    assert_eq!(f.store.app(&beta.id).unwrap().policy, Policy::Never);
+}
+
+#[test]
 fn reopened_profile_recovers_a_rename_and_blocks_stale_catalog_writers() {
     let f = Fixture::new();
     let (a, _) = f.two_sites();
