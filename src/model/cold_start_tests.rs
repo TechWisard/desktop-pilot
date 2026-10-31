@@ -480,6 +480,93 @@ fn pausing_while_a_due_review_is_queued_does_not_rearrange_shortcuts() {
 }
 
 #[test]
+fn extending_review_interval_while_a_review_is_queued_prevents_early_replacement() {
+    with_profile(|store, incumbent, desktop| {
+        let mut config: Config = store.get("config").unwrap();
+        config.automatic = true;
+        config.collect = true;
+        config.learning_enabled = false;
+        config.slots = 1;
+        config.max_changes = 1;
+        config.interval_days = 7;
+        store.set("config", &config).unwrap();
+
+        let mut old = store.app(&incumbent.id).unwrap();
+        old.seed = 30.0;
+        old.seed_at = now();
+        store.put_app(&old).unwrap();
+        engine::apply(store, true).unwrap();
+        let baseline: State = store.get("state").unwrap();
+        assert_eq!(baseline.owned.len(), 1);
+        assert_eq!(baseline.owned[0].app, old.id);
+        let old_bytes = std::fs::read(&old.source).unwrap();
+        let old_copy = baseline.owned[0].path.clone();
+
+        let new_source = store.home.join("NextProject.url");
+        let new_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/NextProject\r\n";
+        std::fs::write(&new_source, new_bytes).unwrap();
+        let mut candidate = crate::native::read_link(&new_source).unwrap();
+        candidate.seed = 160.0;
+        candidate.seed_at = now();
+        store.put_app(&candidate).unwrap();
+
+        let mut due = baseline.clone();
+        due.last_review = now() - 8 * 86400;
+        store.set("state", &due).unwrap();
+        let proposal = engine::preview(store, false).unwrap();
+        assert_eq!(proposal.added, vec![candidate.id.clone()]);
+        assert_eq!(proposal.removed, vec![old.id.clone()]);
+
+        // The worker approved a seven-day review. Settings lengthens the
+        // interval before any placement, under a different SQLite connection.
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+        let home = store.home.clone();
+        let review = std::thread::spawn(move || {
+            let worker = Store::open(&home).unwrap();
+            engine::automatic_review_with_boundary(&worker, true, || {
+                entered_tx.send(()).unwrap();
+                resume_rx.recv().unwrap();
+            })
+            .unwrap()
+        });
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(15))
+            .unwrap();
+        config.interval_days = 30;
+        store.set("config", &config).unwrap();
+        resume_tx.send(()).unwrap();
+
+        assert!(
+            !review.join().unwrap(),
+            "extending a saved review interval must cancel a queued premature change"
+        );
+        let after: State = store.get("state").unwrap();
+        assert_eq!(after.owned, due.owned);
+        assert_eq!(after.last_review, due.last_review);
+        assert_eq!(std::fs::read(&old.source).unwrap(), old_bytes);
+        assert_eq!(std::fs::read(&old_copy).unwrap(), old_bytes);
+        assert_eq!(std::fs::read(&new_source).unwrap(), new_bytes);
+        assert_eq!(std::fs::read_dir(desktop).unwrap().count(), 1);
+
+        // Restore the earlier interval: the same real scheduled review is
+        // eligible again, and Undo still recovers the original shortcut.
+        config.interval_days = 7;
+        store.set("config", &config).unwrap();
+        assert!(engine::automatic_review(store, true).unwrap());
+        let changed: State = store.get("state").unwrap();
+        assert_eq!(changed.owned.len(), 1);
+        assert_eq!(changed.owned[0].app, candidate.id);
+        engine::command(store, "rollback").unwrap();
+        let restored: State = store.get("state").unwrap();
+        assert_eq!(restored.owned[0].app, old.id);
+        assert_eq!(std::fs::read(&old.source).unwrap(), old_bytes);
+        assert_eq!(std::fs::read(&old_copy).unwrap(), old_bytes);
+        assert_eq!(std::fs::read(&new_source).unwrap(), new_bytes);
+    });
+}
+
+#[test]
 fn paused_collection_must_not_apply_stale_adaptive_recommendations() {
     with_profile(|store, old, desktop| {
         // This unusual but supported state is reachable through Settings'

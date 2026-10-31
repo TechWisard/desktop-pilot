@@ -1925,6 +1925,15 @@ fn observe_app_id(apps: &[App], id: &str) -> Option<String> {
     }
 }
 
+// A queued review must remain due under the user's *currently saved*
+// cadence, not just the earlier eligibility snapshot.
+fn scheduled_review_due(state: &State, config: &Config, at: i64) -> bool {
+    !state.initialized
+        || at >= state.last_review.saturating_add(config.interval_days * 86400)
+        // Corrected system time must not prevent reviews indefinitely.
+        || state.last_review > at.saturating_add(86400)
+}
+
 pub fn automatic_review(store: &Store, quiet: bool) -> Result<bool> {
     automatic_review_with_boundary(store, quiet, || {})
 }
@@ -1951,14 +1960,7 @@ pub(crate) fn automatic_review_with_boundary(
         store.set("learning", &progress)?;
     }
     let review_at = now();
-    let review_due = !state.initialized
-        || review_at
-            >= state
-                .last_review
-                .saturating_add(config.interval_days * 86400)
-        // A large backwards wall-clock correction must not block automatic
-        // reviews for weeks. The usual quiet/learning checks still apply.
-        || state.last_review > review_at.saturating_add(86400);
+    let review_due = scheduled_review_due(&state, &config, review_at);
     // An Adaptive profile may temporarily pause collection while retaining
     // its mode preference. Stored rankings alone must not cause unattended
     // desktop changes during that pause; explicit Apply remains available.
@@ -1984,7 +1986,17 @@ pub(crate) fn automatic_review_with_boundary(
             return Ok(false);
         }
         current.validate()?;
-        apply_locked(store, !state.initialized)?;
+        // The user can also lengthen the review interval, change the
+        // learning gate, or another worker can finish a review while this one
+        // is queued. Honor all of these before modifying their desktop.
+        let current_state: State = store.get("state")?;
+        let current_progress: Progress = store.get("learning")?;
+        if !current_progress.ready(&current)
+            || !scheduled_review_due(&current_state, &current, now())
+        {
+            return Ok(false);
+        }
+        apply_locked(store, !current_state.initialized)?;
         return Ok(true);
     }
     Ok(false)
