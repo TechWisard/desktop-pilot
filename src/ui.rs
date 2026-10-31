@@ -336,6 +336,23 @@ fn should_resume_background(disabled: bool, base: &Config, draft: &Config) -> bo
             || (!base.autostart && draft.autostart))
 }
 
+fn lock_settings_changes(home: &Path) -> Result<native::Lock> {
+    // A successful observation pause must not race an already-started
+    // automatic shortcut transaction. This runs on the Settings worker,
+    // never the UI thread, and waits only for current changes to finish.
+    let deadline = Instant::now() + Duration::from_secs(12);
+    loop {
+        if let Some(lock) = native::try_exclusive("changes", home)? {
+            return Ok(lock);
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "Shortcut changes are still finishing. Settings were not saved; try again."
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 fn when(timestamp: i64) -> String {
     if timestamp <= 0 {
         return t("ещё не выполнялось", "not yet").into();
@@ -1160,6 +1177,7 @@ impl Settings {
             // startup lock. Do not make a stale resume decision after shutdown.
             let _starting = native::exclusive("startup", &home)?;
             let store = Store::open(&home)?;
+            let changes = lock_settings_changes(&home)?;
             let restart =
                 should_resume_background(store.get::<bool>("background_disabled")?, &base, &config);
             let mut native_applied = false;
@@ -1194,6 +1212,9 @@ impl Settings {
                     return Err(error);
                 }
             };
+            // Release the placement barrier after the new mode is committed.
+            // Any later automatic review rechecks the persisted permission.
+            drop(changes);
             #[cfg(test)]
             save_disable_race_tests::pause_after_save(&home);
             let warning = if restart {
