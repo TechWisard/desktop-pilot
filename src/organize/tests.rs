@@ -336,7 +336,10 @@ fn replacement_with_identical_bytes_is_not_moved_by_undo() {
     disk::rename(f.desktop.join("retained-original.url"), &destination).unwrap();
     assert_eq!(undo(&f.store, &id).unwrap().restored, 2);
     assert!(Path::new(&a.source).is_file());
-    assert_eq!(disk::read(f.desktop.join("user-replacement.url")).unwrap(), bytes);
+    assert_eq!(
+        disk::read(f.desktop.join("user-replacement.url")).unwrap(),
+        bytes
+    );
     assert!(!status(&f.store).unwrap().pending);
 }
 
