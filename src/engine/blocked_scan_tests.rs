@@ -79,6 +79,7 @@ fn slow_catalog_read_cannot_delay_manual_policy_heartbeat_or_shutdown() {
     let command_id = store.db.last_insert_rowid();
     let started = Instant::now();
     let mut policy_done_in_time = false;
+    let mut command_heartbeat = first_heartbeat;
     while started.elapsed() < Duration::from_secs(7) {
         let status: String = store
             .db
@@ -90,16 +91,28 @@ fn slow_catalog_read_cannot_delay_manual_policy_heartbeat_or_shutdown() {
             .unwrap();
         if status == "done" {
             policy_done_in_time = true;
+            // Processing a command *forces* a heartbeat and resets the
+            // 15-second interval. The idle heartbeat must be measured from
+            // this point, not from the earlier startup heartbeat.
+            command_heartbeat = store.get("heartbeat").unwrap();
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    // Continue holding the filesystem boundary for a full heartbeat interval.
-    while started.elapsed() < Duration::from_secs(19) {
+    // The scan remains blocked while the monitor must publish its next
+    // ordinary heartbeat. Poll the real persisted value instead of relying
+    // on a single 19-second wall-time sample, which could precede the
+    // next heartbeat after a command completes late on a busy CI host.
+    let heartbeat_wait = Instant::now();
+    let mut heartbeat_advanced = false;
+    while heartbeat_wait.elapsed() < Duration::from_secs(30) {
+        let refreshed_heartbeat: i64 = store.get("heartbeat").unwrap();
+        if refreshed_heartbeat >= command_heartbeat + HEARTBEAT_INTERVAL.as_secs() as i64 {
+            heartbeat_advanced = true;
+            break;
+        }
         std::thread::sleep(Duration::from_millis(100));
     }
-    let refreshed_heartbeat: i64 = store.get("heartbeat").unwrap();
-    let heartbeat_advanced = refreshed_heartbeat >= first_heartbeat + 15;
 
     // A later user edit during shutdown must never be committed by the old
     // scanner after its owning monitor has exited.
