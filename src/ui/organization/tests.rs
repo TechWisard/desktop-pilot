@@ -116,12 +116,13 @@ fn render(
     viewport: egui::Vec2,
     events: Vec<egui::Event>,
 ) -> egui::FullOutput {
+    // Areas use an initial sizing pass and a timed fade-in. Advance input time
+    // as the real event loop does, retaining the parallel fixture correction.
+    let time = ctx.input(|input| input.time) + 0.25;
     ctx.run(
         egui::RawInput {
-            // Areas use a first sizing pass and a timed fade-in. Real eframe
-            // advances input time; headless fixtures must do the same.
-            time: Some(ctx.input(|input| input.time) + 0.25),
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, viewport)),
+            time: Some(time),
             events,
             ..Default::default()
         },
@@ -137,6 +138,34 @@ fn render(
             );
         },
     )
+}
+
+fn settle(ctx: &egui::Context, app: &mut Settings, viewport: egui::Vec2) {
+    // A newly created egui Area has an intentionally invisible sizing pass.
+    // Geometry is checked above during it. Every tested frame below must then
+    // contain real painted feedback and controls, not merely an empty result.
+    for _ in 0..3 {
+        let _ = render(ctx, app, viewport, Vec::new());
+    }
+}
+
+fn click(ctx: &egui::Context, app: &mut Settings, viewport: egui::Vec2, at: egui::Pos2) {
+    for pressed in [true, false] {
+        let _ = render(
+            ctx,
+            app,
+            viewport,
+            vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+    }
 }
 
 #[test]
@@ -201,9 +230,10 @@ fn failed_apply_returns_visible_modal_feedback_and_preserves_every_object() {
     assert!(details.contains("changed after preview"));
     let ctx = egui::Context::default();
     configure_style(&ctx);
-    let _ = render(&ctx, &mut f.app, egui::vec2(480.0, 360.0), Vec::new());
+    let viewport = egui::vec2(480.0, 360.0);
+    settle(&ctx, &mut f.app, viewport);
     for _ in 0..3 {
-        let output = render(&ctx, &mut f.app, egui::vec2(480.0, 360.0), Vec::new());
+        let output = render(&ctx, &mut f.app, viewport, Vec::new());
         let text = rendered_text(&output);
         assert!(
             text.iter().any(|(value, _)| {
@@ -226,28 +256,27 @@ fn organization_modal_keeps_close_feedback_and_progress_inside_scaled_viewports(
             configure_style(&ctx);
             ctx.set_zoom_factor(scale);
             let viewport = egui::vec2(960.0 / scale, 720.0 / scale);
+            f.app.organization_open = true;
             f.app.config.language = language.into();
             i18n::set(language);
             f.app.fail("A source changed; no object was overwritten.");
-            // Layout and zoom changes may need more than one sizing pass.
-            for _ in 0..3 {
-                let _ = render(&ctx, &mut f.app, viewport, Vec::new());
-            }
+            settle(&ctx, &mut f.app, viewport);
             for frame in 0..3 {
                 let output = render(&ctx, &mut f.app, viewport, Vec::new());
                 let text = rendered_text(&output);
-                let summary_visible = text.iter().any(|(value, _)| {
+                let feedback = text.iter().find(|(value, _)| {
                     value.contains("Действие не завершено")
                         || value.contains("The action did not complete")
                 });
                 assert!(
-                    summary_visible,
+                    feedback.is_some(),
                     "language={language}, scale={scale}, frame={frame}, painted={:?}, shapes={}",
                     text.iter()
                         .map(|(value, _)| value.as_str())
                         .collect::<Vec<_>>(),
                     output.shapes.len()
                 );
+                assert!(ctx.screen_rect().contains_rect(feedback.unwrap().1));
                 let (_, close) = text
                     .iter()
                     .find(|(value, _)| matches!(value.as_str(), "Close" | "Закрыть"))
@@ -263,6 +292,7 @@ fn organization_modal_keeps_close_feedback_and_progress_inside_scaled_viewports(
                 started: Instant::now(),
                 receiver,
             });
+            settle(&ctx, &mut f.app, viewport);
             for _ in 0..3 {
                 let output = render(&ctx, &mut f.app, viewport, Vec::new());
                 assert!(rendered_text(&output).iter().any(|(value, _)| {
@@ -271,6 +301,20 @@ fn organization_modal_keeps_close_feedback_and_progress_inside_scaled_viewports(
                 }));
             }
             f.app.job = None;
+            settle(&ctx, &mut f.app, viewport);
+            let output = render(&ctx, &mut f.app, viewport, Vec::new());
+            let text = rendered_text(&output);
+            let (_, close) = text
+                .iter()
+                .find(|(value, _)| matches!(value.as_str(), "Close" | "Закрыть"))
+                .expect("Close is painted before the pointer action");
+            click(&ctx, &mut f.app, viewport, close.center());
+            assert!(
+                !f.app.organization_open,
+                "The visible Close button must work"
+            );
+            assert!(f.desktop.join("Alpha.url").is_file());
+            assert!(f.desktop.join("Beta.url").is_file());
         }
     }
 }
