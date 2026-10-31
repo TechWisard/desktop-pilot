@@ -391,7 +391,7 @@ pub(crate) fn preview_loaded(
     time: i64,
 ) -> Result<Preview> {
     cfg.validate()?;
-    let ranking = rank(apps, days, cfg, time);
+    let ranking = rank_with_owned(apps, days, cfg, time, &state.owned);
     let selected = select_at(apps, &ranking, state, cfg, initial, time);
     ensure!(
         selected.len() <= cfg.slots,
