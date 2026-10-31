@@ -705,7 +705,9 @@ mod tests {
     fn interrupted_desktop_organization_blocks_background_start_without_changing_permissions() {
         let root = test_home("organization-startup");
         let store = Store::open(&root).unwrap();
-        store.set("organization.active.v1", &Some("123-456".to_owned())).unwrap();
+        store
+            .set("organization.active.v1", &Some("123-456".to_owned()))
+            .unwrap();
         let previous: bool = store.get("background_disabled").unwrap();
         let error = start_installed(&store, &installed_exe(&root)).unwrap_err();
         assert!(
@@ -726,7 +728,8 @@ mod tests {
         let (value, warning) = with_organization_paused(&root, |profile| {
             profile.set("organizer_test_marker", &"safe")?;
             Ok(7839)
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(value, 7839);
         assert!(warning.is_none());
         assert_eq!(
@@ -735,7 +738,12 @@ mod tests {
         );
         let failure: Result<(usize, Option<String>)> =
             with_organization_paused(&root, |_| anyhow::bail!("injected organizer error"));
-        assert!(failure.unwrap_err().to_string().contains("injected organizer error"));
+        assert!(
+            failure
+                .unwrap_err()
+                .to_string()
+                .contains("injected organizer error")
+        );
         assert!(!native::is_running("background", &root).unwrap());
         drop(store);
         std::fs::remove_dir_all(root).unwrap();
