@@ -80,7 +80,9 @@ pub(super) fn classify(path: &Path, options: &Options) -> Result<(Group, Option<
 #[derive(Default)]
 pub(super) struct Dependencies {
     paths: HashSet<String>,
+    arguments: HashSet<String>,
     desktop_working_directory: bool,
+    incomplete: bool,
 }
 impl Dependencies {
     fn record(&mut self, app: &App, root: &Path) {
@@ -91,17 +93,41 @@ impl Dependencies {
                 self.paths.insert(norm(&expanded));
             }
         }
+        if !app.arguments.trim().is_empty() {
+            // Arguments belong to the target application's grammar. Do not
+            // execute or reinterpret them as a shell command. A literal path
+            // or filename is enough evidence to preserve a possible dependency;
+            // false positives are preferable to breaking a saved launch.
+            self.arguments.insert(norm(&app.arguments).replace('"', ""));
+        }
         self.desktop_working_directory |=
             !app.cwd.is_empty() && norm(&app.cwd) == norm(&root.to_string_lossy());
     }
     pub(super) fn check(&self, path: &Path, shortcut: bool) -> Result<()> {
+        let normalized = norm(&path.to_string_lossy());
         ensure!(
-            !self.paths.contains(&norm(&path.to_string_lossy())),
+            !self.paths.contains(&normalized),
             "Another known shortcut depends on this object: left in place"
+        );
+        let name = path
+            .file_name()
+            .context("Desktop entry has no filename")?
+            .to_string_lossy()
+            .to_lowercase();
+        ensure!(
+            !self
+                .arguments
+                .iter()
+                .any(|args| args.contains(&normalized) || args.contains(&name)),
+            "Shortcut launch arguments may refer to this object: left in place"
         );
         ensure!(
             shortcut || !self.desktop_working_directory,
             "The desktop is used as an application's working directory: files left in place"
+        );
+        ensure!(
+            shortcut || !self.incomplete,
+            "Some shortcut dependencies could not be inspected: files left in place"
         );
         Ok(())
     }
@@ -139,10 +165,11 @@ pub(super) fn dependencies(
             !cancel.load(Ordering::Relaxed),
             "Organization analysis cancelled"
         );
-        if fs::inspect(path, true).is_ok()
-            && let Ok(app) = metadata::read(path)
-        {
-            dependencies.record(&app, root);
+        match fs::inspect(path, true).and_then(|_| metadata::read(path)) {
+            Ok(app) => dependencies.record(&app, root),
+            // Unknown is not independent. Shortcut grouping can still proceed,
+            // but the optional ordinary-file pass needs a complete local view.
+            Err(_) => dependencies.incomplete = true,
         }
     }
     Ok(dependencies)

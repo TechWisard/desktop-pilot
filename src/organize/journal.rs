@@ -199,6 +199,10 @@ pub(crate) fn apply_stopped(store: &Store, plan: &Plan, cancel: &AtomicBool) -> 
     let root = root_path.as_path();
     let state: State = store.get("state")?;
     let apps = store.apps()?;
+    // A preview is not durable permission. Another window can save a newer
+    // Keep choice and undo its moves while leaving the old preview open.
+    // Read the current choices under the same changes lock as every writer.
+    let keep: HashSet<String> = store.get::<Vec<String>>(KEEP)?.into_iter().collect();
     let paths = plan::paths(root, cancel)?;
     let dependencies = plan::dependencies(root, &paths, &apps, cancel)?;
     let managed_paths: HashSet<_> = state.owned.iter().map(|o| norm(&o.path)).collect();
@@ -220,6 +224,10 @@ pub(crate) fn apply_stopped(store: &Store, plan: &Plan, cancel: &AtomicBool) -> 
         ensure!(
             actual == movement.item.stamp,
             "An object changed after preview; refresh the plan"
+        );
+        ensure!(
+            !keep.contains(&actual.id),
+            "Your keep-on-desktop choice changed after preview; refresh the plan"
         );
         let normalized = norm(&path.to_string_lossy());
         ensure!(

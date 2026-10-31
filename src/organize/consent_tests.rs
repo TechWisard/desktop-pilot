@@ -24,7 +24,9 @@ impl Fixture {
         let store = Store::open(&home).unwrap();
         let desktop = home.join("Desktop");
         disk::create_dir(&desktop).unwrap();
-        store.set("test_desktop", &desktop.to_string_lossy()).unwrap();
+        store
+            .set("test_desktop", &desktop.to_string_lossy())
+            .unwrap();
         store.set("config", &Config::default()).unwrap();
         Self {
             store,
@@ -51,7 +53,9 @@ impl Fixture {
             format!("[InternetShortcut]\r\nURL=https://example.invalid/{name}\r\n"),
         )
         .unwrap();
-        self.store.put_app(&native::read_link(&path).unwrap()).unwrap();
+        self.store
+            .put_app(&native::read_link(&path).unwrap())
+            .unwrap();
     }
 
     fn argument_link(&self, argument: &str) {
@@ -61,7 +65,9 @@ impl Fixture {
         disk::write(&executable, b"inert fixture; never execute").unwrap();
         let path = self.desktop.join("Open document.lnk");
         native::make_link(&path, &executable, argument, "", 0, "fixture").unwrap();
-        self.store.put_app(&native::read_link(&path).unwrap()).unwrap();
+        self.store
+            .put_app(&native::read_link(&path).unwrap())
+            .unwrap();
     }
 }
 
@@ -73,7 +79,12 @@ fn old_preview_cannot_override_a_new_keep_choice_after_undo() {
     }
     let old_preview = f.plan(false);
     let mut latest = old_preview.clone();
-    latest.items.iter_mut().find(|i| i.name == "Alpha.url").unwrap().selected = false;
+    latest
+        .items
+        .iter_mut()
+        .find(|i| i.name == "Alpha.url")
+        .unwrap()
+        .selected = false;
     apply(&f.store, &latest, &AtomicBool::new(false)).unwrap();
     let id = status(&f.store).unwrap().undo.unwrap();
     undo(&f.store, &id).unwrap();
@@ -107,7 +118,11 @@ fn explicit_shortcut_argument_keeps_its_document_out_of_the_plan() {
         "moving a document named in a shortcut argument would break the saved launch"
     );
     assert!(plan.items.iter().any(|i| i.name == "Other.txt"));
-    assert!(plan.skipped.iter().any(|i| i.name == "Important report.txt"));
+    assert!(
+        plan.skipped
+            .iter()
+            .any(|i| i.name == "Important report.txt")
+    );
     assert_eq!(disk::read(document).unwrap(), b"original document");
 }
 
@@ -130,4 +145,41 @@ fn dependency_created_after_preview_prevents_every_move() {
     assert!(!f.desktop.join("Documents").exists());
     assert!(!status(&f.store).unwrap().pending);
     assert!(status(&f.store).unwrap().undo.is_none());
+}
+
+#[test]
+fn unknown_shortcut_dependencies_keep_files_but_not_independent_site_shortcuts() {
+    let f = Fixture::new();
+    f.site("Alpha");
+    f.site("Beta");
+    for name in ["Important.txt", "Other.txt"] {
+        disk::write(f.desktop.join(name), b"original document").unwrap();
+    }
+    let broken = f.desktop.join("Unreadable.lnk");
+    disk::write(&broken, b"not a valid Windows Shell link").unwrap();
+    let plan = f.plan(true);
+    assert_eq!(plan.summary(), (2, 1, 1));
+    assert!(plan.items.iter().all(|item| item.group == Group::Sites));
+    assert!(plan.skipped.iter().any(|item| item.name == "Important.txt"));
+    apply(&f.store, &plan, &AtomicBool::new(false)).unwrap();
+    assert_eq!(
+        disk::read(f.desktop.join("Important.txt")).unwrap(),
+        b"original document"
+    );
+    assert_eq!(disk::read(&broken).unwrap(), b"not a valid Windows Shell link");
+    let id = status(&f.store).unwrap().undo.unwrap();
+    undo(&f.store, &id).unwrap();
+    disk::remove_file(broken).unwrap();
+    assert_eq!(f.plan(true).summary(), (4, 2, 2));
+}
+
+#[test]
+fn relative_argument_spelling_is_conservatively_preserved_without_launching() {
+    let f = Fixture::new();
+    disk::write(f.desktop.join("Report.TXT"), b"keep").unwrap();
+    f.argument_link("--file=\"..\\Desktop\\REPORT.txt\"");
+    let plan = f.plan(true);
+    assert!(!plan.items.iter().any(|item| item.name == "Report.TXT"));
+    assert!(plan.skipped.iter().any(|item| item.name == "Report.TXT"));
+    assert_eq!(disk::read(f.desktop.join("Report.TXT")).unwrap(), b"keep");
 }
