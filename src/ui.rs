@@ -2267,6 +2267,22 @@ impl Settings {
         if !self.saved_config.automatic {
             return t("По вашей команде", "When you choose Apply").into();
         }
+        // A paused or disabled profile cannot schedule unattended placement.
+        // Report the persisted permission before considering worker heartbeat.
+        if !self.saved_config.collect {
+            return t(
+                "Автоматические изменения приостановлены: наблюдение выключено",
+                "Automatic changes paused: observation is off",
+            )
+            .into();
+        }
+        if self.background_disabled {
+            return t(
+                "Фоновая работа отключена до вашего запуска",
+                "Background work is off until you restart it",
+            )
+            .into();
+        }
         if !self.background_alive {
             return t(
                 "После запуска фоновой работы",
@@ -2288,14 +2304,15 @@ impl Settings {
             )
             .into();
         }
-        let due = self
-            .state
-            .last_review
-            .saturating_add(self.saved_config.interval_days.saturating_mul(86400));
-        if due <= now() {
+        let at = now();
+        if engine::scheduled_review_due(&self.state, &self.saved_config, at) {
             t("При ближайшем бездействии", "At the next idle opportunity").into()
         } else {
-            when(due)
+            when(
+                self.state
+                    .last_review
+                    .saturating_add(self.saved_config.interval_days.saturating_mul(86400)),
+            )
         }
     }
     fn name_for(&self, id: &str) -> String {

@@ -179,10 +179,26 @@ fn next_review_respects_paused_collection_and_corrected_clock() {
             "a paused adaptive profile must not promise an unattended change"
         );
 
+        // Explicitly turning off the background worker is also not a
+        // promise to run when idle, even if the old heartbeat was recent.
+        config.collect = true;
+        store.set("config", &config).unwrap();
+        store.set("background_disabled", &true).unwrap();
+        settings.catalog_checkpoint = None;
+        settings.reload().unwrap();
+        settings.background_alive = true;
+        assert_eq!(
+            settings.next_review(),
+            t(
+                "Фоновая работа отключена до вашего запуска",
+                "Background work is off until you restart it",
+            )
+        );
+        store.set("background_disabled", &false).unwrap();
+
         // A Windows wall-clock correction can move the last saved review into
         // the future. The real scheduler treats a large rewind as due, not
         // as a multiweek delay. Home must tell the same story.
-        config.collect = true;
         state.last_review = now() + 45 * 86_400;
         store.set("config", &config).unwrap();
         store.set("state", &state).unwrap();
