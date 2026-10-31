@@ -253,9 +253,7 @@ pub fn analyze(
                 aliases.get(&name.to_lowercase()).and_then(|candidates| {
                     candidates
                         .iter()
-                        .find(|(alias, _)| {
-                            fs::matches_id(alias, &stamp.id).unwrap_or(false)
-                        })
+                        .find(|(alias, _)| fs::matches_id(alias, &stamp.id).unwrap_or(false))
                         .map(|(_, position)| position.clone())
                 })
             });
@@ -400,9 +398,7 @@ impl Plan {
             };
             alias_ids
                 .get(&name.to_string_lossy().to_lowercase())
-                .is_none_or(|id| {
-                    !fs::matches_id(Path::new(&item.path), id).unwrap_or(false)
-                })
+                .is_none_or(|id| !fs::matches_id(Path::new(&item.path), id).unwrap_or(false))
         });
         for folder in self.folders.iter().filter(|f| f.created) {
             if let Some(movement) = movements.iter().find(|m| m.folder == folder.name)
