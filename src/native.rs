@@ -231,12 +231,45 @@ fn web_target_has_host(target: &str) -> bool {
         return false;
     };
     let authority = remainder.split(['/', '?', '#']).next().unwrap_or_default();
-    let host = authority.rsplit('@').next().unwrap_or_default();
-    !host.is_empty()
-        && !host.starts_with(':')
-        && !host
+    let host_port = authority.rsplit('@').next().unwrap_or_default();
+    if host_port.is_empty()
+        || host_port.starts_with(':')
+        || host_port
             .chars()
             .any(|ch| ch.is_whitespace() || ch.is_control() || ch == '\\')
+    {
+        return false;
+    }
+    // A bracketed authority must contain a valid IPv6 address, with an
+    // optional port after the closing bracket. The address's colons are not
+    // port separators.
+    let port = if let Some(bracketed) = host_port.strip_prefix('[') {
+        let Some((address, tail)) = bracketed.split_once(']') else {
+            return false;
+        };
+        if address.parse::<std::net::Ipv6Addr>().is_err() {
+            return false;
+        }
+        if tail.is_empty() {
+            None
+        } else {
+            let Some(port) = tail.strip_prefix(':') else {
+                return false;
+            };
+            Some(port)
+        }
+    } else {
+        if host_port.contains(['[', ']']) {
+            return false;
+        }
+        host_port.split_once(':').map(|(_, port)| port)
+    };
+    // An empty explicit port is treated by browsers as omitted. A nondecimal
+    // or out-of-range port cannot be launched as an HTTP(S) authority.
+    port.is_none_or(|port| {
+        port.is_empty()
+            || (port.bytes().all(|digit| digit.is_ascii_digit()) && port.parse::<u16>().is_ok())
+    })
 }
 pub fn valid_target(a: &App) -> bool {
     let target = a.target.trim();
@@ -1468,6 +1501,101 @@ mod tests {
             "http://localhost:8080/",
             "https://[::1]/",
             "https://user:secret@example.invalid/path with spaces",
+        ] {
+            assert!(
+                valid_target(&App {
+                    target: target.into(),
+                    ..Default::default()
+                }),
+                "{target}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_http_ports_cannot_occupy_quick_slots() {
+        // Real .url files and production selection: a high stored score must
+        // not let an unlaunchable explicit port displace a usable link.
+        let directory = std::env::temp_dir().join(format!(
+            "desktop-pilot-web-port-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let broken = directory.join("Malformed port.url");
+        let working = directory.join("Working.url");
+        let broken_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid:word/project\r\n";
+        let working_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid:8443/project\r\n";
+        std::fs::write(&broken, broken_bytes).unwrap();
+        std::fs::write(&working, working_bytes).unwrap();
+        let mut broken_app = read_link(&broken).unwrap();
+        let mut working_app = read_link(&working).unwrap();
+        assert!(
+            !broken_app.valid,
+            "a nonnumeric HTTP port is not launchable"
+        );
+        assert!(working_app.valid);
+        let now = crate::model::now();
+        broken_app.seed = 500.0;
+        broken_app.seed_at = now;
+        working_app.seed = 30.0;
+        working_app.seed_at = now;
+        let config = crate::model::Config {
+            slots: 1,
+            learning_enabled: false,
+            collect: true,
+            ..Default::default()
+        };
+        let preview = crate::engine::preview_loaded(
+            &config,
+            &[broken_app.clone(), working_app.clone()],
+            &[],
+            &crate::model::State::default(),
+            true,
+            now,
+        )
+        .unwrap();
+        assert_eq!(preview.selected, [working_app.id]);
+        assert!(
+            !preview
+                .ranking
+                .iter()
+                .find(|r| r.id == broken_app.id)
+                .unwrap()
+                .eligible
+        );
+        assert_eq!(std::fs::read(&broken).unwrap(), broken_bytes);
+        assert_eq!(std::fs::read(&working).unwrap(), working_bytes);
+        std::fs::remove_dir_all(directory).unwrap();
+
+        for target in [
+            "https://example.invalid:word/",
+            "http://example.invalid:65536/",
+            "https://example.invalid:12x/",
+            "https://example.invalid:1:2/",
+            "https://[::1",
+            "https://[::1]junk/",
+            "https://[not-ipv6]/",
+            "https://[::1]:99999/",
+        ] {
+            assert!(
+                !valid_target(&App {
+                    target: target.into(),
+                    ..Default::default()
+                }),
+                "{target}"
+            );
+        }
+        for target in [
+            "http://localhost:8080/",
+            "https://[::1]:443/",
+            "https://[2001:db8::1]/",
+            "https://example.invalid:65535/path?q=1",
+            "https://user:secret@example.invalid:8443/path",
+            "https://example.invalid:/existing-shortcut",
         ] {
             assert!(
                 valid_target(&App {
