@@ -231,12 +231,46 @@ fn web_target_has_host(target: &str) -> bool {
         return false;
     };
     let authority = remainder.split(['/', '?', '#']).next().unwrap_or_default();
-    let host = authority.rsplit('@').next().unwrap_or_default();
-    !host.is_empty()
-        && !host.starts_with(':')
-        && !host
+    let host_port = authority.rsplit('@').next().unwrap_or_default();
+    if host_port.is_empty()
+        || host_port.starts_with(':')
+        || host_port
             .chars()
             .any(|ch| ch.is_whitespace() || ch.is_control() || ch == '\\')
+    {
+        return false;
+    }
+    // A bracketed authority must contain a valid IPv6 address, with an
+    // optional port after the closing bracket. The address's colons are not
+    // port separators.
+    let port = if let Some(bracketed) = host_port.strip_prefix('[') {
+        let Some((address, tail)) = bracketed.split_once(']') else {
+            return false;
+        };
+        if address.parse::<std::net::Ipv6Addr>().is_err() {
+            return false;
+        }
+        if tail.is_empty() {
+            None
+        } else {
+            let Some(port) = tail.strip_prefix(':') else {
+                return false;
+            };
+            Some(port)
+        }
+    } else {
+        if host_port.contains(['[', ']']) {
+            return false;
+        }
+        host_port.split_once(':').map(|(_, port)| port)
+    };
+    // An empty explicit port is treated by browsers as omitted. A nondecimal
+    // or out-of-range port cannot be launched as an HTTP(S) authority.
+    port.is_none_or(|port| {
+        port.is_empty()
+            || (port.bytes().all(|digit| digit.is_ascii_digit())
+                && port.parse::<u16>().is_ok())
+    })
 }
 pub fn valid_target(a: &App) -> bool {
     let target = a.target.trim();
