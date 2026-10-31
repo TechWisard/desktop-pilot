@@ -12,25 +12,6 @@ fn organization_page_bounds(total: usize, requested: usize) -> (usize, usize, us
     (page, pages, start, end)
 }
 
-#[cfg(test)]
-mod page_tests {
-    use super::*;
-
-    #[test]
-    fn all_six_thousand_preview_items_remain_accessible() {
-        let mut visited = Vec::new();
-        for page in 0..150 {
-            let (actual, total, start, end) = organization_page_bounds(6000, page);
-            assert_eq!(actual, page);
-            assert_eq!(total, 150);
-            visited.extend(start..end);
-        }
-        assert_eq!(visited, (0..6000).collect::<Vec<_>>());
-        assert_eq!(organization_page_bounds(0, 10), (0, 1, 0, 0));
-        assert_eq!(organization_page_bounds(41, 999), (1, 2, 40, 41));
-    }
-}
-
 impl Settings {
     fn organization_analyze(&mut self) {
         if self.busy() {
@@ -402,5 +383,24 @@ impl Settings {
         if reset {
             self.organization_reset_exclusions();
         }
+    }
+}
+
+#[cfg(test)]
+mod page_tests {
+    use super::*;
+
+    #[test]
+    fn all_six_thousand_preview_items_remain_accessible() {
+        let mut visited = Vec::new();
+        for page in 0..150 {
+            let (actual, total, start, end) = organization_page_bounds(6000, page);
+            assert_eq!(actual, page);
+            assert_eq!(total, 150);
+            visited.extend(start..end);
+        }
+        assert_eq!(visited, (0..6000).collect::<Vec<_>>());
+        assert_eq!(organization_page_bounds(0, 10), (0, 1, 0, 0));
+        assert_eq!(organization_page_bounds(41, 999), (1, 2, 40, 41));
     }
 }
