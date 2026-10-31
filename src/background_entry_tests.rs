@@ -1,17 +1,45 @@
 use super::*;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn test_home() -> PathBuf {
+static HOME_SERIAL: AtomicU64 = AtomicU64::new(0);
+
+fn test_home_at(timestamp: u128) -> PathBuf {
+    // Windows clocks may report the same instant for concurrent tests.
+    // Never let parallel tests silently share a profile or delete its files.
     let home = std::env::temp_dir().join(format!(
-        "test-desktop-pilot-background-entry-{}-{}",
+        "test-desktop-pilot-background-entry-{}-{}-{}",
         std::process::id(),
+        timestamp,
+        HOME_SERIAL.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir(&home).unwrap();
+    home
+}
+
+fn test_home() -> PathBuf {
+    test_home_at(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&home).unwrap();
-    home
+            .as_nanos(),
+    )
+}
+
+#[test]
+fn simultaneous_fixture_creation_with_the_same_clock_tick_is_isolated() {
+    let jobs: Vec<_> = (0..16)
+        .map(|_| std::thread::spawn(|| test_home_at(123_456_789)))
+        .collect();
+    let mut paths = std::collections::HashSet::new();
+    for job in jobs {
+        let home = job.join().unwrap();
+        assert!(
+            paths.insert(home.clone()),
+            "parallel test profiles must never reuse the same directory"
+        );
+        std::fs::remove_dir(home).unwrap();
+    }
 }
 
 #[test]

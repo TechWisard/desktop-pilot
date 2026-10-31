@@ -1189,6 +1189,12 @@ pub(crate) fn reserve_positions(
 
 pub fn apply(store: &Store, initial: bool) -> Result<String> {
     let _lock = native::exclusive("changes", &store.home)?;
+    apply_locked(store, initial)
+}
+
+// The named changes mutex must be held by the caller. Both explicit Apply and
+// scheduled review share the exact same transaction and rollback logic.
+fn apply_locked(store: &Store, initial: bool) -> Result<String> {
     ensure!(
         store
             .get::<Progress>("learning")?
@@ -1920,6 +1926,16 @@ fn observe_app_id(apps: &[App], id: &str) -> Option<String> {
 }
 
 pub fn automatic_review(store: &Store, quiet: bool) -> Result<bool> {
+    automatic_review_with_boundary(store, quiet, || {})
+}
+
+// The boundary callback allows a deterministic scheduling regression against
+// the very same production review path. The normal caller supplies no action.
+pub(crate) fn automatic_review_with_boundary(
+    store: &Store,
+    quiet: bool,
+    before_apply: impl FnOnce(),
+) -> Result<bool> {
     if store.get::<bool>("shutdown")? {
         return Ok(false);
     }
@@ -1953,7 +1969,22 @@ pub fn automatic_review(store: &Store, quiet: bool) -> Result<bool> {
         && quiet
         && (state.initialized || !preview(store, true)?.selected.is_empty())
     {
-        apply(store, !state.initialized)?;
+        before_apply();
+        // Settings can commit an observation pause after the earlier review
+        // eligibility snapshot. Serialize the final permission read with
+        // actual file placement, so an acknowledged pause cannot be bypassed
+        // by a previously queued automatic review.
+        let _lock = native::exclusive("changes", &store.home)?;
+        let current: Config = store.get("config")?;
+        if store.get::<bool>("shutdown")?
+            || store.get::<bool>("background_disabled")?
+            || !current.automatic
+            || !current.collect
+        {
+            return Ok(false);
+        }
+        current.validate()?;
+        apply_locked(store, !state.initialized)?;
         return Ok(true);
     }
     Ok(false)

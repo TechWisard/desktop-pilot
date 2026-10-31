@@ -409,6 +409,77 @@ fn changing_projects_after_a_gap_keeps_the_rare_manual_shortcut_and_undo_is_resp
 }
 
 #[test]
+fn pausing_while_a_due_review_is_queued_does_not_rearrange_shortcuts() {
+    with_profile(|store, old, desktop| {
+        let mut config: Config = store.get("config").unwrap();
+        config.automatic = true;
+        config.collect = true;
+        config.learning_enabled = false;
+        config.slots = 1;
+        config.max_changes = 1;
+        store.set("config", &config).unwrap();
+
+        let mut first = store.app(&old.id).unwrap();
+        first.seed = 30.0;
+        first.seed_at = now();
+        store.put_app(&first).unwrap();
+        engine::apply(store, true).unwrap();
+        let original: State = store.get("state").unwrap();
+        assert_eq!(original.owned[0].app, old.id);
+        let original_bytes = std::fs::read(&old.source).unwrap();
+        let original_copy = original.owned[0].path.clone();
+
+        let new_source = store.home.join("LaterProject.url");
+        let new_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/LaterProject\r\n";
+        std::fs::write(&new_source, new_bytes).unwrap();
+        let mut candidate = crate::native::read_link(&new_source).unwrap();
+        candidate.seed = 160.0;
+        candidate.seed_at = now();
+        store.put_app(&candidate).unwrap();
+
+        let mut due = original.clone();
+        due.last_review = now() - 8 * 86_400;
+        store.set("state", &due).unwrap();
+        let proposal = engine::preview(store, false).unwrap();
+        assert_eq!(proposal.added, vec![candidate.id.clone()]);
+        assert_eq!(proposal.removed, vec![old.id.clone()]);
+
+        // The worker already checked its old Adaptive permission. Pause at
+        // its actual boundary before Apply while Settings commits a new mode.
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+        let home = store.home.clone();
+        let review = std::thread::spawn(move || {
+            let worker = Store::open(&home).unwrap();
+            engine::automatic_review_with_boundary(&worker, true, || {
+                entered_tx.send(()).unwrap();
+                resume_rx.recv().unwrap();
+            })
+            .unwrap()
+        });
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(15))
+            .unwrap();
+        config.collect = false;
+        store.set("config", &config).unwrap();
+        resume_tx.send(()).unwrap();
+        let changed = review.join().unwrap();
+
+        assert!(
+            !changed,
+            "a committed observation pause must cancel a queued unattended review"
+        );
+        let after: State = store.get("state").unwrap();
+        assert_eq!(after.owned, due.owned);
+        assert_eq!(after.last_review, due.last_review);
+        assert_eq!(std::fs::read(&original_copy).unwrap(), original_bytes);
+        assert_eq!(std::fs::read(&old.source).unwrap(), original_bytes);
+        assert_eq!(std::fs::read(&new_source).unwrap(), new_bytes);
+        assert_eq!(std::fs::read_dir(desktop).unwrap().count(), 1);
+    });
+}
+
+#[test]
 fn paused_collection_must_not_apply_stale_adaptive_recommendations() {
     with_profile(|store, old, desktop| {
         // This unusual but supported state is reachable through Settings'
