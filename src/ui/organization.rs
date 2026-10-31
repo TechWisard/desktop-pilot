@@ -68,11 +68,24 @@ impl Settings {
         });
     }
 
+    fn organization_reset_exclusions(&mut self) {
+        if self.busy() {
+            return;
+        }
+        let home = self.store.home.clone();
+        self.start_job("Resetting desktop organization exclusions…", move || {
+            let store = Store::open(&home)?;
+            organize::clear_exclusions(&store)?;
+            Ok(JobResult::OrganizationReset)
+        });
+    }
+
     pub(super) fn organization_dialog(&mut self, ctx: &egui::Context) {
         let mut analyze = false;
         let mut apply = false;
         let mut undo = None;
         let mut accept = None;
+        let mut reset = false;
         let mut close = false;
         let available = !self.busy();
         let status = organize::status(&self.store);
@@ -274,6 +287,26 @@ impl Settings {
                         }
                     }
                 }
+                if status.as_ref().is_ok_and(|state| !state.pending) {
+                    ui.separator();
+                    egui::CollapsingHeader::new(t("Ранее исключённые объекты", "Previously excluded objects"))
+                        .show(ui, |ui| {
+                            ui.label(t(
+                                "Программа помнит, что вы оставили на месте. Сброс не перемещает файлы, но позволяет предложить их снова в следующем анализе.",
+                                "Objects you chose to leave are remembered. Reset moves no files; it only allows future plans to suggest them again.",
+                            ));
+                            ui.checkbox(
+                                &mut self.organization_reset_confirm,
+                                t("Сбросить все исключения", "Confirm resetting all exclusions"),
+                            );
+                            if ui.add_enabled(
+                                available && self.organization_reset_confirm,
+                                egui::Button::new(t("Сбросить сохранённый выбор", "Reset remembered choices")),
+                            ).clicked() {
+                                reset = true;
+                            }
+                        });
+                }
                 ui.add_space(8.0);
                 if ui
                     .add_enabled(available, egui::Button::new(t("Закрыть", "Close")))
@@ -301,6 +334,9 @@ impl Settings {
         }
         if let Some(id) = accept {
             self.organization_accept(id);
+        }
+        if reset {
+            self.organization_reset_exclusions();
         }
     }
 }
