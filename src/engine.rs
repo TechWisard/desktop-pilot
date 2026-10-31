@@ -1920,6 +1920,16 @@ fn observe_app_id(apps: &[App], id: &str) -> Option<String> {
 }
 
 pub fn automatic_review(store: &Store, quiet: bool) -> Result<bool> {
+    automatic_review_with_boundary(store, quiet, || {})
+}
+
+// The boundary callback allows a deterministic scheduling regression against
+// the very same production review path. The normal caller supplies no action.
+pub(crate) fn automatic_review_with_boundary(
+    store: &Store,
+    quiet: bool,
+    before_apply: impl FnOnce(),
+) -> Result<bool> {
     if store.get::<bool>("shutdown")? {
         return Ok(false);
     }
@@ -1953,6 +1963,7 @@ pub fn automatic_review(store: &Store, quiet: bool) -> Result<bool> {
         && quiet
         && (state.initialized || !preview(store, true)?.selected.is_empty())
     {
+        before_apply();
         apply(store, !state.initialized)?;
         return Ok(true);
     }
