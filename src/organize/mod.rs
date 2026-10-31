@@ -1,5 +1,7 @@
 //! Explicit, reversible desktop organization. Never scheduled automatically.
 #[cfg(test)]
+mod acceptance_tests;
+#[cfg(test)]
 mod consent_tests;
 mod fs;
 mod journal;
