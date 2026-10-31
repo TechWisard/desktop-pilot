@@ -34,7 +34,7 @@ jobs:
         shell: pwsh
         run: ./scripts/test-native.ps1
       - name: Native check reports
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: native-checks-${{ matrix.os }}
@@ -68,7 +68,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: ./scripts/publish-release.ps1
       - name: Release verification reports
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: release-verification
