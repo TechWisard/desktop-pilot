@@ -583,6 +583,60 @@ fn projected_space_counts_folders_and_respects_deselection() {
                 .map(|movement| (&movement.item.name, &movement.folder))
                 .collect::<Vec<_>>()
         );
+        let mut simulated = plan.layout.clone().unwrap();
+        let moved: std::collections::HashSet<String> = plan
+            .movements()
+            .iter()
+            .map(|movement| norm(&Path::new(&plan.root).join(&movement.item.name).to_string_lossy()))
+            .collect();
+        eprintln!("moved source keys: {moved:?}");
+        eprintln!(
+            "before source keys: {:?}",
+            simulated
+                .items
+                .iter()
+                .map(|item| (item.name.clone(), norm(&item.path)))
+                .collect::<Vec<_>>()
+        );
+        simulated.items.retain(|item| !moved.contains(&norm(&item.path)));
+        for folder in plan.folders.iter().filter(|folder| folder.created) {
+            if let Some(movement) = plan
+                .movements()
+                .iter()
+                .find(|movement| movement.folder == folder.name)
+            {
+                if let Some(position) = &movement.item.position {
+                    simulated.items.push(native::Item {
+                        path: Path::new(&plan.root)
+                            .join(&folder.name)
+                            .to_string_lossy()
+                            .into_owned(),
+                        name: folder.name.clone(),
+                        position: position.clone(),
+                    });
+                }
+            }
+        }
+        eprintln!(
+            "projected items: {:?}",
+            simulated
+                .items
+                .iter()
+                .map(|item| (&item.name, &item.position))
+                .collect::<Vec<_>>()
+        );
+        let check = Config {
+            zone_col: 2,
+            ..config.clone()
+        };
+        eprintln!(
+            "direct zone candidate: {:?}",
+            crate::engine::zone_candidates(&simulated, &check)
+        );
+        eprintln!(
+            "direct reservation: {:?}",
+            crate::engine::reserve_positions(&simulated, &check, &State::default(), &[], 1)
+        );
         panic!("A freed cell was not located in the projected desktop layout");
     });
     assert_eq!(proposed.zone_col, 2);
