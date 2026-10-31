@@ -176,6 +176,7 @@ enum JobResult {
     OrganizationPlan(crate::organize::Plan),
     OrganizationChanged(crate::organize::Outcome, Option<String>),
     OrganizationAccepted(Option<String>),
+    OrganizationReset,
 }
 struct Job {
     label: &'static str,
@@ -249,6 +250,7 @@ pub struct Settings {
     organization_files: bool,
     organization_query: String,
     organization_accept_confirm: bool,
+    organization_reset_confirm: bool,
     import_paths: String,
     import_error: String,
     focus_import: bool,
@@ -891,6 +893,7 @@ impl Settings {
             organization_files: false,
             organization_query: String::new(),
             organization_accept_confirm: false,
+            organization_reset_confirm: false,
             import_paths: String::new(),
             import_error: String::new(),
             focus_import: false,
@@ -1550,6 +1553,11 @@ impl Settings {
                                 message.push_str(&format!("\n{warning}"));
                             }
                             self.inform(message, NoticeKind::Success);
+                        }
+                        Ok(JobResult::OrganizationReset) => {
+                            self.organization_plan = None;
+                            self.organization_reset_confirm = false;
+                            self.inform(t("Исключения сброшены. Следующий анализ будет новым.", "Exclusions reset. The next analysis will start fresh."), NoticeKind::Info);
                         }
                         Ok(JobResult::OrganizationAccepted(warning)) => {
                             self.organization_plan = None;
