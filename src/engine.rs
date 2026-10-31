@@ -2984,12 +2984,21 @@ mod tests {
             // Settings commits the user's pause through another real connection.
             config.collect = false;
             settings.set("config", &config).unwrap();
-            assert!(!record_usage_inner(
-                store, &mut times, &app.id, 600, true, at + 1800, true
-            ).unwrap());
+            assert!(
+                !record_usage_inner(store, &mut times, &app.id, 600, true, at + 1800, true)
+                    .unwrap()
+            );
             assert!(!record_learning_if_permitted(store, 600).unwrap());
-            assert_eq!(serde_json::to_value(store.days().unwrap()).unwrap(), before_days);
-            assert_eq!(store.get::<HashMap<String, i64>>("app_session_times").unwrap(), before_times);
+            assert_eq!(
+                serde_json::to_value(store.days().unwrap()).unwrap(),
+                before_days
+            );
+            assert_eq!(
+                store
+                    .get::<HashMap<String, i64>>("app_session_times")
+                    .unwrap(),
+                before_times
+            );
             assert_eq!(times, before_times);
             assert_eq!(
                 serde_json::to_value(store.get::<Progress>("learning").unwrap()).unwrap(),
@@ -3001,17 +3010,21 @@ mod tests {
             config.collect = true;
             settings.set("config", &config).unwrap();
             settings.set("background_disabled", &true).unwrap();
-            assert!(!record_usage_inner(
-                store, &mut times, &app.id, 600, true, at + 2000, true
-            ).unwrap());
+            assert!(
+                !record_usage_inner(store, &mut times, &app.id, 600, true, at + 2000, true)
+                    .unwrap()
+            );
             assert!(!record_learning_if_permitted(store, 600).unwrap());
-            assert_eq!(serde_json::to_value(store.days().unwrap()).unwrap(), before_days);
+            assert_eq!(
+                serde_json::to_value(store.days().unwrap()).unwrap(),
+                before_days
+            );
             settings.set("background_disabled", &false).unwrap();
 
             // Resuming with fresh permission must still record real activity.
-            assert!(record_usage_inner(
-                store, &mut times, &app.id, 30, true, at + 2400, true
-            ).unwrap());
+            assert!(
+                record_usage_inner(store, &mut times, &app.id, 30, true, at + 2400, true).unwrap()
+            );
             assert!(record_learning_if_permitted(store, 30).unwrap());
             assert_eq!(store.days().unwrap()[0].sessions, 2);
             assert_eq!(std::fs::read(&app.source).unwrap(), source_bytes);
