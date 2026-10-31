@@ -243,7 +243,9 @@ fn organization_modal_keeps_close_feedback_and_progress_inside_scaled_viewports(
                 assert!(
                     summary_visible,
                     "language={language}, scale={scale}, frame={frame}, painted={:?}, shapes={}",
-                    text.iter().map(|(value, _)| value.as_str()).collect::<Vec<_>>(),
+                    text.iter()
+                        .map(|(value, _)| value.as_str())
+                        .collect::<Vec<_>>(),
                     output.shapes.len()
                 );
                 let (_, close) = text
