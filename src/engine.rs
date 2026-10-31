@@ -1927,7 +1927,7 @@ fn observe_app_id(apps: &[App], id: &str) -> Option<String> {
 
 // A queued review must remain due under the user's *currently saved*
 // cadence, not just the earlier eligibility snapshot.
-fn scheduled_review_due(state: &State, config: &Config, at: i64) -> bool {
+pub(crate) fn scheduled_review_due(state: &State, config: &Config, at: i64) -> bool {
     !state.initialized
         || at >= state.last_review.saturating_add(config.interval_days * 86400)
         // Corrected system time must not prevent reviews indefinitely.
