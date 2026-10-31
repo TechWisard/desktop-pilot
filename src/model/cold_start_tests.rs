@@ -153,7 +153,7 @@ fn duplicated_legacy_ownership_does_not_evict_an_offline_shortcut_during_grace()
             let source = store.home.join(format!("{name}.url"));
             std::fs::write(
                 &source,
-                format!("[InternetShortcut]\\r\\nURL=https://example.invalid/{name}\\r\\n"),
+                format!("[InternetShortcut]\r\nURL=https://example.invalid/{name}\r\n"),
             )
             .unwrap();
             let shortcut = crate::native::read_link(&source).unwrap();
