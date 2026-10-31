@@ -217,7 +217,10 @@ fn foreign_name_collision_rejects_undo_before_partial_moves_and_allows_retry() {
         fs::inspect(Path::new(&alpha.source), false).unwrap().id,
         foreign_id
     );
-    assert!(!Path::new(&beta.source).exists(), "Beta must not move before the conflict is reported");
+    assert!(
+        !Path::new(&beta.source).exists(),
+        "Beta must not move before the conflict is reported"
+    );
     assert_eq!(
         fs::inspect(&f.desktop.join("Sites/Alpha.url"), true).unwrap().id,
         alpha_id
