@@ -146,3 +146,78 @@ fn paused_adaptive_capture_is_not_reported_as_active_rearrangement() {
         Health::Offline
     );
 }
+
+
+#[test]
+fn next_review_respects_paused_collection_and_corrected_clock() {
+    with_profile(|store| {
+        let mut config = Config {
+            automatic: true,
+            collect: false,
+            learning_enabled: false,
+            interval_days: 7,
+            ..Config::default()
+        };
+        let mut state = State {
+            initialized: true,
+            last_review: now() - 8 * 86_400,
+            ..State::default()
+        };
+        store.set("setup_complete", &true).unwrap();
+        store.set("config", &config).unwrap();
+        store.set("state", &state).unwrap();
+
+        // Exercise the real Settings/Store loading path and the same label
+        // rendered on Home. The worker can be alive while collection is paused.
+        let mut settings = Settings::new(store.home.clone()).unwrap();
+        settings.background_alive = true;
+        assert_eq!(
+            settings.next_review(),
+            t(
+                "Автоматические изменения приостановлены: наблюдение выключено",
+                "Automatic changes paused: observation is off",
+            ),
+            "a paused adaptive profile must not promise an unattended change"
+        );
+
+        // A Windows wall-clock correction can move the last saved review into
+        // the future. The real scheduler treats a large rewind as due, not
+        // as a multiweek delay. Home must tell the same story.
+        config.collect = true;
+        state.last_review = now() + 45 * 86_400;
+        store.set("config", &config).unwrap();
+        store.set("state", &state).unwrap();
+        settings.catalog_checkpoint = None;
+        settings.reload().unwrap();
+        settings.background_alive = true;
+        assert_eq!(
+            settings.next_review(),
+            t("При ближайшем бездействии", "At the next idle opportunity"),
+            "displayed review schedule must agree with corrected-clock eligibility"
+        );
+
+        // With an ordinary recent checkpoint there must be no false due-now
+        // message. The manual mode label keeps its existing meaning.
+        state.last_review = now() - 86_400;
+        store.set("state", &state).unwrap();
+        settings.catalog_checkpoint = None;
+        settings.reload().unwrap();
+        settings.background_alive = true;
+        assert_ne!(
+            settings.next_review(),
+            t("При ближайшем бездействии", "At the next idle opportunity")
+        );
+        config.automatic = false;
+        store.set("config", &config).unwrap();
+        settings.catalog_checkpoint = None;
+        settings.reload().unwrap();
+        assert_eq!(
+            settings.next_review(),
+            t("По вашей команде", "When you choose Apply")
+        );
+        assert_eq!(
+            store.get::<State>("state").unwrap().last_review,
+            state.last_review
+        );
+    });
+}
