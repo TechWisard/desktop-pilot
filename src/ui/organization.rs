@@ -2,6 +2,35 @@ use super::*;
 use crate::organize;
 use std::sync::atomic::AtomicBool;
 
+const ORGANIZATION_PAGE_SIZE: usize = 40;
+
+fn organization_page_bounds(total: usize, requested: usize) -> (usize, usize, usize, usize) {
+    let pages = total.div_ceil(ORGANIZATION_PAGE_SIZE).max(1);
+    let page = requested.min(pages - 1);
+    let start = page * ORGANIZATION_PAGE_SIZE;
+    let end = (start + ORGANIZATION_PAGE_SIZE).min(total);
+    (page, pages, start, end)
+}
+
+#[cfg(test)]
+mod page_tests {
+    use super::*;
+
+    #[test]
+    fn all_six_thousand_preview_items_remain_accessible() {
+        let mut visited = Vec::new();
+        for page in 0..150 {
+            let (actual, total, start, end) = organization_page_bounds(6000, page);
+            assert_eq!(actual, page);
+            assert_eq!(total, 150);
+            visited.extend(start..end);
+        }
+        assert_eq!(visited, (0..6000).collect::<Vec<_>>());
+        assert_eq!(organization_page_bounds(0, 10), (0, 1, 0, 0));
+        assert_eq!(organization_page_bounds(41, 999), (1, 2, 40, 41));
+    }
+}
+
 impl Settings {
     fn organization_analyze(&mut self) {
         if self.busy() {
@@ -156,6 +185,7 @@ impl Settings {
                             .is_some_and(|p| p.options.include_files != self.organization_files)
                         {
                             self.organization_plan = None;
+                            self.organization_page = 0;
                         }
                         if primary(
                             ui,
@@ -188,10 +218,15 @@ impl Settings {
                             }
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(t("Поиск по плану:", "Filter the plan:"));
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut self.organization_query)
-                                        .desired_width(260.0),
-                                );
+                                if ui
+                                    .add(
+                                        egui::TextEdit::singleline(&mut self.organization_query)
+                                            .desired_width(260.0),
+                                    )
+                                    .changed()
+                                {
+                                    self.organization_page = 0;
+                                }
                             });
                             ui.small(t(
                                 "Снимите галочку, чтобы оставить объект на рабочем столе; выбор будет сохранён после применения.",
@@ -214,11 +249,35 @@ impl Settings {
                                 })
                                 .map(|(index, _)| index)
                                 .collect();
+                            let (page, pages, start, end) =
+                                organization_page_bounds(filtered.len(), self.organization_page);
+                            self.organization_page = page;
+                            ui.horizontal_wrapped(|ui| {
+                                if ui
+                                    .add_enabled(
+                                        page > 0,
+                                        egui::Button::new(t("Назад", "Previous")),
+                                    )
+                                    .clicked()
+                                {
+                                    self.organization_page = page - 1;
+                                }
+                                ui.label(format!("{} / {}", page + 1, pages));
+                                if ui
+                                    .add_enabled(
+                                        page + 1 < pages,
+                                        egui::Button::new(t("Далее", "Next")),
+                                    )
+                                    .clicked()
+                                {
+                                    self.organization_page = page + 1;
+                                }
+                            });
                             egui::ScrollArea::vertical()
                                 .id_salt("organize-preview-scroll")
                                 .max_height(250.0)
                                 .show(ui, |ui| {
-                                    for &index in filtered.iter().take(120) {
+                                    for &index in &filtered[start..end] {
                                         let item = &mut plan.items[index];
                                         ui.checkbox(
                                             &mut item.selected,
@@ -234,13 +293,13 @@ impl Settings {
                                         );
                                     }
                                 });
-                            if filtered.len() > 120 {
-                                ui.small(format!(
-                                    "{} {}",
-                                    t("Показано 120 из", "Showing 120 of"),
-                                    filtered.len(),
-                                ));
-                            }
+                            ui.small(format!(
+                                "{}: {}–{} / {}",
+                                t("Объекты в плане", "Plan items"),
+                                if filtered.is_empty() { 0 } else { start + 1 },
+                                end,
+                                filtered.len(),
+                            ));
                             if !plan.skipped.is_empty() {
                                 egui::CollapsingHeader::new(format!(
                                     "{} ({})",
