@@ -268,8 +268,7 @@ fn web_target_has_host(target: &str) -> bool {
     // or out-of-range port cannot be launched as an HTTP(S) authority.
     port.is_none_or(|port| {
         port.is_empty()
-            || (port.bytes().all(|digit| digit.is_ascii_digit())
-                && port.parse::<u16>().is_ok())
+            || (port.bytes().all(|digit| digit.is_ascii_digit()) && port.parse::<u16>().is_ok())
     })
 }
 pub fn valid_target(a: &App) -> bool {
