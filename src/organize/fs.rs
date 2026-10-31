@@ -14,8 +14,7 @@ use std::{
 use windows::Win32::{
     Foundation::HANDLE,
     Storage::FileSystem::{
-        BY_HANDLE_FILE_INFORMATION, FileRenameInfo, GetFileInformationByHandle,
-        SetFileInformationByHandle,
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle, SetFileInformationByHandle,
     },
 };
 
@@ -186,6 +185,28 @@ pub(super) fn rename_file(
         .max(std::mem::size_of::<RenameInfo>());
     let mut buffer = vec![0usize; bytes.div_ceil(std::mem::size_of::<usize>())];
     let info = buffer.as_mut_ptr().cast::<RenameInfo>();
+    // SetFileInformationByHandle/FileRenameInfo converts the relative name into
+    // an absolute path while retaining RootDirectory on some Windows builds.
+    // NtSetInformationFile preserves the validated directory handle and the
+    // relative leaf without a second, race-prone path resolution.
+    #[repr(C)]
+    #[derive(Default)]
+    struct IoStatusBlock {
+        status_or_pointer: usize,
+        information: usize,
+    }
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        fn NtSetInformationFile(
+            file_handle: HANDLE,
+            io_status_block: *mut IoStatusBlock,
+            file_information: *const std::ffi::c_void,
+            length: u32,
+            file_information_class: i32,
+        ) -> i32;
+        fn RtlNtStatusToDosError(status: i32) -> u32;
+    }
+    let mut io_status = IoStatusBlock::default();
     unsafe {
         (*info).replace = 0;
         (*info).directory = target_directory.as_raw_handle();
@@ -195,12 +216,21 @@ pub(super) fn rename_file(
             info.cast::<u8>().add(offset).cast(),
             name.len(),
         );
-        SetFileInformationByHandle(
+        // FileRenameInformation = 10 (ntifs.h). A non-negative NTSTATUS is
+        // success; a failure is translated to an actionable Win32 error.
+        let status = NtSetInformationFile(
             HANDLE(file.as_raw_handle()),
-            FileRenameInfo,
+            &mut io_status,
             info.cast(),
             u32::try_from(bytes)?,
-        )?;
+            10,
+        );
+        if status < 0 {
+            return Err(std::io::Error::from_raw_os_error(
+                RtlNtStatusToDosError(status) as i32,
+            )
+            .into());
+        }
     }
     ensure!(
         identity(&file)? == expected.id,
@@ -248,4 +278,45 @@ pub(super) fn remove_empty_directory(path: &Path, expected: &str) -> Result<()> 
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod rename_tests {
+    use super::*;
+
+    #[test]
+    fn directory_relative_rename_preserves_identity_and_rejects_overwrite() {
+        let home = std::env::temp_dir().join(format!(
+            "test-organization-rename-{}",
+            operation_id().unwrap()
+        ));
+        std::fs::create_dir_all(home.join("Dest")).unwrap();
+        let first = home.join("first.url");
+        let second = home.join("second.url");
+        std::fs::write(&first, b"[InternetShortcut]\\r\\nURL=https://example.invalid/one\\r\\n")
+            .unwrap();
+        std::fs::write(&second, b"[InternetShortcut]\\r\\nURL=https://example.invalid/two\\r\\n")
+            .unwrap();
+        let original = inspect(&first, true).unwrap();
+        let second_original = std::fs::read(&second).unwrap();
+        let target = directory(&home.join("Dest")).unwrap();
+        rename_file(&first, &target, "renamed.url", &original, true).unwrap();
+        assert!(absent(&first).unwrap());
+        assert_eq!(inspect(&home.join("Dest/renamed.url"), true).unwrap(), original);
+        assert_eq!(std::fs::read(&second).unwrap(), second_original);
+        assert!(rename_file(&second, &target, "renamed.url", &inspect(&second, true).unwrap(), true)
+            .is_err());
+        assert_eq!(std::fs::read(&second).unwrap(), second_original);
+        rename_file(
+            &home.join("Dest/renamed.url"),
+            &directory(&home).unwrap(),
+            "first.url",
+            &original,
+            false,
+        )
+        .unwrap();
+        assert_eq!(inspect(&first, true).unwrap(), original);
+        drop(target);
+        std::fs::remove_dir_all(home).unwrap();
+    }
 }
