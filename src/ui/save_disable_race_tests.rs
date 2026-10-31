@@ -124,7 +124,10 @@ fn paused_collection_save_waits_for_an_in_flight_placement_before_acknowledging_
             "Settings must not confirm observation pause while placement owns the mutex"
         );
         assert_eq!(settings.store.get::<Config>("config").unwrap(), adaptive);
-        assert_eq!(settings.store.get::<State>("state").unwrap().owned, before.owned);
+        assert_eq!(
+            settings.store.get::<State>("state").unwrap().owned,
+            before.owned
+        );
         drop(placement);
 
         match job.receiver.recv_timeout(Duration::from_secs(15)).unwrap() {
@@ -136,7 +139,10 @@ fn paused_collection_save_waits_for_an_in_flight_placement_before_acknowledging_
         }
         let persisted: Config = settings.store.get("config").unwrap();
         assert!(persisted.automatic && !persisted.collect);
-        assert_eq!(settings.store.get::<State>("state").unwrap().owned, before.owned);
+        assert_eq!(
+            settings.store.get::<State>("state").unwrap().owned,
+            before.owned
+        );
         assert_eq!(
             serde_json::to_value(settings.store.days().unwrap()).unwrap(),
             history
