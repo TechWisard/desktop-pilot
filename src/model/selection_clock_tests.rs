@@ -188,7 +188,10 @@ fn short_clock_rewind_across_midnight_keeps_managed_usage_but_not_new_candidates
         .policy = Policy::Never;
     let manually_excluded =
         engine::preview_loaded(&cfg, &excluded, &days, &state, false, at).unwrap();
-    assert_eq!(manually_excluded.selected.as_slice(), std::slice::from_ref(&other.id));
+    assert_eq!(
+        manually_excluded.selected.as_slice(),
+        std::slice::from_ref(&other.id)
+    );
     assert_eq!(std::fs::read(&source).unwrap(), source_bytes);
     assert_eq!(std::fs::read(&managed_copy).unwrap(), source_bytes);
     drop(store);
