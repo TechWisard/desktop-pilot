@@ -1,7 +1,7 @@
 use super::*;
 use crate::model::App;
 use anyhow::bail;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 fn plain_group(extension: &str) -> Option<Group> {
     match extension {
@@ -194,6 +194,23 @@ pub fn analyze(
     };
     let paths = paths(&root, cancel)?;
     let dependencies = dependencies(&root, &paths, &apps, cancel)?;
+    // Explorer may present an 8.3 alias (RUNNER~1) for the very same file
+    // whose canonical desktop path uses the long directory name. Index the
+    // current desktop positions once; compare file identity only when the
+    // cheap normalized path lookup misses.
+    let mut positions = HashMap::<String, Point>::new();
+    let mut aliases = HashMap::<String, Vec<(PathBuf, Point)>>::new();
+    if let Some(layout) = &plan.layout {
+        for item in &layout.items {
+            positions.insert(norm(&item.path), item.position.clone());
+            if let Some(name) = Path::new(&item.path).file_name() {
+                aliases
+                    .entry(name.to_string_lossy().to_lowercase())
+                    .or_default()
+                    .push((PathBuf::from(&item.path), item.position.clone()));
+            }
+        }
+    }
     let mut occupied: HashSet<String> = paths
         .iter()
         .filter_map(|p| p.file_name())
@@ -232,11 +249,15 @@ pub fn analyze(
             );
             dependencies.check(&path, shortcut)?;
             let (group, launch) = classify(&path, &plan.options)?;
-            let position = plan.layout.as_ref().and_then(|l| {
-                l.items
-                    .iter()
-                    .find(|i| norm(&i.path) == normalized)
-                    .map(|i| i.position.clone())
+            let position = positions.get(&normalized).cloned().or_else(|| {
+                aliases.get(&name.to_lowercase()).and_then(|candidates| {
+                    candidates
+                        .iter()
+                        .find(|(alias, _)| {
+                            fs::matches_id(alias, &stamp.id).unwrap_or(false)
+                        })
+                        .map(|(_, position)| position.clone())
+                })
             });
             Ok(Item {
                 name: name.to_owned(),
@@ -358,9 +379,31 @@ impl Plan {
             .iter()
             .map(|m| norm(&Path::new(&self.root).join(&m.item.name).to_string_lossy()))
             .collect();
-        projected
-            .items
-            .retain(|item| !moved.contains(&norm(&item.path)));
+        let alias_ids: HashMap<_, _> = movements
+            .iter()
+            .map(|movement| {
+                (
+                    movement.item.name.to_lowercase(),
+                    movement.item.stamp.id.as_str(),
+                )
+            })
+            .collect();
+        projected.items.retain(|item| {
+            if moved.contains(&norm(&item.path)) {
+                return false;
+            }
+            // A normalized text mismatch must not leave an already moved
+            // icon in the projected occupancy grid. Never hide an unrelated
+            // public-desktop item with the same name: verify its file ID.
+            let Some(name) = Path::new(&item.path).file_name() else {
+                return true;
+            };
+            alias_ids
+                .get(&name.to_string_lossy().to_lowercase())
+                .is_none_or(|id| {
+                    !fs::matches_id(Path::new(&item.path), id).unwrap_or(false)
+                })
+        });
         for folder in self.folders.iter().filter(|f| f.created) {
             if let Some(movement) = movements.iter().find(|m| m.folder == folder.name)
                 && let Some(position) = &movement.item.position
