@@ -305,15 +305,11 @@ pub(crate) fn rank_with_owned(
     // last observed day bucket in the future. Trust it only for a shortcut
     // already managed before the correction, never for a new recommendation.
     let mut history: HashMap<&str, Vec<&Day>> = HashMap::new();
-    for day in days
-        .iter()
-        .filter(|day| {
-            (day.date <= time
-                || (managed.contains(day.app.as_str())
-                    && day.date <= time.saturating_add(86_400)))
-                && time.saturating_sub(day.date) < 90 * 86_400
-        })
-    {
+    for day in days.iter().filter(|day| {
+        (day.date <= time
+            || (managed.contains(day.app.as_str()) && day.date <= time.saturating_add(86_400)))
+            && time.saturating_sub(day.date) < 90 * 86_400
+    }) {
         history.entry(day.app.as_str()).or_default().push(day);
     }
     let mut output = Vec::new();
