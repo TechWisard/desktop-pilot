@@ -444,14 +444,12 @@ fn paused_collection_must_not_apply_stale_adaptive_recommendations() {
         let mut due = initial.clone();
         due.last_review = now() - 8 * 86_400;
         store.set("state", &due).unwrap();
+        let proposal = engine::preview(store, false).unwrap();
         assert_eq!(
-            engine::preview(store, false).unwrap().added,
-            [candidate.id.clone()]
+            proposal.added.as_slice(),
+            std::slice::from_ref(&candidate.id)
         );
-        assert_eq!(
-            engine::preview(store, false).unwrap().removed,
-            [old.id.clone()]
-        );
+        assert_eq!(proposal.removed.as_slice(), std::slice::from_ref(&old.id));
 
         // Pausing foreground collection is not permission to quietly rearrange
         // the desktop using a now-stale historical preference.
