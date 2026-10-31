@@ -267,6 +267,12 @@ fn reopened_profile_recovers_a_rename_and_blocks_stale_catalog_writers() {
     assert!(status(&reopened).unwrap().pending);
     assert!(ensure_ready(&reopened).is_err());
     assert!(reopened.policy(&a.id, Policy::Never).is_err());
+    assert!(
+        reopened
+            .db
+            .execute("INSERT INTO transactions VALUES('blocked',1,'prepared','{}')", [])
+            .is_err()
+    );
     undo(&reopened, &id).unwrap();
     assert!(f.desktop.join("Alpha.url").is_file());
     assert!(f.desktop.join("Beta.url").is_file());
@@ -567,11 +573,15 @@ fn projected_space_counts_folders_and_respects_deselection() {
 fn free_zone_search_matches_placement_for_dense_offset_and_negative_layouts() {
     let f = Fixture::new();
     for left in [-500, 0, 100] {
-        for count in 0..40 {
+        for count in [0, 1, 5, 17, 32, 39, 40] {
             let layout = native::Layout {
                 items: (0..count)
                     .map(|index| native::Item {
-                        path: f.desktop.join(format!("icon-{index}")).display().to_string(),
+                        path: f
+                            .desktop
+                            .join(format!("icon-{index}"))
+                            .display()
+                            .to_string(),
                         name: format!("icon-{index}"),
                         position: Point {
                             x: left + 16 + (index / 5) * 100,

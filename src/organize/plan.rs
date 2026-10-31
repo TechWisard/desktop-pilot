@@ -358,7 +358,9 @@ impl Plan {
             .iter()
             .map(|m| norm(&Path::new(&self.root).join(&m.item.name).to_string_lossy()))
             .collect();
-        projected.items.retain(|item| !moved.contains(&norm(&item.path)));
+        projected
+            .items
+            .retain(|item| !moved.contains(&norm(&item.path)));
         for folder in self.folders.iter().filter(|f| f.created) {
             if let Some(movement) = movements.iter().find(|m| m.folder == folder.name)
                 && let Some(position) = &movement.item.position

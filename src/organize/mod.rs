@@ -151,7 +151,9 @@ fn reject_network_root(root: &Path) -> Result<()> {
     if text.as_bytes().get(1) == Some(&b':') {
         let drive = native::wide(&format!("{}\\", &text[..2]));
         let kind = unsafe {
-            windows::Win32::Storage::FileSystem::GetDriveTypeW(windows::core::PCWSTR(drive.as_ptr()))
+            windows::Win32::Storage::FileSystem::GetDriveTypeW(windows::core::PCWSTR(
+                drive.as_ptr(),
+            ))
         };
         ensure!(
             kind != 4,
@@ -248,23 +250,26 @@ pub fn clear_exclusions(store: &Store) -> Result<()> {
     store.set(KEEP, &Vec::<String>::new())
 }
 
-// Durable catalog barriers protect scanner/import/rule writers across a crash.
-// Removing them and changing source paths is one SQLite transaction, so a
-// failed commit restores both the prior catalog and its barriers.
+// Durable barriers protect scanner/import/rule writers and quick placement
+// journals across a crash. Their removal and source-path updates commit together.
 fn install_catalog_barrier(store: &Store) -> Result<()> {
-    for event in ["INSERT", "UPDATE", "DELETE"] {
-        store.db.execute_batch(&format!(
-            "CREATE TRIGGER IF NOT EXISTS desktop_pilot_organization_guard_{event}_v1 BEFORE {event} ON apps BEGIN SELECT RAISE(ABORT, 'Desktop organization needs recovery. Open Organize desktop.'); END;"
-        ))?;
+    for table in ["apps", "transactions"] {
+        for event in ["INSERT", "UPDATE", "DELETE"] {
+            store.db.execute_batch(&format!(
+                "CREATE TRIGGER IF NOT EXISTS desktop_pilot_organization_guard_{table}_{event}_v1 BEFORE {event} ON {table} BEGIN SELECT RAISE(ABORT, 'Desktop organization needs recovery. Open Organize desktop.'); END;"
+            ))?;
+        }
     }
     Ok(())
 }
 
 fn remove_catalog_barrier(store: &Store) -> Result<()> {
-    for event in ["INSERT", "UPDATE", "DELETE"] {
-        store.db.execute_batch(&format!(
-            "DROP TRIGGER IF EXISTS desktop_pilot_organization_guard_{event}_v1;"
-        ))?;
+    for table in ["apps", "transactions"] {
+        for event in ["INSERT", "UPDATE", "DELETE"] {
+            store.db.execute_batch(&format!(
+                "DROP TRIGGER IF EXISTS desktop_pilot_organization_guard_{table}_{event}_v1;"
+            ))?;
+        }
     }
     Ok(())
 }
