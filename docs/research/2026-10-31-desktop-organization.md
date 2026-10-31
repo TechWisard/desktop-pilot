@@ -30,6 +30,32 @@ Primary filesystem contracts:
 https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info
 https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle
 
+## Windows-specific regressions (October 31)
+
+The first native CI build reproduced `ERROR_INVALID_PARAMETER (0x80070057)` when
+`SetFileInformationByHandle(FileRenameInfo)` was given a verified destination
+directory handle and a relative leaf name. The Windows-compatible fix uses
+`NtSetInformationFile` with the same existing open handles, no replacement,
+and an explicit NTSTATUS-to-Win32 error translation. The real Windows Server
+2022 test rerun at
+https://github.com/TechWisard/desktop-pilot/actions/runs/41202182349
+completed 366 of 367 Rust tests; 13 earlier failing move/undo/recovery tests
+passed after this change. The remaining failure concerned layout projection,
+not the rename primitive. The normal CI gate remains enabled.
+
+The layout failure exposed a real path-identity distinction: Explorer supplied
+the user's desktop under the shortened `RUNNER~1` path while the working folder
+was canonicalized to the long `Runneradmin` spelling. Simple lowercase
+normalization cannot prove that those names refer to the same file. The
+analyzer now indexes positions once and uses a verified file ID only when
+the fast path comparison misses. The projected-space function likewise
+removes only verified moved objects, not unrelated icons sharing a basename.
+The regression includes a separate same-name foreign item that must remain
+occupied. This fix requires a successful Windows CI rerun before acceptance.
+
+Supporting primary Windows API documentation:
+https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle
+
 ## Reproducible fixtures
 
 `src/organize/tests.rs` uses the real SQLite Store, Windows `.lnk` parser, `.url` files and Windows handle-based renames in isolated temporary directories. It covers read-only preview, apply/undo, failed writes, interrupted renames/reopen, collisions, replaced files/folders, same-file edits, profile separation, cancellation, manual exclusions, managed copies, existing placement journals, dependency protection and folder-aware layout projections. No real desktop is mutated and no test shortcut target is launched.

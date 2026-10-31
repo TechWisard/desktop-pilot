@@ -567,80 +567,29 @@ fn projected_space_counts_folders_and_respects_deselection() {
     };
     assert!(find_free_zone(plan.layout.as_ref().unwrap(), &config).is_none());
     assert_eq!(plan.summary(), (2, 1, 1));
-    let proposed = plan.projected_zone(&config).unwrap_or_else(|| {
-        eprintln!("summary: {:?}", plan.summary());
-        eprintln!(
-            "items: {:?}",
-            plan.items
-                .iter()
-                .map(|item| (&item.name, item.selected, &item.position))
-                .collect::<Vec<_>>()
-        );
-        eprintln!(
-            "movements: {:?}",
-            plan.movements()
-                .iter()
-                .map(|movement| (&movement.item.name, &movement.folder))
-                .collect::<Vec<_>>()
-        );
-        let mut simulated = plan.layout.clone().unwrap();
-        let moved: std::collections::HashSet<String> = plan
-            .movements()
-            .iter()
-            .map(|movement| norm(&Path::new(&plan.root).join(&movement.item.name).to_string_lossy()))
-            .collect();
-        eprintln!("moved source keys: {moved:?}");
-        eprintln!(
-            "before source keys: {:?}",
-            simulated
-                .items
-                .iter()
-                .map(|item| (item.name.clone(), norm(&item.path)))
-                .collect::<Vec<_>>()
-        );
-        simulated.items.retain(|item| !moved.contains(&norm(&item.path)));
-        for folder in plan.folders.iter().filter(|folder| folder.created) {
-            if let Some(movement) = plan
-                .movements()
-                .iter()
-                .find(|movement| movement.folder == folder.name)
-            {
-                if let Some(position) = &movement.item.position {
-                    simulated.items.push(native::Item {
-                        path: Path::new(&plan.root)
-                            .join(&folder.name)
-                            .to_string_lossy()
-                            .into_owned(),
-                        name: folder.name.clone(),
-                        position: position.clone(),
-                    });
-                }
-            }
-        }
-        eprintln!(
-            "projected items: {:?}",
-            simulated
-                .items
-                .iter()
-                .map(|item| (&item.name, &item.position))
-                .collect::<Vec<_>>()
-        );
-        let check = Config {
-            zone_col: 2,
-            ..config.clone()
-        };
-        eprintln!(
-            "direct zone candidate: {:?}",
-            crate::engine::zone_candidates(&simulated, &check)
-        );
-        eprintln!(
-            "direct reservation: {:?}",
-            crate::engine::reserve_positions(&simulated, &check, &State::default(), &[], 1)
-        );
-        panic!("A freed cell was not located in the projected desktop layout");
-    });
+    // The real Windows runner exposes the same desktop through the short
+    // RUNNER~1 and long Runneradmin paths; occupancy is resolved by file ID.
+    let proposed = plan.projected_zone(&config).unwrap();
     assert_eq!(proposed.zone_col, 2);
     assert_eq!(proposed.zone_row, 0);
+
+    // Another desktop may expose a different item under the same leaf name.
+    // Never assume it was moved merely because its basename matches ours.
+    let other = f.home.join("Public");
+    disk::create_dir(&other).unwrap();
+    let unrelated = other.join("Beta.url");
+    disk::write(
+        &unrelated,
+        b"[InternetShortcut]\\r\\nURL=https://example.invalid/foreign\\r\\n",
+    )
+    .unwrap();
+    let mut blocked = plan.clone();
+    blocked.layout.as_mut().unwrap().items.push(native::Item {
+        path: unrelated.to_string_lossy().into_owned(),
+        name: "Beta.url".into(),
+        position: Point { x: 216, y: 2 },
+    });
+    assert!(blocked.projected_zone(&config).is_none());
 }
 
 #[test]
