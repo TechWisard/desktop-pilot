@@ -1401,10 +1401,10 @@ mod tests {
         std::fs::create_dir_all(&directory).unwrap();
         let broken = directory.join("Broken.url");
         let working = directory.join("Working.url");
-        std::fs::write(&broken, b"[InternetShortcut]\\r\\nURL=https://\\r\\n").unwrap();
+        std::fs::write(&broken, b"[InternetShortcut]\r\nURL=https://\r\n").unwrap();
         std::fs::write(
             &working,
-            b"[InternetShortcut]\\r\\nURL=https://example.invalid/task?name=hello%20world\\r\\n",
+            b"[InternetShortcut]\r\nURL=https://example.invalid/task?name=hello%20world\r\n",
         )
         .unwrap();
         let mut broken_app = read_link(&broken).unwrap();
@@ -1432,8 +1432,18 @@ mod tests {
         )
         .unwrap();
         assert_eq!(preview.selected, [working_app.id]);
-        assert!(!preview.ranking.iter().find(|r| r.id == broken_app.id).unwrap().eligible);
-        assert_eq!(std::fs::read(&broken).unwrap(), b"[InternetShortcut]\\r\\nURL=https://\\r\\n");
+        assert!(
+            !preview
+                .ranking
+                .iter()
+                .find(|r| r.id == broken_app.id)
+                .unwrap()
+                .eligible
+        );
+        assert_eq!(
+            std::fs::read(&broken).unwrap(),
+            b"[InternetShortcut]\r\nURL=https://\r\n"
+        );
         std::fs::remove_dir_all(directory).unwrap();
     }
 
@@ -1446,12 +1456,15 @@ mod tests {
             "https://user@",
             "https://:443/path",
             "https://bad host/path",
-            r"https://bad\\host/path",
+            r"https://bad\host/path",
         ] {
-            assert!(!valid_target(&App {
-                target: target.into(),
-                ..Default::default()
-            }), "{target}");
+            assert!(
+                !valid_target(&App {
+                    target: target.into(),
+                    ..Default::default()
+                }),
+                "{target}"
+            );
         }
         for target in [
             "HTTPS://example.invalid/Path?key=Some%20Value",
@@ -1459,10 +1472,13 @@ mod tests {
             "https://[::1]/",
             "https://user:secret@example.invalid/path with spaces",
         ] {
-            assert!(valid_target(&App {
-                target: target.into(),
-                ..Default::default()
-            }), "{target}");
+            assert!(
+                valid_target(&App {
+                    target: target.into(),
+                    ..Default::default()
+                }),
+                "{target}"
+            );
         }
     }
 
