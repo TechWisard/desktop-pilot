@@ -1,0 +1,71 @@
+name: Organizer runtime acceptance
+on:
+  push:
+    branches: [test/organizer-runtime-acceptance-20261031]
+permissions:
+  contents: read
+concurrency:
+  group: organizer-runtime-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  desktop:
+    runs-on: windows-11-arm
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
+        with:
+          toolchain: 1.93.1-x86_64-pc-windows-msvc
+          components: rustfmt, clippy
+      - name: Identify actual Windows desktop environment
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force target/organizer-acceptance | Out-Null
+          Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion, OsName, OsVersion, OsArchitecture | ConvertTo-Json | Set-Content target/organizer-acceptance/environment.json
+          Get-Content target/organizer-acceptance/environment.json
+          rustc -vV
+          Get-Process explorer -ErrorAction Stop | Select-Object ProcessName, SessionId
+      - run: cargo fmt --check
+      - run: cargo test --locked
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo build --locked
+      - name: Native executable integration
+        shell: pwsh
+        run: ./scripts/test-native.ps1 -ReportDirectory target/organizer-acceptance/native
+      - name: Actual graphical application smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $home = Join-Path $env:RUNNER_TEMP ('test-organizer-gui-' + [guid]::NewGuid().ToString('N'))
+          $output = Join-Path $pwd 'target/organizer-acceptance/gui'
+          New-Item -ItemType Directory -Force $output | Out-Null
+          $exe = (Resolve-Path target/debug/desktop-pilot.exe).Path
+          $p = Start-Process $exe -ArgumentList @('--home', ('"' + $home + '"'), '--ui-smoke', ('"' + $output + '"')) -PassThru
+          try {
+            if (-not $p.WaitForExit(60000)) { throw 'The actual GUI did not finish within 60 seconds' }
+            if ($p.ExitCode -ne 0) { throw "GUI exited with code $($p.ExitCode)" }
+            if (@(Get-ChildItem $output -Filter *.png).Count -eq 0) { throw 'The actual renderer produced no screenshots' }
+          } finally {
+            if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+            if (Test-Path $home) {
+              Get-ChildItem $home -Filter '*error*' | Copy-Item -Destination $output
+              Remove-Item $home -Recurse -Force
+            }
+          }
+      - name: Record inspected source and evidence manifest
+        if: always()
+        shell: pwsh
+        run: |
+          git rev-parse HEAD | Set-Content target/organizer-acceptance/source-commit.txt
+          git archive --format=zip --output=target/organizer-acceptance/public-reviewed-source.zip HEAD
+          Get-ChildItem target/organizer-acceptance -Recurse -File | Get-FileHash -Algorithm SHA256 | Select-Object Hash,Path | ConvertTo-Json | Set-Content target/organizer-acceptance/manifest.json
+      - name: Short-lived review evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: organizer-windows11-review
+          path: target/organizer-acceptance/
+          if-no-files-found: error
+          retention-days: 1
