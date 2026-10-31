@@ -125,3 +125,43 @@ fn periodic_worker_housekeeping_refreshes_its_session_cache() {
         assert_eq!(sessions["recent"], at - 30 * DAY);
     });
 }
+
+#[test]
+fn backward_clock_step_does_not_manufacture_a_new_session_for_the_same_app() {
+    with_store(|store| {
+        let at = now();
+        let mut sessions = HashMap::from([("rare-project".to_owned(), at + 4 * 3600)]);
+        store.set("app_session_times", &sessions).unwrap();
+
+        // The previous observed wall time is four hours ahead because Windows
+        // corrected its clock backwards. A fresh confirmed focus visit is not
+        // proof that twenty minutes of real inactivity have elapsed.
+        record_usage(store, &mut sessions, "rare-project", 12, true, at).unwrap();
+        let counted = || -> i64 {
+            store
+                .db
+                .query_row(
+                    "SELECT COALESCE(SUM(sessions),0) FROM days WHERE app='rare-project'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(
+            counted(),
+            0,
+            "a clock rewind must not create a second session or inflate ranking"
+        );
+        assert_eq!(sessions["rare-project"], at);
+        assert_eq!(checkpoints(store)["rare-project"], at);
+
+        // Once the new wall-clock baseline advances, the ordinary inactivity
+        // gate must still work: a ten-minute return is not a second session,
+        // whereas the first confirmed visit after 21 minutes is.
+        record_usage(store, &mut sessions, "rare-project", 12, true, at + 600).unwrap();
+        assert_eq!(counted(), 0);
+        record_usage(store, &mut sessions, "rare-project", 12, true, at + 1_861).unwrap();
+        assert_eq!(counted(), 1);
+        assert_eq!(checkpoints(store)["rare-project"], at + 1_861);
+    });
+}
