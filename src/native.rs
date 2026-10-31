@@ -247,10 +247,7 @@ pub fn valid_target(a: &App) -> bool {
     if lower.starts_with("https://") || lower.starts_with("http://") {
         return web_target_has_host(target);
     }
-    if lower.starts_with("steam://")
-        || lower.starts_with("shell:")
-        || lower.starts_with("::{")
-    {
+    if lower.starts_with("steam://") || lower.starts_with("shell:") || lower.starts_with("::{") {
         return true;
     }
     // Registered launchers (Epic, mailto, etc.) are valid shell targets too.
