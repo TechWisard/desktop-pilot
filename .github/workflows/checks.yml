@@ -36,14 +36,14 @@ jobs:
       - name: Native integration fixtures
         shell: pwsh
         run: ./scripts/test-native.ps1
-      - name: Native check reports
-        if: always()
+      - name: Native failure diagnostics
+        if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: native-checks-${{ matrix.os }}
           path: target/native-checks/
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 3
   release:
     needs: check
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Release Desktop Pilot ')
@@ -70,11 +70,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: ./scripts/publish-release.ps1
-      - name: Release verification reports
-        if: always()
+      - name: Failed release diagnostics
+        if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: release-verification
           path: target/release-checks/
           if-no-files-found: ignore
-          retention-days: 30
+          retention-days: 7
