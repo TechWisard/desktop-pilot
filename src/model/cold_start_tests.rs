@@ -699,6 +699,15 @@ fn a_recent_clock_rewind_must_not_evict_a_familiar_shortcut() {
         assert_eq!(excluded.removed, [familiar.id.clone()]);
         assert_eq!(excluded.added, [challenger.id.clone()]);
 
+        // A checkpoint several days ahead is not trusted as fresh evidence.
+        // This conservative boundary prevents an implausibly future-dated
+        // imported score from overriding a currently supported project.
+        familiar.policy = Policy::Auto;
+        familiar.seed_at = now() + 3 * 86_400;
+        store.put_app(&familiar).unwrap();
+        let distant_future = engine::preview(store, false).unwrap();
+        assert_eq!(distant_future.selected, [challenger.id.clone()]);
+
         // This is a read-only preview sequence, not an actual rearrangement.
         assert_eq!(std::fs::read(&familiar.source).unwrap(), original_bytes);
         assert_eq!(std::fs::read(&quick_path).unwrap(), quick_bytes);
