@@ -36,12 +36,11 @@ pub(super) fn classify(path: &Path, options: &Options) -> Result<(Group, Option<
         );
         let group = if lower.starts_with("https://") || lower.starts_with("http://") {
             Group::Sites
-        } else if lower.starts_with("steam://rungameid/")
+        } else if (lower.starts_with("steam://rungameid/")
             && target.len() > 18
-            && target[18..].bytes().all(|byte| byte.is_ascii_digit())
+            && target[18..].bytes().all(|byte| byte.is_ascii_digit()))
+            || lower.starts_with("com.epicgames.launcher://apps/")
         {
-            Group::Games
-        } else if lower.starts_with("com.epicgames.launcher://apps/") {
             Group::Games
         } else if Path::new(&crate::model::expand_env(target)).is_absolute()
             || lower.starts_with("shell:")
