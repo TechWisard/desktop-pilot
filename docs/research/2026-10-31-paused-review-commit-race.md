@@ -22,6 +22,12 @@ The Settings worker waits for an existing placement to finish *before committing
 
 No changes to ranking, learning weights, layout density, source shortcut files, rollback structure, autostart permissions, or private user data; no telemetry or new network dependencies. The normal workflow and release guards stay enabled.
 
+## Concurrent fixture isolation
+
+The public Windows run [41154891856](https://github.com/TechWisard/desktop-pilot/actions/runs/41154891856) separately showed intermittent failures in **unrelated background-entry tests**, including a missing source file and cleanup errors. Those tests previously used only process ID plus `SystemTime::now().as_nanos()` in their temporary directory names and `create_dir_all`, which silently reuses an existing directory. Coarse or coincident Windows clock ticks can therefore make parallel tests share and remove the same profile. This is a plausible fixture-collision explanation, **not** evidence of a product deletion bug.
+
+Fixture roots now include a process-local atomic serial, and creation is exclusive (`create_dir`, not `create_dir_all`). A deterministic concurrent regression intentionally supplies the same timestamp to 16 fixture-creation threads and requires all roots to differ. This hardening changes no runtime application behavior. Full CI must still pass independently after the change.
+
 ## Validation and limits
 
 For the corrected branch, run unchanged `cargo fmt --check`, `cargo test --locked`, strict `cargo clippy --locked --all-targets -- -D warnings`, `cargo build --locked`, the Windows native integration fixtures and publication guards on **both** Windows Server 2022 and 2025. Verify actual green Actions results before merging. Preserve any failing evidence and do not publish a new binary without a separate green main release job.
