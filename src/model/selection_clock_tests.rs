@@ -173,8 +173,7 @@ fn short_clock_rewind_across_midnight_keeps_managed_usage_but_not_new_candidates
     );
     assert!(retained.added.is_empty() && retained.removed.is_empty());
 
-    let fresh = engine::preview_loaded(&cfg, &apps, &days, &State::default(), true, at)
-        .unwrap();
+    let fresh = engine::preview_loaded(&cfg, &apps, &days, &State::default(), true, at).unwrap();
     assert_eq!(
         fresh.selected,
         [other.id.clone()],
@@ -182,8 +181,11 @@ fn short_clock_rewind_across_midnight_keeps_managed_usage_but_not_new_candidates
     );
 
     let mut excluded = apps.clone();
-    excluded.iter_mut().find(|app| app.id == familiar.id).unwrap().policy =
-        Policy::Never;
+    excluded
+        .iter_mut()
+        .find(|app| app.id == familiar.id)
+        .unwrap()
+        .policy = Policy::Never;
     let manually_excluded =
         engine::preview_loaded(&cfg, &excluded, &days, &state, false, at).unwrap();
     assert_eq!(manually_excluded.selected, [other.id.clone()]);
