@@ -399,6 +399,20 @@ fn undo_locked(store: &Store, journal: &mut Journal) -> Result<Outcome> {
                 };
                 bail!("{message}");
             }
+            // A newer user-owned file can also occupy a vacated name. Check
+            // every original name before the durable Undo barrier: otherwise
+            // a later collision would leave preceding moves partially undone
+            // and block unrelated quick-placement recovery.
+            if !fs::absent(&original)? {
+                if store.get::<Config>("config")?.language == "ru" {
+                    bail!(
+                        "Исходное имя на рабочем столе занято другим объектом. Переместите или переименуйте его и повторите отмену уборки. Файлы не изменены."
+                    );
+                }
+                bail!(
+                    "An original desktop name is occupied by another object. Move or rename it, then retry organization Undo. No files were changed."
+                );
+            }
         }
     }
     journal.phase = Phase::Undoing;

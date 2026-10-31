@@ -190,3 +190,62 @@ fn a_sidecar_created_after_preview_prevents_every_move_without_partial_folders()
     assert!(!status(&f.store).unwrap().pending);
     assert!(status(&f.store).unwrap().undo.is_none());
 }
+
+#[test]
+fn foreign_name_collision_rejects_undo_before_partial_moves_and_allows_retry() {
+    let f = Fixture::new();
+    let alpha = f.url("Alpha");
+    let beta = f.url("Beta");
+    let alpha_id = fs::inspect(Path::new(&alpha.source), true).unwrap().id;
+    let beta_id = fs::inspect(Path::new(&beta.source), true).unwrap().id;
+    apply(&f.store, &f.plan(false), &AtomicBool::new(false)).unwrap();
+    let operation = status(&f.store).unwrap().undo.unwrap();
+    let catalog = f.store.apps().unwrap();
+    let history: Vec<String> = f.store.get(HISTORY).unwrap();
+
+    // The original Alpha name is vacant after organization. A different
+    // desktop file appears there; Undo iterates Beta first, then Alpha.
+    disk::write(&alpha.source, b"new user-owned content").unwrap();
+    let foreign_id = fs::inspect(Path::new(&alpha.source), false).unwrap().id;
+    let error = undo(&f.store, &operation).expect_err("foreign names must block Undo preflight");
+    assert!(
+        format!("{error:#}").contains("original desktop name is occupied"),
+        "{error:#}"
+    );
+    assert_eq!(disk::read(&alpha.source).unwrap(), b"new user-owned content");
+    assert_eq!(
+        fs::inspect(Path::new(&alpha.source), false).unwrap().id,
+        foreign_id
+    );
+    assert!(!Path::new(&beta.source).exists(), "Beta must not move before the conflict is reported");
+    assert_eq!(
+        fs::inspect(&f.desktop.join("Sites/Alpha.url"), true).unwrap().id,
+        alpha_id
+    );
+    assert_eq!(
+        fs::inspect(&f.desktop.join("Sites/Beta.url"), true).unwrap().id,
+        beta_id
+    );
+    assert_eq!(f.store.apps().unwrap(), catalog);
+    assert_eq!(f.store.get::<Vec<String>>(HISTORY).unwrap(), history);
+    assert_eq!(load(&f.store, &operation).unwrap().phase, Phase::Committed);
+    assert!(!status(&f.store).unwrap().pending);
+    assert_eq!(status(&f.store).unwrap().undo.as_deref(), Some(operation.as_str()));
+
+    // The user resolves the conflict without losing the replacement file's
+    // contents. A subsequent Undo must complete with the original identities.
+    let saved = f.desktop.join("Keep my newer file");
+    disk::rename(&alpha.source, &saved).unwrap();
+    let outcome = undo(&f.store, &operation).unwrap();
+    assert_eq!(outcome.restored, 2);
+    assert_eq!(disk::read(saved).unwrap(), b"new user-owned content");
+    assert_eq!(
+        fs::inspect(Path::new(&alpha.source), true).unwrap().id,
+        alpha_id
+    );
+    assert_eq!(
+        fs::inspect(Path::new(&beta.source), true).unwrap().id,
+        beta_id
+    );
+    assert!(!status(&f.store).unwrap().pending);
+}
