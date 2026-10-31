@@ -189,6 +189,7 @@ impl Settings {
                                 .iter()
                                 .map(|item| plan.destination(item))
                                 .collect();
+                            let moving: Vec<_> = plan.items.iter().map(|item| plan.will_move(item)).collect();
                             let query = self.organization_query.trim().to_lowercase();
                             let filtered: Vec<usize> = plan
                                 .items
@@ -207,7 +208,11 @@ impl Settings {
                                         let item = &mut plan.items[index];
                                         ui.checkbox(
                                             &mut item.selected,
-                                            format!("{}  →  {}", item.name, destinations[index]),
+                                            if moving[index] {
+                                                format!("{}  →  {}", item.name, destinations[index])
+                                            } else {
+                                                format!("{} — {}", item.name, t("Пока остаётся", "Stays for now"))
+                                            },
                                         );
                                     }
                                 });
