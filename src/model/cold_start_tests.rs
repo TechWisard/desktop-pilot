@@ -681,7 +681,8 @@ fn a_recent_clock_rewind_must_not_evict_a_familiar_shortcut() {
         // eligibility from this recovery rule, even if its claimed score
         // dwarfs the already owned candidate's confirmed history.
         let untrusted_source = store.home.join("UntrustedFuture.url");
-        let untrusted_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/UntrustedFuture\r\n";
+        let untrusted_bytes =
+            b"[InternetShortcut]\r\nURL=https://example.invalid/UntrustedFuture\r\n";
         std::fs::write(&untrusted_source, untrusted_bytes).unwrap();
         let mut untrusted = crate::native::read_link(&untrusted_source).unwrap();
         untrusted.seed = 3000.0;
