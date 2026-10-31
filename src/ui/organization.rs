@@ -53,19 +53,41 @@ fn organization_reason(reason: &str) -> String {
     // user's filename, path, URL or an operating-system diagnostic.
     let russian = match reason {
         "Files are not selected for organization" => "Перенос обычных файлов не включён",
-        "You chose to keep this object on the desktop" => "Вы выбрали оставить этот объект на столе",
+        "You chose to keep this object on the desktop" => {
+            "Вы выбрали оставить этот объект на столе"
+        }
         "Managed quick shortcut: left in place" => "Быстрый ярлык Desktop Pilot остаётся на месте",
         "Manual shortcut rule: left in place" => "Сохранено ваше ручное правило для ярлыка",
-        "Another known shortcut depends on this object: left in place" => "На этот объект ссылается другой ярлык",
-        "Shortcut launch arguments may refer to this object: left in place" => "Этот файл может использоваться в параметрах запуска ярлыка",
-        "The desktop is used as an application's working directory: files left in place" => "Рабочий стол используется приложением как рабочая папка; файлы оставлены на месте",
-        "Some shortcut dependencies could not be inspected: files left in place" => "Не удалось проверить связи некоторых ярлыков; обычные файлы оставлены на месте",
-        "Protected, cloud-placeholder and filesystem-link objects are left in place" => "Папка, защищённый объект, облачный файл или ссылка файловой системы",
-        "Relative working directory or icon: left in place" => "Рабочая папка или значок заданы относительным путём",
-        "Shortcut without an explicit working directory: left in place" => "У ярлыка не задана рабочая папка",
-        "Relative or unrecognized shortcut target: left in place" => "Цель ярлыка относительная или не распознана",
-        "No standalone launch target: left in place" => "Не удалось определить самостоятельную цель запуска",
-        "Executable, linked data or unknown file type: left in place" => "Исполняемый файл, связанные данные или неизвестный тип",
+        "Another known shortcut depends on this object: left in place" => {
+            "На этот объект ссылается другой ярлык"
+        }
+        "Shortcut launch arguments may refer to this object: left in place" => {
+            "Этот файл может использоваться в параметрах запуска ярлыка"
+        }
+        "The desktop is used as an application's working directory: files left in place" => {
+            "Рабочий стол используется приложением как рабочая папка; файлы оставлены на месте"
+        }
+        "Some shortcut dependencies could not be inspected: files left in place" => {
+            "Не удалось проверить связи некоторых ярлыков; обычные файлы оставлены на месте"
+        }
+        "Protected, cloud-placeholder and filesystem-link objects are left in place" => {
+            "Папка, защищённый объект, облачный файл или ссылка файловой системы"
+        }
+        "Relative working directory or icon: left in place" => {
+            "Рабочая папка или значок заданы относительным путём"
+        }
+        "Shortcut without an explicit working directory: left in place" => {
+            "У ярлыка не задана рабочая папка"
+        }
+        "Relative or unrecognized shortcut target: left in place" => {
+            "Цель ярлыка относительная или не распознана"
+        }
+        "No standalone launch target: left in place" => {
+            "Не удалось определить самостоятельную цель запуска"
+        }
+        "Executable, linked data or unknown file type: left in place" => {
+            "Исполняемый файл, связанные данные или неизвестный тип"
+        }
         "Associated file set: left in place" => "Файл входит в связанный набор",
         _ => return i18n::runtime(reason),
     };
@@ -233,13 +255,16 @@ impl Settings {
             |ui| {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                 if let Some((_, color, details)) = &feedback {
-                    collapsing_header(ui, t("Результат действия", "Action details")).show(ui, |ui| {
-                        ui.add(
-                            egui::Label::new(RichText::new(details).color(*color))
-                                .wrap()
-                                .selectable(true),
-                        );
-                    });
+                    collapsing_header(ui, t("Результат действия", "Action details")).show(
+                        ui,
+                        |ui| {
+                            ui.add(
+                                egui::Label::new(RichText::new(details).color(*color))
+                                    .wrap()
+                                    .selectable(true),
+                            );
+                        },
+                    );
                 }
                 ui.label(t(
                     "Сначала проверьте план перемещений в обычные папки. Существующие папки, защищённые объекты и ручные закрепления остаются на месте.",
@@ -259,7 +284,8 @@ impl Settings {
                             "An earlier organization was interrupted. Restore the objects or explicitly accept their current locations.",
                         ));
                         if let Some(id) = &current.undo {
-                            if primary(ui, available, t("Восстановить", "Restore")).clicked() {
+                            if primary(ui, available, t("Восстановить", "Restore")).clicked()
+                            {
                                 undo = Some(id.clone());
                             }
                             ui.add_enabled(
@@ -275,7 +301,10 @@ impl Settings {
                             if ui
                                 .add_enabled(
                                     available && self.organization_accept_confirm,
-                                    egui::Button::new(t("Оставить как есть", "Accept current locations")),
+                                    egui::Button::new(t(
+                                        "Оставить как есть",
+                                        "Accept current locations",
+                                    )),
                                 )
                                 .clicked()
                             {
@@ -308,8 +337,12 @@ impl Settings {
                             self.organization_plan = None;
                             self.organization_page = 0;
                         }
-                        if primary(ui, available, t("Проанализировать рабочий стол", "Analyze the desktop"))
-                            .clicked()
+                        if primary(
+                            ui,
+                            available,
+                            t("Проанализировать рабочий стол", "Analyze the desktop"),
+                        )
+                        .clicked()
                         {
                             analyze = true;
                         }
@@ -332,8 +365,12 @@ impl Settings {
                                     "A suitable quick-shortcut area is not confirmed yet. Refresh the layout after organizing; reduce the shortcut count if necessary.",
                                 ));
                             }
-                            if primary(ui, available && moves > 0, t("Применить выбранное", "Apply selected moves"))
-                                .clicked()
+                            if primary(
+                                ui,
+                                available && moves > 0,
+                                t("Применить выбранное", "Apply selected moves"),
+                            )
+                            .clicked()
                             {
                                 apply = true;
                             }
@@ -347,7 +384,10 @@ impl Settings {
                             {
                                 self.organization_page = 0;
                                 ctx.data_mut(|data| {
-                                    data.insert_temp(egui::Id::new("organize-skipped-page"), 0usize);
+                                    data.insert_temp(
+                                        egui::Id::new("organize-skipped-page"),
+                                        0usize,
+                                    );
                                 });
                             }
                             ui.small(t(
@@ -359,13 +399,22 @@ impl Settings {
                                 .items
                                 .iter()
                                 .enumerate()
-                                .filter(|(_, item)| query.is_empty() || item.name.to_lowercase().contains(&query))
+                                .filter(|(_, item)| {
+                                    query.is_empty() || item.name.to_lowercase().contains(&query)
+                                })
                                 .map(|(index, _)| index)
                                 .collect();
-                            let (start, end) = organization_pages(ui, &mut self.organization_page, filtered.len());
+                            let (start, end) =
+                                organization_pages(ui, &mut self.organization_page, filtered.len());
                             let rows: Vec<_> = filtered[start..end]
                                 .iter()
-                                .map(|&index| (index, plan.destination(&plan.items[index]), plan.will_move(&plan.items[index])))
+                                .map(|&index| {
+                                    (
+                                        index,
+                                        plan.destination(&plan.items[index]),
+                                        plan.will_move(&plan.items[index]),
+                                    )
+                                })
                                 .collect();
                             egui::ScrollArea::vertical()
                                 .id_salt("organize-preview-scroll")
@@ -376,9 +425,16 @@ impl Settings {
                                         let label = if moving {
                                             format!("{}  →  {destination}", item.name)
                                         } else {
-                                            format!("{} — {}", item.name, t("Остаётся", "Stays in place"))
+                                            format!(
+                                                "{} — {}",
+                                                item.name,
+                                                t("Остаётся", "Stays in place")
+                                            )
                                         };
-                                        ui.add_enabled(available, egui::Checkbox::new(&mut item.selected, label));
+                                        ui.add_enabled(
+                                            available,
+                                            egui::Checkbox::new(&mut item.selected, label),
+                                        );
                                     }
                                 });
                             ui.small(format!(
@@ -391,29 +447,40 @@ impl Settings {
                             let skipped: Vec<_> = plan
                                 .skipped
                                 .iter()
-                                .filter(|item| query.is_empty() || item.name.to_lowercase().contains(&query))
+                                .filter(|item| {
+                                    query.is_empty() || item.name.to_lowercase().contains(&query)
+                                })
                                 .collect();
                             if !skipped.is_empty() {
-                                collapsing_header(ui, &format!(
-                                    "{} ({})",
-                                    t("Оставлены без перемещения", "Left in place"),
-                                    skipped.len(),
-                                ))
+                                collapsing_header(
+                                    ui,
+                                    &format!(
+                                        "{} ({})",
+                                        t("Оставлены без перемещения", "Left in place"),
+                                        skipped.len(),
+                                    ),
+                                )
                                 .show(ui, |ui| {
                                     let id = egui::Id::new("organize-skipped-page");
-                                    let mut page = ctx.data_mut(|data| data.get_temp::<usize>(id).unwrap_or(0));
-                                    let (start, end) = organization_pages(ui, &mut page, skipped.len());
+                                    let mut page = ctx
+                                        .data_mut(|data| data.get_temp::<usize>(id).unwrap_or(0));
+                                    let (start, end) =
+                                        organization_pages(ui, &mut page, skipped.len());
                                     ctx.data_mut(|data| data.insert_temp(id, page));
                                     egui::ScrollArea::vertical()
                                         .id_salt("organize-skipped-scroll")
                                         .max_height(180.0)
                                         .show(ui, |ui| {
                                             for entry in &skipped[start..end] {
-                                                ui.add(egui::Label::new(format!(
-                                                    "{} — {}",
-                                                    entry.name,
-                                                    organization_reason(&entry.reason),
-                                                )).wrap().selectable(true));
+                                                ui.add(
+                                                    egui::Label::new(format!(
+                                                        "{} — {}",
+                                                        entry.name,
+                                                        organization_reason(&entry.reason),
+                                                    ))
+                                                    .wrap()
+                                                    .selectable(true),
+                                                );
                                             }
                                         });
                                     ui.small(format!("{}–{} / {}", start + 1, end, skipped.len()));
@@ -427,7 +494,13 @@ impl Settings {
                                 "Undo the last organization without overwriting new or changed files.",
                             ));
                             if ui
-                                .add_enabled(available, egui::Button::new(t("Отменить последнюю уборку", "Undo last organization")))
+                                .add_enabled(
+                                    available,
+                                    egui::Button::new(t(
+                                        "Отменить последнюю уборку",
+                                        "Undo last organization",
+                                    )),
+                                )
                                 .clicked()
                             {
                                 undo = Some(id.clone());

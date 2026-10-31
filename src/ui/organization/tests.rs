@@ -41,9 +41,7 @@ impl Fixture {
                 format!("[InternetShortcut]\r\nURL=https://example.invalid/{name}\r\n"),
             )
             .unwrap();
-            store
-                .put_app(&native::read_link(&path).unwrap())
-                .unwrap();
+            store.put_app(&native::read_link(&path).unwrap()).unwrap();
         }
         drop(store);
         let mut app = Settings::new(home.clone()).unwrap();
@@ -63,7 +61,10 @@ impl Fixture {
         let deadline = Instant::now() + Duration::from_secs(30);
         while self.app.job.is_some() {
             self.app.poll_jobs(&ctx);
-            assert!(Instant::now() < deadline, "organizer UI worker did not finish");
+            assert!(
+                Instant::now() < deadline,
+                "organizer UI worker did not finish"
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
         self.app.layout_receiver = None;
@@ -73,24 +74,40 @@ impl Fixture {
     fn analyze(&mut self) {
         self.app.organization_analyze();
         self.finish_job();
-        assert_eq!(self.app.organization_plan.as_ref().unwrap().summary(), (2, 1, 1));
+        assert_eq!(
+            self.app.organization_plan.as_ref().unwrap().summary(),
+            (2, 1, 1)
+        );
     }
 }
 
 fn rendered_text(output: &egui::FullOutput) -> Vec<(String, egui::Rect)> {
-    output
-        .shapes
-        .iter()
-        .filter_map(|shape| {
-            if let egui::epaint::Shape::Text(text) = &shape.shape {
+    fn collect_visible(
+        shape: &egui::epaint::Shape,
+        clip: egui::Rect,
+        result: &mut Vec<(String, egui::Rect)>,
+    ) {
+        match shape {
+            egui::epaint::Shape::Text(text) => {
                 let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
-                if shape.clip_rect.intersects(rect) {
-                    return Some((text.galley.job.text.clone(), rect));
+                if clip.intersects(rect) {
+                    result.push((text.galley.job.text.clone(), rect));
                 }
             }
-            None
-        })
-        .collect()
+            egui::epaint::Shape::Vec(children) => {
+                for child in children {
+                    collect_visible(child, clip, result);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut result = Vec::new();
+    for shape in &output.shapes {
+        collect_visible(&shape.shape, shape.clip_rect, &mut result);
+    }
+    result
 }
 
 fn render(
@@ -108,7 +125,10 @@ fn render(
         |ctx| {
             let rect = app.organization_dialog(ctx);
             assert!(rect.width() <= ctx.screen_rect().width() + 1.0, "{rect:?}");
-            assert!(rect.height() <= ctx.screen_rect().height() + 1.0, "{rect:?}");
+            assert!(
+                rect.height() <= ctx.screen_rect().height() + 1.0,
+                "{rect:?}"
+            );
         },
     )
 }
@@ -177,9 +197,15 @@ fn failed_apply_returns_visible_modal_feedback_and_preserves_every_object() {
     configure_style(&ctx);
     for _ in 0..3 {
         let output = render(&ctx, &mut f.app, egui::vec2(480.0, 360.0), Vec::new());
-        assert!(rendered_text(&output).iter().any(|(value, _)| {
-            value.contains("Действие не завершено") || value.contains("The action did not complete")
-        }));
+        let text = rendered_text(&output);
+        assert!(
+            text.iter().any(|(value, _)| {
+                value.contains("Действие не завершено")
+                    || value.contains("The action did not complete")
+            }),
+            "No visible operation feedback. Painted text: {:?}",
+            text.iter().map(|(value, _)| value).collect::<Vec<_>>()
+        );
     }
 }
 
@@ -200,7 +226,8 @@ fn organization_modal_keeps_close_feedback_and_progress_inside_scaled_viewports(
                 let output = render(&ctx, &mut f.app, viewport, Vec::new());
                 let text = rendered_text(&output);
                 assert!(text.iter().any(|(value, _)| {
-                    value.contains("Действие не завершено") || value.contains("The action did not complete")
+                    value.contains("Действие не завершено")
+                        || value.contains("The action did not complete")
                 }));
                 let (_, close) = text
                     .iter()
@@ -220,7 +247,8 @@ fn organization_modal_keeps_close_feedback_and_progress_inside_scaled_viewports(
             for _ in 0..3 {
                 let output = render(&ctx, &mut f.app, viewport, Vec::new());
                 assert!(rendered_text(&output).iter().any(|(value, _)| {
-                    value.contains("Анализируем рабочий стол") || value.contains("Analyzing the desktop")
+                    value.contains("Анализируем рабочий стол")
+                        || value.contains("Analyzing the desktop")
                 }));
             }
             f.app.job = None;
