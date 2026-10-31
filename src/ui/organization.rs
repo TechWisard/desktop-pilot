@@ -48,9 +48,8 @@ impl Settings {
         let home = self.store.home.clone();
         self.start_job("Restoring desktop objects…", move || {
             let _com = native::Com::new()?;
-            let (outcome, warning) = setup::with_organization_paused(&home, |store| {
-                organize::undo_stopped(store, &id)
-            })?;
+            let (outcome, warning) =
+                setup::with_organization_paused(&home, |store| organize::undo_stopped(store, &id))?;
             Ok(JobResult::OrganizationChanged(outcome, warning))
         });
     }
@@ -69,7 +68,7 @@ impl Settings {
         });
     }
 
-    fn organization_dialog(&mut self, ctx: &egui::Context) {
+    pub(super) fn organization_dialog(&mut self, ctx: &egui::Context) {
         let mut analyze = false;
         let mut apply = false;
         let mut undo = None;
@@ -102,7 +101,8 @@ impl Settings {
                             "An earlier organization was interrupted. Restore the objects or explicitly accept their current locations before continuing.",
                         ));
                         if let Some(id) = &current.undo {
-                            if primary(ui, available, t("Восстановить", "Restore")).clicked() {
+                            if primary(ui, available, t("Восстановить", "Restore")).clicked()
+                            {
                                 undo = Some(id.clone());
                             }
                             ui.checkbox(
@@ -112,13 +112,16 @@ impl Settings {
                                     "I checked the files and want to keep their current locations.",
                                 ),
                             );
-                            if ui.add_enabled(
-                                available && self.organization_accept_confirm,
-                                egui::Button::new(t(
-                                    "Оставить текущее расположение",
-                                    "Accept current locations",
-                                )),
-                            ).clicked() {
+                            if ui
+                                .add_enabled(
+                                    available && self.organization_accept_confirm,
+                                    egui::Button::new(t(
+                                        "Оставить текущее расположение",
+                                        "Accept current locations",
+                                    )),
+                                )
+                                .clicked()
+                            {
                                 accept = Some(id.clone());
                             }
                         }
@@ -134,14 +137,20 @@ impl Settings {
                             "Исполняемые файлы, сценарии, таблицы со связями, проекты и неизвестные типы остаются на месте.",
                             "Executables, scripts, linked spreadsheets, projects and unknown file types stay in place.",
                         ));
-                        if self.organization_plan.as_ref().is_some_and(|p|
-                            p.options.include_files != self.organization_files
-                        ) {
+                        if self
+                            .organization_plan
+                            .as_ref()
+                            .is_some_and(|p| p.options.include_files != self.organization_files)
+                        {
                             self.organization_plan = None;
                         }
-                        if primary(ui, available, t(
-                            "Проанализировать рабочий стол", "Analyze the desktop",
-                        )).clicked() {
+                        if primary(
+                            ui,
+                            available,
+                            t("Проанализировать рабочий стол", "Analyze the desktop"),
+                        )
+                        .clicked()
+                        {
                             analyze = true;
                         }
                         if let Some(plan) = self.organization_plan.as_mut() {
@@ -166,21 +175,30 @@ impl Settings {
                             }
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(t("Поиск по плану:", "Filter the plan:"));
-                                ui.add(egui::TextEdit::singleline(&mut self.organization_query)
-                                    .desired_width(260.0));
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.organization_query)
+                                        .desired_width(260.0),
+                                );
                             });
                             ui.small(t(
                                 "Снимите галочку, чтобы оставить объект на рабочем столе; выбор будет сохранён после применения.",
                                 "Uncheck an object to keep it on the desktop; the choice is remembered after Apply.",
                             ));
-                            let destinations: Vec<_> = plan.items.iter().map(|item|
-                                plan.destination(item)
-                            ).collect();
+                            let destinations: Vec<_> = plan
+                                .items
+                                .iter()
+                                .map(|item| plan.destination(item))
+                                .collect();
                             let query = self.organization_query.trim().to_lowercase();
-                            let filtered: Vec<usize> = plan.items.iter().enumerate()
-                                .filter(|(_, item)| query.is_empty()
-                                    || item.name.to_lowercase().contains(&query))
-                                .map(|(index, _)| index).collect();
+                            let filtered: Vec<usize> = plan
+                                .items
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, item)| {
+                                    query.is_empty() || item.name.to_lowercase().contains(&query)
+                                })
+                                .map(|(index, _)| index)
+                                .collect();
                             egui::ScrollArea::vertical()
                                 .id_salt("organize-preview-scroll")
                                 .max_height(250.0)
@@ -205,19 +223,28 @@ impl Settings {
                                     "{} ({})",
                                     t("Оставлены без перемещения", "Left in place"),
                                     plan.skipped.len(),
-                                )).show(ui, |ui| {
-                                    egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
-                                        for entry in plan.skipped.iter().take(60) {
-                                            ui.small(format!("{} — {}", entry.name, entry.reason));
-                                        }
-                                    });
+                                ))
+                                .show(ui, |ui| {
+                                    egui::ScrollArea::vertical()
+                                        .max_height(150.0)
+                                        .show(ui, |ui| {
+                                            for entry in plan.skipped.iter().take(60) {
+                                                ui.small(format!(
+                                                    "{} — {}",
+                                                    entry.name, entry.reason
+                                                ));
+                                            }
+                                        });
                                 });
                             }
                             let (moves, _, _) = plan.summary();
-                            if primary(ui, available && moves > 0, t(
-                                "Применить выбранные изменения",
-                                "Apply selected changes",
-                            )).clicked() {
+                            if primary(
+                                ui,
+                                available && moves > 0,
+                                t("Применить выбранные изменения", "Apply selected changes"),
+                            )
+                            .clicked()
+                            {
                                 apply = true;
                             }
                         }
@@ -227,16 +254,26 @@ impl Settings {
                                 "Последнюю завершённую уборку можно отменить. Новые или изменённые файлы не перезаписываются.",
                                 "The last completed organization can be undone. New or modified files are never overwritten.",
                             ));
-                            if ui.add_enabled(available, egui::Button::new(
-                                t("Отменить последнюю уборку", "Undo last organization"),
-                            )).clicked() {
+                            if ui
+                                .add_enabled(
+                                    available,
+                                    egui::Button::new(t(
+                                        "Отменить последнюю уборку",
+                                        "Undo last organization",
+                                    )),
+                                )
+                                .clicked()
+                            {
                                 undo = Some(id.clone());
                             }
                         }
                     }
                 }
                 ui.add_space(8.0);
-                if ui.add_enabled(available, egui::Button::new(t("Закрыть", "Close"))).clicked() {
+                if ui
+                    .add_enabled(available, egui::Button::new(t("Закрыть", "Close")))
+                    .clicked()
+                {
                     close = true;
                 }
             },
@@ -248,9 +285,17 @@ impl Settings {
             self.organization_open = false;
             self.organization_accept_confirm = false;
         }
-        if analyze { self.organization_analyze(); }
-        if apply { self.organization_apply(); }
-        if let Some(id) = undo { self.organization_undo(id); }
-        if let Some(id) = accept { self.organization_accept(id); }
+        if analyze {
+            self.organization_analyze();
+        }
+        if apply {
+            self.organization_apply();
+        }
+        if let Some(id) = undo {
+            self.organization_undo(id);
+        }
+        if let Some(id) = accept {
+            self.organization_accept(id);
+        }
     }
 }
