@@ -249,6 +249,7 @@ pub struct Settings {
     organization_plan: Option<crate::organize::Plan>,
     organization_files: bool,
     organization_query: String,
+    organization_page: usize,
     organization_accept_confirm: bool,
     organization_reset_confirm: bool,
     import_paths: String,
@@ -892,6 +893,7 @@ impl Settings {
             organization_plan: None,
             organization_files: false,
             organization_query: String::new(),
+            organization_page: 0,
             organization_accept_confirm: false,
             organization_reset_confirm: false,
             import_paths: String::new(),
@@ -1526,6 +1528,7 @@ impl Settings {
                             }
                         }
                         Ok(JobResult::OrganizationPlan(plan)) => {
+                            self.organization_page = 0;
                             self.organization_plan = Some(plan);
                             self.inform(
                                 t(
