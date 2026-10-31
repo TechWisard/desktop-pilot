@@ -147,7 +147,6 @@ fn paused_adaptive_capture_is_not_reported_as_active_rearrangement() {
     );
 }
 
-
 #[test]
 fn next_review_respects_paused_collection_and_corrected_clock() {
     with_profile(|store| {
