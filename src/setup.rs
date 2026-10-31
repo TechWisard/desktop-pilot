@@ -129,7 +129,13 @@ pub(crate) fn with_organization_paused<T>(
             ),
             Ok(_) if store.get::<bool>("background_disabled")? => None,
             Ok(_) => start_background_locked(&store).err().map(|error| {
-                format!("Changes are saved, but background work could not restart: {error:#}")
+                if result.is_ok() {
+                    format!("Changes are saved, but background work could not restart: {error:#}")
+                } else {
+                    format!(
+                        "Background work could not restart after a failed desktop operation: {error:#}"
+                    )
+                }
             }),
             Err(error) => Some(format!(
                 "Could not verify organization recovery status. Background work remains stopped: {error:#}"
@@ -138,7 +144,20 @@ pub(crate) fn with_organization_paused<T>(
     } else {
         None
     };
-    result.map(|value| (value, warning))
+    organization_result_with_warning(result, warning)
+}
+
+fn organization_result_with_warning<T>(
+    result: Result<T>,
+    warning: Option<String>,
+) -> Result<(T, Option<String>)> {
+    match result {
+        Ok(value) => Ok((value, warning)),
+        Err(error) => match warning {
+            Some(warning) => Err(error.context(warning)),
+            None => Err(error),
+        },
+    }
 }
 
 fn install_current(store: &Store) -> Result<PathBuf> {
@@ -747,6 +766,28 @@ mod tests {
         assert!(!native::is_running("background", &root).unwrap());
         drop(store);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_organization_keeps_original_error_and_background_recovery_warning() {
+        let failed: Result<(usize, Option<String>)> = organization_result_with_warning(
+            Err(anyhow::anyhow!("Move aborted after a source changed")),
+            Some("Background work remains stopped until recovery".into()),
+        );
+        let details = format!("{:#}", failed.unwrap_err());
+        assert!(details.contains("Move aborted after a source changed"), "{details}");
+        assert!(
+            details.contains("Background work remains stopped until recovery"),
+            "{details}"
+        );
+        let unchanged: Result<(usize, Option<String>)> =
+            organization_result_with_warning(Err(anyhow::anyhow!("Original failure")), None);
+        assert!(
+            format!("{:#}", unchanged.unwrap_err()).contains("Original failure")
+        );
+        let success = organization_result_with_warning(Ok(7), Some("Restart warning".into()))
+            .unwrap();
+        assert_eq!(success, (7, Some("Restart warning".into())));
     }
 
     #[test]

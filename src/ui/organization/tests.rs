@@ -118,6 +118,9 @@ fn render(
 ) -> egui::FullOutput {
     ctx.run(
         egui::RawInput {
+            // Areas use a first sizing pass and a timed fade-in. Real eframe
+            // advances input time; headless fixtures must do the same.
+            time: Some(ctx.input(|input| input.time) + 0.25),
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, viewport)),
             events,
             ..Default::default()
@@ -198,6 +201,7 @@ fn failed_apply_returns_visible_modal_feedback_and_preserves_every_object() {
     assert!(details.contains("changed after preview"));
     let ctx = egui::Context::default();
     configure_style(&ctx);
+    let _ = render(&ctx, &mut f.app, egui::vec2(480.0, 360.0), Vec::new());
     for _ in 0..3 {
         let output = render(&ctx, &mut f.app, egui::vec2(480.0, 360.0), Vec::new());
         let text = rendered_text(&output);
@@ -225,6 +229,7 @@ fn organization_modal_keeps_close_feedback_and_progress_inside_scaled_viewports(
             f.app.config.language = language.into();
             i18n::set(language);
             f.app.fail("A source changed; no object was overwritten.");
+            let _ = render(&ctx, &mut f.app, viewport, Vec::new());
             for _ in 0..3 {
                 let output = render(&ctx, &mut f.app, viewport, Vec::new());
                 let text = rendered_text(&output);
