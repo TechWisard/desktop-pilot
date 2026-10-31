@@ -3,6 +3,8 @@ use crate::model::App;
 use anyhow::bail;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+mod sidecars;
+
 fn plain_group(extension: &str) -> Option<Group> {
     match extension {
         "txt" | "pdf" | "rtf" | "doc" | "docx" | "odt" | "ppt" | "pptx" => Some(Group::Documents),
@@ -81,6 +83,7 @@ pub(super) fn classify(path: &Path, options: &Options) -> Result<(Group, Option<
 pub(super) struct Dependencies {
     paths: HashSet<String>,
     arguments: HashSet<String>,
+    sidecar_objects: HashSet<String>,
     desktop_working_directory: bool,
     incomplete: bool,
 }
@@ -105,6 +108,10 @@ impl Dependencies {
     }
     pub(super) fn check(&self, path: &Path, shortcut: bool) -> Result<()> {
         let normalized = norm(&path.to_string_lossy());
+        ensure!(
+            !self.sidecar_objects.contains(&normalized),
+            "Associated file set: left in place"
+        );
         ensure!(
             !self.paths.contains(&normalized),
             "Another known shortcut depends on this object: left in place"
@@ -156,7 +163,12 @@ pub(super) fn dependencies(
     apps: &[App],
     cancel: &AtomicBool,
 ) -> Result<Dependencies> {
-    let mut dependencies = Dependencies::default();
+    let mut dependencies = Dependencies {
+        // Build once from the same bounded directory snapshot used for analysis
+        // and rebuild before Apply. Do not scan the directory for every file.
+        sidecar_objects: sidecars::protected(paths),
+        ..Default::default()
+    };
     for app in apps {
         dependencies.record(app, root);
     }

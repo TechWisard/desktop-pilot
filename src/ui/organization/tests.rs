@@ -302,7 +302,10 @@ fn organization_modal_keeps_close_feedback_and_progress_inside_scaled_viewports(
                 .find(|(value, _)| matches!(value.as_str(), "Close" | "Закрыть"))
                 .expect("Close is painted before the pointer action");
             click(&ctx, &mut f.app, viewport, close.center());
-            assert!(!f.app.organization_open, "The visible Close button must work");
+            assert!(
+                !f.app.organization_open,
+                "The visible Close button must work"
+            );
             assert!(f.desktop.join("Alpha.url").is_file());
             assert!(f.desktop.join("Beta.url").is_file());
         }

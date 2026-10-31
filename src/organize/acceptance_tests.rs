@@ -73,11 +73,12 @@ impl Fixture {
 }
 
 #[test]
-fn organization_and_quick_placement_undo_work_in_both_orders() {
+fn organization_undo_does_not_lock_out_the_quick_undo_needed_to_free_its_original_name() {
     for organization_first in [true, false] {
         let f = Fixture::new();
         let alpha = f.url("Alpha");
         let beta = f.url("Beta");
+        f.store.observe(&alpha.id, 180, true, false).unwrap();
         let original = fs::inspect(Path::new(&alpha.source), true).unwrap();
         let history = serde_json::to_value(f.store.days().unwrap()).unwrap();
         let result = apply(&f.store, &f.plan(false), &AtomicBool::new(false)).unwrap();
@@ -89,27 +90,35 @@ fn organization_and_quick_placement_undo_work_in_both_orders() {
         assert_eq!(placed.owned.len(), 1);
         let quick = &placed.owned[0];
         assert_eq!(quick.app, alpha.id);
-        assert_ne!(norm(&quick.path), norm(&alpha.source));
+        // Reusing a vacant name is legitimate. It must not make the two Undo
+        // mechanisms block each other or mistake a quick copy for its original.
+        assert_eq!(norm(&quick.path), norm(&alpha.source));
         let quick_stamp = fs::inspect(Path::new(&quick.path), true).unwrap();
         assert_ne!(quick_stamp.id, original.id);
         if organization_first {
-            undo(&f.store, &operation).unwrap();
+            let error = undo(&f.store, &operation).unwrap_err();
+            assert!(
+                !status(&f.store).unwrap().pending,
+                "A quick-copy collision must not install a barrier that prevents quick Undo"
+            );
+            assert!(format!("{error:#}").contains("Undo quick shortcut placement"));
+            assert_eq!(load(&f.store, &operation).unwrap().phase, Phase::Committed);
+            assert!(f.desktop.join("Sites/Beta.url").is_file());
+            assert!(!Path::new(&beta.source).exists());
             assert_eq!(
                 fs::inspect(Path::new(&quick.path), true).unwrap(),
                 quick_stamp
             );
             assert_eq!(f.store.get::<State>("state").unwrap().owned, placed.owned);
-            engine::rollback(&f.store).unwrap();
-        } else {
-            engine::rollback(&f.store).unwrap();
-            assert!(f.desktop.join("Sites/Alpha.url").is_file());
-            assert_eq!(
-                fs::inspect(&f.desktop.join("Sites/Alpha.url"), true).unwrap(),
-                original
-            );
-            undo(&f.store, &operation).unwrap();
         }
+        engine::rollback(&f.store).unwrap();
         assert!(!Path::new(&quick.path).exists());
+        assert!(f.desktop.join("Sites/Alpha.url").is_file());
+        assert_eq!(
+            fs::inspect(&f.desktop.join("Sites/Alpha.url"), true).unwrap(),
+            original
+        );
+        undo(&f.store, &operation).unwrap();
         assert!(f.store.get::<State>("state").unwrap().owned.is_empty());
         assert_eq!(
             fs::inspect(Path::new(&alpha.source), true).unwrap(),
