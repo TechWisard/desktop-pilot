@@ -262,3 +262,55 @@ fn foreign_name_collision_rejects_undo_before_partial_moves_and_allows_retry() {
     );
     assert!(!status(&f.store).unwrap().pending);
 }
+
+#[test]
+fn user_restored_original_is_not_a_foreign_collision_and_keeps_later_edits() {
+    for keep_new_file_in_folder in [false, true] {
+        let f = Fixture::new();
+        let alpha = f.url("Alpha");
+        let beta = f.url("Beta");
+        f.store.observe(&alpha.id, 180, true, false).unwrap();
+        let alpha_stamp = fs::inspect(Path::new(&alpha.source), true).unwrap();
+        let beta_stamp = fs::inspect(Path::new(&beta.source), true).unwrap();
+        let history = serde_json::to_value(f.store.days().unwrap()).unwrap();
+        apply(&f.store, &f.plan(false), &AtomicBool::new(false)).unwrap();
+        let operation = status(&f.store).unwrap().undo.unwrap();
+        let organized = f.desktop.join("Sites/Alpha.url");
+        disk::rename(&organized, &alpha.source).unwrap();
+        let edited = b"[InternetShortcut]\r\nURL=https://example.invalid/Alpha\r\n; user note after moving it back\r\n";
+        disk::write(&alpha.source, edited).unwrap();
+        f.store.policy(&alpha.id, Policy::Always).unwrap();
+        let foreign = if keep_new_file_in_folder {
+            disk::write(&organized, b"new unrelated object inside the category").unwrap();
+            Some(fs::inspect(&organized, false).unwrap())
+        } else {
+            None
+        };
+
+        let outcome = undo(&f.store, &operation)
+            .expect("The verified original is already restored; Undo must restore the remaining objects");
+        assert_eq!(outcome.restored, 1);
+        assert_eq!(disk::read(&alpha.source).unwrap(), edited);
+        assert_eq!(
+            fs::inspect(Path::new(&alpha.source), true).unwrap().id,
+            alpha_stamp.id
+        );
+        assert_eq!(
+            fs::inspect(Path::new(&beta.source), true).unwrap(),
+            beta_stamp
+        );
+        assert_eq!(f.store.app(&alpha.id).unwrap().source, alpha.source);
+        assert_eq!(f.store.app(&alpha.id).unwrap().policy, Policy::Always);
+        assert_eq!(serde_json::to_value(f.store.days().unwrap()).unwrap(), history);
+        if let Some(foreign) = foreign {
+            assert_eq!(fs::inspect(&organized, false).unwrap(), foreign);
+            assert_eq!(disk::read(&organized).unwrap(), b"new unrelated object inside the category");
+            assert!(!outcome.warnings.is_empty());
+        } else {
+            assert!(!f.desktop.join("Sites").exists());
+        }
+        assert!(!status(&f.store).unwrap().pending);
+        assert!(status(&f.store).unwrap().undo.is_none());
+        assert_eq!(load(&f.store, &operation).unwrap().phase, Phase::Undone);
+    }
+}
