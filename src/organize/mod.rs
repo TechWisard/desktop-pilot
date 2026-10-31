@@ -7,6 +7,7 @@ mod plan;
 mod tests;
 
 pub use journal::{accept_current, apply, undo};
+pub(crate) use journal::{accept_current_stopped, apply_stopped, undo_stopped};
 pub use plan::{analyze, find_free_zone};
 
 use crate::{
