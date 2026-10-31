@@ -301,11 +301,15 @@ pub(crate) fn rank_with_owned(
     let managed: HashSet<&str> = owned.iter().map(|entry| entry.app.as_str()).collect();
     // Group retained rows once. Scanning every day's history for every shortcut
     // made a large catalog quadratic and blocked regular Settings refreshes.
+    // A small backwards clock correction across local midnight can put the
+    // last observed day bucket in the future. Trust it only for a shortcut
+    // already managed before the correction, never for a new recommendation.
     let mut history: HashMap<&str, Vec<&Day>> = HashMap::new();
-    for day in days
-        .iter()
-        .filter(|day| day.date <= time && time.saturating_sub(day.date) < 90 * 86400)
-    {
+    for day in days.iter().filter(|day| {
+        (day.date <= time
+            || (managed.contains(day.app.as_str()) && day.date <= time.saturating_add(86_400)))
+            && time.saturating_sub(day.date) < 90 * 86_400
+    }) {
         history.entry(day.app.as_str()).or_default().push(day);
     }
     let mut output = Vec::new();
@@ -329,7 +333,9 @@ pub(crate) fn rank_with_owned(
         let mut active_days = HashSet::new();
         let (mut launches, mut seconds, mut sessions) = (0u32, 0u32, 0u32);
         for d in history.get(app.id.as_str()).into_iter().flatten() {
-            let age = time.saturating_sub(d.date) as f64 / 86400.0;
+            // A retained future local-day bucket is historical evidence, not
+            // evidence of extra time or an opportunity to boost its weight.
+            let age = time.saturating_sub(d.date).max(0) as f64 / 86400.0;
             let value = 2.0 * f64::from(d.sessions.min(12))
                 + (f64::from(d.seconds.min(3600)) / 60.0).ln_1p() * 0.4;
             score += value * 2f64.powf(-age / cfg.half_life_days);
