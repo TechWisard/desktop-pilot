@@ -431,7 +431,7 @@ fn pausing_while_a_due_review_is_queued_does_not_rearrange_shortcuts() {
 
         let new_source = store.home.join("LaterProject.url");
         let new_bytes =
-            b"[InternetShortcut]\\r\\nURL=https://example.invalid/LaterProject\\r\\n";
+            b"[InternetShortcut]\r\nURL=https://example.invalid/LaterProject\r\n";
         std::fs::write(&new_source, new_bytes).unwrap();
         let mut candidate = crate::native::read_link(&new_source).unwrap();
         candidate.seed = 160.0;
