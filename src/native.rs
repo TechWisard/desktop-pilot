@@ -223,15 +223,31 @@ pub fn read_link(path: &Path) -> Result<App> {
     a.valid = path.is_file() && valid_target(&a);
     Ok(a)
 }
+// A web shortcut without an authority cannot open a real destination, even
+// when its URL still begins with a familiar protocol prefix. Inspect only the
+// authority: path and query components may legitimately contain spaces.
+fn web_target_has_host(target: &str) -> bool {
+    let Some((_, remainder)) = target.split_once("://") else {
+        return false;
+    };
+    let authority = remainder.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = authority.rsplit('@').next().unwrap_or_default();
+    !host.is_empty()
+        && !host.starts_with(':')
+        && !host
+            .chars()
+            .any(|ch| ch.is_whitespace() || ch.is_control() || ch == '\\')
+}
 pub fn valid_target(a: &App) -> bool {
     let target = a.target.trim();
     if target.is_empty() || target.contains('\0') {
         return false;
     }
     let lower = target.to_ascii_lowercase();
+    if lower.starts_with("https://") || lower.starts_with("http://") {
+        return web_target_has_host(target);
+    }
     if lower.starts_with("steam://")
-        || lower.starts_with("https://")
-        || lower.starts_with("http://")
         || lower.starts_with("shell:")
         || lower.starts_with("::{")
     {
@@ -1368,6 +1384,86 @@ mod tests {
             target: "HTTPS://example.com/A".into(),
             ..Default::default()
         }));
+    }
+
+    #[test]
+    fn malformed_web_shortcuts_are_not_selected_even_with_old_usage_history() {
+        // Exercise real .url parsing, target verification and production
+        // placement selection: a corrupted link must not displace a working one.
+        let directory = std::env::temp_dir().join(format!(
+            "desktop-pilot-web-authority-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let broken = directory.join("Broken.url");
+        let working = directory.join("Working.url");
+        std::fs::write(&broken, b"[InternetShortcut]\\r\\nURL=https://\\r\\n").unwrap();
+        std::fs::write(
+            &working,
+            b"[InternetShortcut]\\r\\nURL=https://example.invalid/task?name=hello%20world\\r\\n",
+        )
+        .unwrap();
+        let mut broken_app = read_link(&broken).unwrap();
+        let mut working_app = read_link(&working).unwrap();
+        assert!(!broken_app.valid);
+        assert!(working_app.valid);
+        let observed_at = crate::model::now();
+        broken_app.seed = 1000.0;
+        broken_app.seed_at = observed_at;
+        working_app.seed = 20.0;
+        working_app.seed_at = observed_at;
+        let config = crate::model::Config {
+            collect: true,
+            learning_enabled: false,
+            slots: 1,
+            ..Default::default()
+        };
+        let preview = crate::engine::preview_loaded(
+            &config,
+            &[broken_app.clone(), working_app.clone()],
+            &[],
+            &crate::model::State::default(),
+            true,
+            observed_at,
+        )
+        .unwrap();
+        assert_eq!(preview.selected, [working_app.id]);
+        assert!(!preview.ranking.iter().find(|r| r.id == broken_app.id).unwrap().eligible);
+        assert_eq!(std::fs::read(&broken).unwrap(), b"[InternetShortcut]\\r\\nURL=https://\\r\\n");
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn web_shortcut_authority_requires_a_host_without_overrejecting_paths() {
+        for target in [
+            "https://",
+            "HTTP://?q=1",
+            "https://#fragment",
+            "https://user@",
+            "https://:443/path",
+            "https://bad host/path",
+            r"https://bad\\host/path",
+        ] {
+            assert!(!valid_target(&App {
+                target: target.into(),
+                ..Default::default()
+            }), "{target}");
+        }
+        for target in [
+            "HTTPS://example.invalid/Path?key=Some%20Value",
+            "http://localhost:8080/",
+            "https://[::1]/",
+            "https://user:secret@example.invalid/path with spaces",
+        ] {
+            assert!(valid_target(&App {
+                target: target.into(),
+                ..Default::default()
+            }), "{target}");
+        }
     }
 
     #[test]
