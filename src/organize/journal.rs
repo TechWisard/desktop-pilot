@@ -148,9 +148,12 @@ fn restore_layout(journal: &Journal, undo: bool) -> Result<()> {
 }
 
 pub fn apply(store: &Store, plan: &Plan, cancel: &AtomicBool) -> Result<Outcome> {
-    // The UI quiesces the worker under its startup lock. Claiming its singleton
-    // also rejects a delayed Windows autostart until the operation has finished.
     let _stopped = native::exclusive("background", &store.home)?;
+    apply_stopped(store, plan, cancel)
+}
+
+/// Caller must hold the background singleton and startup lock together.
+pub(crate) fn apply_stopped(store: &Store, plan: &Plan, cancel: &AtomicBool) -> Result<Outcome> {
     let _changes = native::exclusive("changes", &store.home)?;
     let _desktop = native::exclusive("organization", Path::new(&plan.root))?;
     ensure_ready(store)?;
@@ -469,6 +472,11 @@ fn undo_locked(store: &Store, journal: &mut Journal) -> Result<Outcome> {
 
 pub fn undo(store: &Store, id: &str) -> Result<Outcome> {
     let _stopped = native::exclusive("background", &store.home)?;
+    undo_stopped(store, id)
+}
+
+/// Caller must hold the background singleton and startup lock together.
+pub(crate) fn undo_stopped(store: &Store, id: &str) -> Result<Outcome> {
     let _changes = native::exclusive("changes", &store.home)?;
     let mut journal = load(store, id)?;
     let _desktop = native::exclusive("organization", Path::new(&journal.root))?;
@@ -491,6 +499,11 @@ pub fn undo(store: &Store, id: &str) -> Result<Outcome> {
 /// No filesystem writes: reconcile verified paths and retain the journal.
 pub fn accept_current(store: &Store, id: &str) -> Result<()> {
     let _stopped = native::exclusive("background", &store.home)?;
+    accept_current_stopped(store, id)
+}
+
+/// Caller must hold the background singleton and startup lock together.
+pub(crate) fn accept_current_stopped(store: &Store, id: &str) -> Result<()> {
     let _changes = native::exclusive("changes", &store.home)?;
     let mut journal = load(store, id)?;
     let _desktop = native::exclusive("organization", Path::new(&journal.root))?;
