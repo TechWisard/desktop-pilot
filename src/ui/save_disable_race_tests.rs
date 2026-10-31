@@ -90,3 +90,58 @@ fn saving_settings_cannot_interleave_turn_off_between_commit_and_restart_decisio
         assert_eq!(std::fs::read(&anchor.source).unwrap(), original);
     });
 }
+
+#[test]
+fn paused_collection_save_waits_for_an_in_flight_placement_before_acknowledging_it() {
+    with_profile(|settings, anchor| {
+        let home = settings.store.home.clone();
+        let mut adaptive: Config = settings.store.get("config").unwrap();
+        adaptive.automatic = true;
+        adaptive.collect = true;
+        adaptive.learning_enabled = false;
+        settings.store.set("config", &adaptive).unwrap();
+
+        let original = std::fs::read(&anchor.source).unwrap();
+        let before: State = settings.store.get("state").unwrap();
+        let history = serde_json::to_value(settings.store.days().unwrap()).unwrap();
+        let mut editor = Settings::new(home.clone()).unwrap();
+        assert_eq!(editor.saved_config, adaptive);
+        editor.config.collect = false;
+        editor.refresh_dirty();
+        assert!(editor.dirty);
+
+        // A real named placement mutex is held by a different thread from
+        // the production asynchronous Settings save. Its persisted pause
+        // cannot be acknowledged while automatic file changes are active.
+        let placement = native::exclusive("changes", &home).unwrap();
+        editor.save();
+        let job = editor.job.take().expect("real asynchronous Settings save");
+        assert!(
+            matches!(
+                job.receiver.recv_timeout(Duration::from_millis(500)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ),
+            "Settings must not confirm observation pause while placement owns the mutex"
+        );
+        assert_eq!(settings.store.get::<Config>("config").unwrap(), adaptive);
+        assert_eq!(settings.store.get::<State>("state").unwrap().owned, before.owned);
+        drop(placement);
+
+        match job.receiver.recv_timeout(Duration::from_secs(15)).unwrap() {
+            Ok(JobResult::Saved(updated, None)) => {
+                assert!(updated.automatic && !updated.collect);
+            }
+            Ok(_) => panic!("unexpected save result"),
+            Err(error) => panic!("paused observation save failed: {error}"),
+        }
+        let persisted: Config = settings.store.get("config").unwrap();
+        assert!(persisted.automatic && !persisted.collect);
+        assert_eq!(settings.store.get::<State>("state").unwrap().owned, before.owned);
+        assert_eq!(
+            serde_json::to_value(settings.store.days().unwrap()).unwrap(),
+            history
+        );
+        assert_eq!(std::fs::read(&anchor.source).unwrap(), original);
+        drop(editor);
+    });
+}
