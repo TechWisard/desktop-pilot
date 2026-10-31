@@ -3505,6 +3505,7 @@ mod tests {
         with_store(|store| {
             let mut cfg: Config = store.get("config").unwrap();
             cfg.automatic = true;
+            cfg.collect = true;
             cfg.interval_days = 7;
             store.set("config", &cfg).unwrap();
             let baseline = now();
@@ -3612,7 +3613,15 @@ mod tests {
             assert!(!automatic_review(store, true).unwrap());
             assert_eq!(store.get::<State>("state").unwrap().last_review, future);
 
+            // Permission to adapt without collecting does not permit a
+            // scheduled change; only explicitly resuming the full Adaptive
+            // mode allows a later quiet review.
             config.automatic = true;
+            store.set("config", &config).unwrap();
+            assert!(!automatic_review(store, true).unwrap());
+            assert_eq!(store.get::<State>("state").unwrap().last_review, future);
+
+            config.collect = true;
             store.set("config", &config).unwrap();
             assert!(!automatic_review(store, false).unwrap());
             assert_eq!(store.get::<State>("state").unwrap().last_review, future);
