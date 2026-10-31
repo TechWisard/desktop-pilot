@@ -274,9 +274,13 @@ fn interrupted_apply_can_be_explicitly_accepted_without_moving_any_other_files()
     assert!(!status(&f.store).unwrap().pending);
     assert_eq!(load(&f.store, &operation).unwrap().phase, Phase::Accepted);
     assert_eq!(f.store.app(&beta.id).unwrap().source, beta.source);
-    assert_eq!(
-        norm(&f.store.app(&alpha.id).unwrap().source),
-        norm(&f.desktop.join("Sites/Alpha.url").to_string_lossy())
+    let accepted_source = f.store.app(&alpha.id).unwrap().source;
+    let moved_id = fs::inspect(&f.desktop.join("Sites/Alpha.url"), true)
+        .unwrap()
+        .id;
+    assert!(
+        fs::matches_id(Path::new(&accepted_source), &moved_id).unwrap(),
+        "Catalog path must refer to the moved file even across Windows 8.3 aliases"
     );
     assert!(f.desktop.join("Sites/Alpha.url").is_file());
     assert!(f.desktop.join("Beta.url").is_file());
