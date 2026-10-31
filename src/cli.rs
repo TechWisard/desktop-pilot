@@ -182,3 +182,9 @@ mod tests {
         assert_eq!(parse(&[]).unwrap(), args(&["--settings"]));
     }
 }
+
+// Compile the filesystem engine against real application modules before exposing
+// its GUI entry points. This feature branch is not yet a distributable release.
+#[cfg(test)]
+#[path = "organize/mod.rs"]
+mod organize;
