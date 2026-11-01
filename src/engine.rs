@@ -2125,6 +2125,34 @@ fn claim_pending_command(store: &Store, id: i64) -> Result<bool> {
     }
 }
 
+// Process queued user actions in persisted order. A failed claim means the
+// oldest action could not be started (for example, a temporary SQLite writer
+// lock). Trying a later action in the same poll could reverse two successive
+// Always/Never choices after that lock clears.
+fn dispatch_pending_commands_with_claim(
+    store: &Store,
+    mut claim: impl FnMut(&Store, i64) -> Result<bool>,
+    mut execute: impl FnMut(i64, &str) -> Result<()>,
+) -> Result<bool> {
+    for (id, action) in store.pending()? {
+        if store.get::<bool>("shutdown")? {
+            return Ok(false);
+        }
+        if !claim(store, id)? {
+            break;
+        }
+        execute(id, &action)?;
+    }
+    Ok(true)
+}
+
+fn dispatch_pending_commands(
+    store: &Store,
+    execute: impl FnMut(i64, &str) -> Result<()>,
+) -> Result<bool> {
+    dispatch_pending_commands_with_claim(store, claim_pending_command, execute)
+}
+
 // The usage write is one SQLite transaction; retry only lock contention, not
 // corruption, permissions, disk-full errors or an ambiguous non-SQLite failure.
 fn retry_locked_usage<T>(mut write: impl FnMut() -> Result<T>) -> Result<T> {
@@ -2563,33 +2591,25 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                 }
             }
         }
-        for (id, action) in store.pending()? {
-            if store.get::<bool>("shutdown")? {
+        if !dispatch_pending_commands(&store, |id, action| {
+            if action == "rescan" {
+                let _ = publish_heartbeat_if_due(
+                    &store,
+                    &mut last_heartbeat,
+                    Instant::now(),
+                    true,
+                )?;
+                if let Some(worker) = scan.as_mut() {
+                    worker.follow_up_requests.push(id);
+                } else {
+                    let mut worker = scan_worker::start(&store.home);
+                    worker.requests.push(id);
+                    scan = Some(worker);
+                }
                 return Ok(());
             }
-            if action == "rescan" {
-                if claim_pending_command(&store, id)? {
-                    let _ = publish_heartbeat_if_due(
-                        &store,
-                        &mut last_heartbeat,
-                        Instant::now(),
-                        true,
-                    )?;
-                    if let Some(worker) = scan.as_mut() {
-                        worker.follow_up_requests.push(id);
-                    } else {
-                        let mut worker = scan_worker::start(&store.home);
-                        worker.requests.push(id);
-                        scan = Some(worker);
-                    }
-                }
-                continue;
-            }
-            if !claim_pending_command(&store, id)? {
-                continue;
-            }
             let _ = publish_heartbeat_if_due(&store, &mut last_heartbeat, Instant::now(), true)?;
-            let result = command(&store, &action);
+            let result = command(&store, action);
             store.finish(id, &result)?;
             apps = store.apps()?;
             if action == "clear_stats" && result.is_ok() {
@@ -2598,6 +2618,9 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                 session_times.clear();
             }
             maintenance = None;
+            Ok(())
+        })? {
+            return Ok(());
         }
         if store.get::<bool>("shutdown")? {
             return Ok(());
@@ -4345,3 +4368,6 @@ mod paused_usage_tests;
 
 #[cfg(test)]
 mod command_claim_contention_tests;
+
+#[cfg(test)]
+mod command_queue_order_tests;
