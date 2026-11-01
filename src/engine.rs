@@ -2072,9 +2072,13 @@ fn automatic_review_with_boundaries(
         if !still_quiet() {
             return Ok(false);
         }
-        return Ok(
-            apply_locked(store, !current_state.initialized, before_commit, still_quiet)?.is_some()
-        );
+        return Ok(apply_locked(
+            store,
+            !current_state.initialized,
+            before_commit,
+            still_quiet,
+        )?
+        .is_some());
     }
     Ok(false)
 }
