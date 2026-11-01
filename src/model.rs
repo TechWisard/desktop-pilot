@@ -20,10 +20,7 @@ pub fn norm(s: &str) -> String {
         format!(r"\\{}", &expanded[8..])
     } else if let Some(drive_path) = expanded.strip_prefix(r"\\?\").filter(|path| {
         let bytes = path.as_bytes();
-        bytes.len() >= 3
-            && bytes[0].is_ascii_alphabetic()
-            && bytes[1] == b':'
-            && bytes[2] == b'\\'
+        bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'\\'
     }) {
         // Only ordinary absolute drive paths can drop the device prefix.
         // Volume GUID and GLOBALROOT paths must not become relative names.
