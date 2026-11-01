@@ -120,3 +120,91 @@ fn shutdown_during_dispatch_leaves_later_command_unclaimed() {
         assert_eq!(state, "pending");
     });
 }
+
+#[test]
+fn unclaimed_manual_policies_survive_worker_restart_without_replaying_file_actions() {
+    with_store(|store| {
+        let desktop = store.home.join("Desktop");
+        std::fs::create_dir_all(&desktop).unwrap();
+        store
+            .set("test_desktop", &desktop.to_string_lossy())
+            .unwrap();
+        let source = store.home.join("Important research.url");
+        let original = b"[InternetShortcut]\r\nURL=https://example.com/important-research\r\n";
+        std::fs::write(&source, original).unwrap();
+        let app = native::read_link(&source).unwrap();
+        store.put_app(&app).unwrap();
+
+        // A command already marked running may have been partly performed,
+        // so a restart must never replay it, even when it is a policy change.
+        store.command(&format!("policy:{}:Auto", app.id)).unwrap();
+        let interrupted = store.db.last_insert_rowid();
+        assert!(store.claim_command(interrupted).unwrap());
+
+        // Two unclaimed user choices straddle destructive actions. Preserve
+        // their order, but do not re-run Apply or Undo after a crash.
+        store.command(&format!("policy:{}:Never", app.id)).unwrap();
+        let never = store.db.last_insert_rowid();
+        store.command("apply").unwrap();
+        let apply = store.db.last_insert_rowid();
+        store.command("rollback").unwrap();
+        let undo = store.db.last_insert_rowid();
+        store.command(&format!("policy:{}:Always", app.id)).unwrap();
+        let always = store.db.last_insert_rowid();
+
+        store.recover_commands_for_monitor().unwrap();
+        assert_eq!(
+            store.pending().unwrap(),
+            vec![
+                (never, format!("policy:{}:Never", app.id)),
+                (always, format!("policy:{}:Always", app.id)),
+            ]
+        );
+        for id in [interrupted, apply, undo] {
+            let status: String = store
+                .db
+                .query_row("SELECT status FROM commands WHERE id=?1", [id], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(status, "error");
+        }
+        assert_eq!(store.events().unwrap().len(), 1);
+        // Reopening/recovering twice must not manufacture audit events or
+        // prematurely mark a pending manual choice as completed.
+        store.recover_commands_for_monitor().unwrap();
+        assert_eq!(store.events().unwrap().len(), 1);
+
+        let mut executed = Vec::new();
+        assert!(
+            dispatch_pending_commands(store, |id, action| {
+                executed.push(id);
+                let result = command(store, action);
+                store.finish(id, &result)?;
+                result.map(|_| ())
+            })
+            .unwrap()
+        );
+        assert_eq!(executed, [never, always]);
+        assert_eq!(store.app(&app.id).unwrap().policy, Policy::Always);
+        assert!(store.pending().unwrap().is_empty());
+        assert_eq!(store.events().unwrap().len(), 3);
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+        let state: State = store.get("state").unwrap();
+        assert!(state.owned.is_empty());
+        assert!(std::fs::read_dir(&desktop).unwrap().next().is_none());
+        let transactions: i64 = store
+            .db
+            .query_row("SELECT COUNT(*) FROM transactions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(transactions, 0);
+
+        // Explicit interruption cleanup is deliberately different: with no
+        // running worker, it must cancel pending actions, not leave them queued.
+        store.command(&format!("policy:{}:Never", app.id)).unwrap();
+        store.recover_commands().unwrap();
+        assert!(store.pending().unwrap().is_empty());
+        assert_eq!(store.app(&app.id).unwrap().policy, Policy::Always);
+        assert!(dispatch_pending_commands(store, |_, _| panic!("unexpected replay")).unwrap());
+    });
+}

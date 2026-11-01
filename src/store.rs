@@ -327,6 +327,25 @@ impl Store {
             Ok(())
         })
     }
+    // A queued policy has not started and can safely be applied in original
+    // user order after a worker restart. In contrast, an in-flight action
+    // could have partially changed files; Apply/Undo and other queued file
+    // operations also require a fresh explicit request after interruption.
+    // Explicit Settings cleanup still uses recover_commands() to cancel all.
+    pub fn recover_commands_for_monitor(&self) -> Result<()> {
+        self.transaction(|| {
+            let message = "Command interrupted by the previous background process. File-changing actions were cancelled; unclaimed manual policies remain queued.";
+            let count = self.db.execute(
+                "UPDATE commands SET status='error',message=?1 WHERE status='running' OR (status='pending' AND action NOT GLOB 'policy:*')",
+                [message],
+            )?;
+            if count > 0 {
+                self.event("error", message)?;
+            }
+            Ok(())
+        })
+    }
+
     pub fn finish(&self, id: i64, result: &Result<String>) -> Result<()> {
         let (status, message) = match result {
             Ok(s) => ("done", s.clone()),
