@@ -2082,11 +2082,11 @@ impl UsageAccumulator {
 }
 // The usage write is one SQLite transaction; retry only lock contention, not
 // corruption, permissions, disk-full errors or an ambiguous non-SQLite failure.
-fn retry_locked_usage(mut write: impl FnMut() -> Result<()>) -> Result<()> {
+fn retry_locked_usage<T>(mut write: impl FnMut() -> Result<T>) -> Result<T> {
     const ATTEMPTS: usize = 3;
     for attempt in 0..ATTEMPTS {
         match write() {
-            Ok(()) => return Ok(()),
+            Ok(value) => return Ok(value),
             Err(error)
                 if attempt + 1 < ATTEMPTS
                     && error.chain().any(|source| {
@@ -2175,6 +2175,30 @@ fn record_usage(
     time: i64,
 ) -> Result<()> {
     record_usage_inner(store, session_times, id, seconds, first, time, false).map(|_| ())
+}
+
+// A foreground sample is only evidence after its SQLite transaction commits.
+// A Settings pause can land between sampling and writing, so a refused sample
+// must not leave a counted-but-unpersisted first session in memory.
+fn persist_confirmed_usage(
+    store: &Store,
+    session_times: &mut HashMap<String, i64>,
+    usage: &mut UsageAccumulator,
+    id: &str,
+    seconds: u32,
+    first: bool,
+    time: i64,
+) -> Result<bool> {
+    let committed = retry_locked_usage(|| {
+        record_usage_inner(store, session_times, id, seconds, first, time, true)
+    })?;
+    if !committed {
+        // Collection was paused or the worker was turned off after sampling.
+        // Do not replay pre-pause evidence on resume or lose the first-session
+        // marker for a genuinely new visit.
+        *usage = UsageAccumulator::default();
+    }
+    Ok(committed)
 }
 
 fn record_learning_if_permitted(store: &Store, seconds: u32) -> Result<bool> {
@@ -2587,11 +2611,21 @@ pub fn monitor(home: PathBuf) -> Result<()> {
         } else {
             learning_fraction = 0.0;
         }
-        if let Some((id, seconds, first)) = usage.sample(active_id.as_deref(), elapsed) {
-            retry_locked_usage(|| {
-                record_usage_inner(&store, &mut session_times, &id, seconds, first, now(), true)
-                    .map(|_| ())
-            })?;
+        if let Some((id, seconds, first)) = usage.sample(active_id.as_deref(), elapsed)
+            && !persist_confirmed_usage(
+                &store,
+                &mut session_times,
+                &mut usage,
+                &id,
+                seconds,
+                first,
+                now(),
+            )?
+        {
+            // The same pause is authoritative for input provenance too.
+            // Do not silently resume on the last pre-pause click.
+            crate::activity::set_enabled(false);
+            focus = crate::activity::FocusEvidence::default();
         }
         let _ = publish_heartbeat_if_due(&store, &mut last_heartbeat, Instant::now(), false)?;
         if maintenance.is_none_or(|at| at.elapsed() >= Duration::from_secs(60)) {
@@ -4226,3 +4260,6 @@ mod reconcile_noop_tests;
 
 #[cfg(test)]
 mod legacy_owned_duplicate_tests;
+
+#[cfg(test)]
+mod paused_usage_tests;
