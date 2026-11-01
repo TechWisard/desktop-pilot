@@ -428,7 +428,7 @@ fn self_test(home: &Path, args: &[String], error_profile: &mut Option<PathBuf>) 
             .output()?;
         ensure!(
             !rejected.status.success()
-                && std::fs::read(&destination)? == original_bytes
+                && std::fs::read(&destination)?.as_slice() == original_bytes
                 && !unopened_profile.exists(),
             "A non-JSON report destination replaced a user file or opened a profile: {filename}"
         );
