@@ -51,7 +51,10 @@ fn paused_observation_cannot_consume_first_session_or_replay_old_activity() {
     );
     assert!(store.days().unwrap().is_empty());
     assert!(checkpoints.is_empty());
-    assert!(usage.windows.is_empty(), "a refused sample cannot survive a pause");
+    assert!(
+        usage.windows.is_empty(),
+        "a refused sample cannot survive a pause"
+    );
 
     // Re-enabling collection does not replay the old ten seconds, but a new
     // confirmed visit earns its own first session using the real Store writer.
