@@ -228,3 +228,73 @@ fn queued_review_does_not_move_shortcuts_after_the_user_resumes_work() {
         );
     });
 }
+
+#[test]
+fn active_user_during_slow_preflight_defers_the_same_due_review_without_churn() {
+    with_store(|store| {
+        let desktop = store.home.join("Desktop");
+        std::fs::create_dir_all(&desktop).unwrap();
+        store
+            .set("test_desktop", &desktop.to_string_lossy())
+            .unwrap();
+
+        let source = store.home.join("Project report.url");
+        let original = b"[InternetShortcut]\r\nURL=https://example.com/project-report\r\n";
+        std::fs::write(&source, original).unwrap();
+        let mut app = native::read_link(&source).unwrap();
+        app.policy = Policy::Always;
+        store.put_app(&app).unwrap();
+        store
+            .set(
+                "config",
+                &Config {
+                    automatic: true,
+                    collect: true,
+                    learning_enabled: false,
+                    slots: 1,
+                    ..Config::default()
+                },
+            )
+            .unwrap();
+        let before = State {
+            initialized: true,
+            last_review: now() - 8 * 86400,
+            ..State::default()
+        };
+        store.set("state", &before).unwrap();
+
+        // Early quiet permission still passes. The user returns only after
+        // the production catalog refresh, reconciliation and layout preflight.
+        // Without the late check this due review would stage and publish a copy.
+        let user_active = std::cell::Cell::new(false);
+        let quiet_checks = std::cell::Cell::new(0usize);
+        assert!(
+            !automatic_review_with_precommit_boundary(
+                store,
+                true,
+                || user_active.set(true),
+                || {
+                    quiet_checks.set(quiet_checks.get() + 1);
+                    !user_active.get()
+                },
+            )
+            .unwrap()
+        );
+        assert_eq!(quiet_checks.get(), 2, "check before and after preflight");
+        let deferred: State = store.get("state").unwrap();
+        assert_eq!(deferred.last_review, before.last_review);
+        assert!(deferred.owned.is_empty());
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+        assert!(std::fs::read_dir(&desktop).unwrap().next().is_none());
+
+        // After the activity ends the same review must still be due and
+        // must use the normal real database, selector and copy/Undo journal.
+        assert!(automatic_review_with_quiet_recheck(store, true, || {}, || true).unwrap());
+        let applied: State = store.get("state").unwrap();
+        assert_eq!(applied.owned.len(), 1);
+        assert_eq!(applied.owned[0].app, app.id);
+        assert!(std::path::Path::new(&applied.owned[0].path).exists());
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+        assert!(!automatic_review_with_quiet_recheck(store, true, || {}, || true).unwrap());
+    });
+}
