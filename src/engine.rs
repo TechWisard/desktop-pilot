@@ -2593,12 +2593,8 @@ pub fn monitor(home: PathBuf) -> Result<()> {
         }
         if !dispatch_pending_commands(&store, |id, action| {
             if action == "rescan" {
-                let _ = publish_heartbeat_if_due(
-                    &store,
-                    &mut last_heartbeat,
-                    Instant::now(),
-                    true,
-                )?;
+                let _ =
+                    publish_heartbeat_if_due(&store, &mut last_heartbeat, Instant::now(), true)?;
                 if let Some(worker) = scan.as_mut() {
                     worker.follow_up_requests.push(id);
                 } else {

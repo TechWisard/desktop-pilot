@@ -63,7 +63,10 @@ fn first_contended_claim_does_not_allow_later_manual_choice_to_overtake() {
             .unwrap()
         );
         assert_eq!(attempted, [first]);
-        assert!(executed.is_empty(), "a later action must not overtake a busy first claim");
+        assert!(
+            executed.is_empty(),
+            "a later action must not overtake a busy first claim"
+        );
         assert_eq!(store.pending().unwrap(), queued);
         assert_eq!(store.app(&app.id).unwrap().policy, Policy::Auto);
 
