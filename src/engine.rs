@@ -1954,15 +1954,26 @@ pub(crate) fn scheduled_review_due(state: &State, config: &Config, at: i64) -> b
 }
 
 pub fn automatic_review(store: &Store, quiet: bool) -> Result<bool> {
-    automatic_review_with_boundary(store, quiet, || {})
+    automatic_review_with_quiet_recheck(store, quiet, || {}, native::quiet_for_changes)
 }
 
-// The boundary callback allows a deterministic scheduling regression against
-// the very same production review path. The normal caller supplies no action.
+// The boundary callback allows deterministic scheduling regressions against
+// the same production review path without requiring an interactive Windows
+// idle state during headless tests.
+#[cfg(test)]
 pub(crate) fn automatic_review_with_boundary(
     store: &Store,
     quiet: bool,
     before_apply: impl FnOnce(),
+) -> Result<bool> {
+    automatic_review_with_quiet_recheck(store, quiet, before_apply, || true)
+}
+
+fn automatic_review_with_quiet_recheck(
+    store: &Store,
+    quiet: bool,
+    before_apply: impl FnOnce(),
+    still_quiet: impl FnOnce() -> bool,
 ) -> Result<bool> {
     if store.get::<bool>("shutdown")? {
         return Ok(false);
@@ -2013,6 +2024,12 @@ pub(crate) fn automatic_review_with_boundary(
         if !current_progress.ready(&current)
             || !scheduled_review_due(&current_state, &current, now())
         {
+            return Ok(false);
+        }
+        // The first idle/fullscreen check preceded the changes mutex and may
+        // be stale after Settings or an unrelated file operation delayed us.
+        // Never rearrange shortcuts after the user has returned to active work.
+        if !still_quiet() {
             return Ok(false);
         }
         apply_locked(store, !current_state.initialized)?;

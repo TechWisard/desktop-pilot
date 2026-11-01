@@ -154,3 +154,77 @@ fn completed_auto_review_when_not_due_does_not_take_an_unneeded_writer() {
         assert_eq!(write_count(store), 0);
     });
 }
+
+#[test]
+fn queued_review_does_not_move_shortcuts_after_the_user_resumes_work() {
+    with_store(|store| {
+        let desktop = store.home.join("Desktop");
+        std::fs::create_dir_all(&desktop).unwrap();
+        store
+            .set("test_desktop", &desktop.to_string_lossy())
+            .unwrap();
+
+        let source = store.home.join("Rare research.url");
+        let original = b"[InternetShortcut]\r\nURL=https://example.com/rare-research\r\n";
+        std::fs::write(&source, original).unwrap();
+        let mut app = native::read_link(&source).unwrap();
+        app.policy = Policy::Always;
+        store.put_app(&app).unwrap();
+
+        let config = Config {
+            automatic: true,
+            collect: true,
+            learning_enabled: false,
+            slots: 1,
+            ..Config::default()
+        };
+        store.set("config", &config).unwrap();
+        let before = State {
+            initialized: true,
+            last_review: now() - 8 * 86400,
+            ..State::default()
+        };
+        store.set("state", &before).unwrap();
+
+        // Initial idle permission was true, but foreground activity resumes
+        // while the review waits to acquire its final placement boundary.
+        let user_active = std::cell::Cell::new(false);
+        let attempts = std::cell::Cell::new(0u32);
+        assert!(
+            !automatic_review_with_quiet_recheck(
+                store,
+                true,
+                || {
+                    attempts.set(attempts.get() + 1);
+                    user_active.set(true);
+                },
+                || !user_active.get(),
+            )
+            .unwrap()
+        );
+        assert_eq!(attempts.get(), 1);
+        let unchanged: State = store.get("state").unwrap();
+        assert_eq!(unchanged.last_review, before.last_review);
+        assert!(unchanged.owned.is_empty());
+        assert!(std::fs::read_dir(&desktop).unwrap().next().is_none());
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+
+        // The queued review remains due. Only a fresh quiet confirmation can
+        // use the same real selector, placement and SQLite transaction paths.
+        assert!(automatic_review_with_quiet_recheck(store, true, || {}, || true).unwrap());
+        let applied: State = store.get("state").unwrap();
+        assert_eq!(applied.owned.len(), 1);
+        assert_eq!(applied.owned[0].app, app.id);
+        assert!(std::path::Path::new(&applied.owned[0].path).exists());
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+        assert!(
+            !automatic_review_with_quiet_recheck(
+                store,
+                true,
+                || panic!("a review that is not due must not enter the final boundary"),
+                || panic!("a review that is not due must not recheck quiet"),
+            )
+            .unwrap()
+        );
+    });
+}
