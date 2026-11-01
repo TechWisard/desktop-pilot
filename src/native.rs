@@ -236,7 +236,7 @@ fn web_target_has_host(target: &str) -> bool {
         || host_port.starts_with(':')
         || host_port
             .chars()
-            .any(|ch| ch.is_whitespace() || ch.is_control() || ch == '\\')
+            .any(|ch| ch.is_whitespace() || ch.is_control() || r"\<>^|".contains(ch))
     {
         return false;
     }
@@ -1605,6 +1605,94 @@ mod tests {
                 "{target}"
             );
         }
+    }
+
+    #[test]
+    fn forbidden_http_hostname_characters_cannot_displace_usable_shortcut() {
+        // Real .url parsing, saved SQLite catalog, and the production preview.
+        // A malformed, historically popular link must not take the only slot.
+        let directory = std::env::temp_dir().join(format!(
+            "desktop-pilot-forbidden-host-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let malformed = directory.join("Malformed hostname.url");
+        let working = directory.join("Working documentation.url");
+        let bad_bytes = b"[InternetShortcut]\r\nURL=https://bad^host.invalid/docs\r\n";
+        let good_bytes = b"[InternetShortcut]\r\nURL=https://docs.example.invalid/guide\r\n";
+        std::fs::write(&malformed, bad_bytes).unwrap();
+        std::fs::write(&working, good_bytes).unwrap();
+        let mut bad = read_link(&malformed).unwrap();
+        let mut good = read_link(&working).unwrap();
+        assert!(
+            !bad.valid,
+            "a forbidden hostname character is not launchable"
+        );
+        assert!(good.valid);
+        let observed_at = crate::model::now();
+        bad.seed = 500.0;
+        bad.seed_at = observed_at;
+        good.seed = 30.0;
+        good.seed_at = observed_at;
+        let store = crate::store::Store::open(&directory.join("profile")).unwrap();
+        store.put_app(&bad).unwrap();
+        store.put_app(&good).unwrap();
+        let config = crate::model::Config {
+            slots: 1,
+            collect: true,
+            learning_enabled: false,
+            ..Default::default()
+        };
+        store.set("config", &config).unwrap();
+        let preview = crate::engine::preview(&store, true).unwrap();
+        assert_eq!(preview.selected, [good.id.clone()]);
+        assert!(
+            !preview
+                .ranking
+                .iter()
+                .find(|r| r.id == bad.id)
+                .unwrap()
+                .eligible
+        );
+        assert_eq!(std::fs::read(&malformed).unwrap(), bad_bytes);
+        assert_eq!(std::fs::read(&working).unwrap(), good_bytes);
+
+        for target in [
+            "https://bad<host.invalid/docs",
+            "https://bad>host.invalid/docs",
+            "https://bad^host.invalid/docs",
+            "https://bad|host.invalid/docs",
+            "https://bad\u{7f}host.invalid/docs",
+            "https://user:pass@bad^host.invalid/docs",
+        ] {
+            assert!(
+                !valid_target(&App {
+                    target: target.into(),
+                    ..Default::default()
+                }),
+                "{target}"
+            );
+        }
+        for target in [
+            "https://docs.example.invalid/path^part",
+            "https://docs.example.invalid/path|part",
+            "https://user^name:secret@docs.example.invalid/",
+            "https://[::1]:443/guide",
+        ] {
+            assert!(
+                valid_target(&App {
+                    target: target.into(),
+                    ..Default::default()
+                }),
+                "{target}"
+            );
+        }
+        drop(store);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
