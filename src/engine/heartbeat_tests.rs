@@ -149,13 +149,9 @@ fn temporary_writer_lock_drops_only_the_heartbeat_and_recovers_on_next_tick() {
         assert!(publish_heartbeat_if_due(store, &mut last, resumed, false).unwrap());
         assert_eq!(last, Some(resumed));
         assert!(store.get::<i64>("heartbeat").unwrap() > old);
-        let not_due = publish_heartbeat_if_due(
-            store,
-            &mut last,
-            resumed + Duration::from_secs(2),
-            false,
-        )
-        .unwrap();
+        let not_due =
+            publish_heartbeat_if_due(store, &mut last, resumed + Duration::from_secs(2), false)
+                .unwrap();
         assert!(!not_due);
     });
 }
