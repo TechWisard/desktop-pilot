@@ -160,7 +160,9 @@ fn queued_review_does_not_move_shortcuts_after_the_user_resumes_work() {
     with_store(|store| {
         let desktop = store.home.join("Desktop");
         std::fs::create_dir_all(&desktop).unwrap();
-        store.set("test_desktop", &desktop.to_string_lossy()).unwrap();
+        store
+            .set("test_desktop", &desktop.to_string_lossy())
+            .unwrap();
 
         let source = store.home.join("Rare research.url");
         let original = b"[InternetShortcut]\r\nURL=https://example.com/rare-research\r\n";
@@ -209,9 +211,7 @@ fn queued_review_does_not_move_shortcuts_after_the_user_resumes_work() {
 
         // The queued review remains due. Only a fresh quiet confirmation can
         // use the same real selector, placement and SQLite transaction paths.
-        assert!(
-            automatic_review_with_quiet_recheck(store, true, || {}, || true).unwrap()
-        );
+        assert!(automatic_review_with_quiet_recheck(store, true, || {}, || true).unwrap());
         let applied: State = store.get("state").unwrap();
         assert_eq!(applied.owned.len(), 1);
         assert_eq!(applied.owned[0].app, app.id);
