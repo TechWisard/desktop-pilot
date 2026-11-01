@@ -1628,7 +1628,10 @@ mod tests {
         std::fs::write(&working, good_bytes).unwrap();
         let mut bad = read_link(&malformed).unwrap();
         let mut good = read_link(&working).unwrap();
-        assert!(!bad.valid, "a forbidden hostname character is not launchable");
+        assert!(
+            !bad.valid,
+            "a forbidden hostname character is not launchable"
+        );
         assert!(good.valid);
         let observed_at = crate::model::now();
         bad.seed = 500.0;
@@ -1647,7 +1650,14 @@ mod tests {
         store.set("config", &config).unwrap();
         let preview = crate::engine::preview(&store, true).unwrap();
         assert_eq!(preview.selected, [good.id.clone()]);
-        assert!(!preview.ranking.iter().find(|r| r.id == bad.id).unwrap().eligible);
+        assert!(
+            !preview
+                .ranking
+                .iter()
+                .find(|r| r.id == bad.id)
+                .unwrap()
+                .eligible
+        );
         assert_eq!(std::fs::read(&malformed).unwrap(), bad_bytes);
         assert_eq!(std::fs::read(&working).unwrap(), good_bytes);
 
