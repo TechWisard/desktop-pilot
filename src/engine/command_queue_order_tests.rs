@@ -124,6 +124,11 @@ fn shutdown_during_dispatch_leaves_later_command_unclaimed() {
 #[test]
 fn unclaimed_manual_policies_survive_worker_restart_without_replaying_file_actions() {
     with_store(|store| {
+        let desktop = store.home.join("Desktop");
+        std::fs::create_dir_all(&desktop).unwrap();
+        store
+            .set("test_desktop", &desktop.to_string_lossy())
+            .unwrap();
         let source = store.home.join("Important research.url");
         let original = b"[InternetShortcut]\r\nURL=https://example.com/important-research\r\n";
         std::fs::write(&source, original).unwrap();
@@ -187,6 +192,7 @@ fn unclaimed_manual_policies_survive_worker_restart_without_replaying_file_actio
         assert_eq!(std::fs::read(&source).unwrap(), original);
         let state: State = store.get("state").unwrap();
         assert!(state.owned.is_empty());
+        assert!(std::fs::read_dir(&desktop).unwrap().next().is_none());
         let transactions: i64 = store
             .db
             .query_row("SELECT COUNT(*) FROM transactions", [], |row| row.get(0))
