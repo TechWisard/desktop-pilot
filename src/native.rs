@@ -1659,7 +1659,13 @@ mod tests {
             "https://bad\u{7f}host.invalid/docs",
             "https://user:pass@bad^host.invalid/docs",
         ] {
-            assert!(!valid_target(&App { target: target.into(), ..Default::default() }), "{target}");
+            assert!(
+                !valid_target(&App {
+                    target: target.into(),
+                    ..Default::default()
+                }),
+                "{target}"
+            );
         }
         for target in [
             "https://docs.example.invalid/path^part",
@@ -1667,7 +1673,13 @@ mod tests {
             "https://user^name:secret@docs.example.invalid/",
             "https://[::1]:443/guide",
         ] {
-            assert!(valid_target(&App { target: target.into(), ..Default::default() }), "{target}");
+            assert!(
+                valid_target(&App {
+                    target: target.into(),
+                    ..Default::default()
+                }),
+                "{target}"
+            );
         }
         drop(store);
         std::fs::remove_dir_all(directory).unwrap();
