@@ -2113,6 +2113,18 @@ fn sqlite_writer_contention(error: &anyhow::Error) -> bool {
     })
 }
 
+// Claiming a queued UI action is safe to retry: Store::claim_command only
+// changes 'pending' to 'running' inside a transaction, before executing the
+// action. A competing SQLite writer must not terminate the foreground monitor
+// or silently discard an unclaimed user request. The next poll retries it.
+fn claim_pending_command(store: &Store, id: i64) -> Result<bool> {
+    match store.claim_command(id) {
+        Ok(claimed) => Ok(claimed),
+        Err(error) if sqlite_writer_contention(&error) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 // The usage write is one SQLite transaction; retry only lock contention, not
 // corruption, permissions, disk-full errors or an ambiguous non-SQLite failure.
 fn retry_locked_usage<T>(mut write: impl FnMut() -> Result<T>) -> Result<T> {
@@ -2556,7 +2568,7 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                 return Ok(());
             }
             if action == "rescan" {
-                if store.claim_command(id)? {
+                if claim_pending_command(&store, id)? {
                     let _ = publish_heartbeat_if_due(
                         &store,
                         &mut last_heartbeat,
@@ -2573,7 +2585,7 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                 }
                 continue;
             }
-            if !store.claim_command(id)? {
+            if !claim_pending_command(&store, id)? {
                 continue;
             }
             let _ = publish_heartbeat_if_due(&store, &mut last_heartbeat, Instant::now(), true)?;
@@ -4330,3 +4342,6 @@ mod legacy_owned_duplicate_tests;
 
 #[cfg(test)]
 mod paused_usage_tests;
+
+#[cfg(test)]
+mod command_claim_contention_tests;
