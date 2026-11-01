@@ -1957,9 +1957,10 @@ pub fn automatic_review(store: &Store, quiet: bool) -> Result<bool> {
     automatic_review_with_quiet_recheck(store, quiet, || {}, native::quiet_for_changes)
 }
 
-// The boundary callback allows a deterministic scheduling regression against
-// the very same production review path. Existing callers supply a stable
-// quiet state; the live monitor also rechecks Windows immediately before Apply.
+// The boundary callback allows deterministic scheduling regressions against
+// the same production review path without requiring an interactive Windows
+// idle state during headless tests.
+#[cfg(test)]
 pub(crate) fn automatic_review_with_boundary(
     store: &Store,
     quiet: bool,
