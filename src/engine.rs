@@ -2558,7 +2558,7 @@ fn publish_monitor_status_if_changed(store: &Store, status: &str) -> Result<bool
 pub fn monitor(home: PathBuf) -> Result<()> {
     let _com = native::Com::new()?;
     let store = Store::open(&home)?;
-    store.recover_commands()?;
+    store.recover_commands_for_monitor()?;
     let mut progress: Progress = store.get("learning")?;
     if progress.started_at == 0 && store.get::<State>("state")?.initialized {
         progress.completed_at = now();
