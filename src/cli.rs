@@ -12,7 +12,10 @@ pub fn parse(input: &[String]) -> Result<Vec<String>> {
     while index < input.len() {
         let argument = &input[index];
         if argument == "--replace-out" {
-            ensure!(!replace_out, "Option --replace-out was supplied more than once");
+            ensure!(
+                !replace_out,
+                "Option --replace-out was supplied more than once"
+            );
             replace_out = true;
             index += 1;
             continue;
@@ -233,7 +236,13 @@ mod tests {
         for input in [
             vec!["--replace-out"],
             vec!["--inspect", "--replace-out"],
-            vec!["--inspect", "--out", "report.json", "--replace-out", "--replace-out"],
+            vec![
+                "--inspect",
+                "--out",
+                "report.json",
+                "--replace-out",
+                "--replace-out",
+            ],
             vec!["--help", "--replace-out"],
             vec!["--inspect", "--out", "notes.txt", "--replace-out"],
         ] {
@@ -242,8 +251,13 @@ mod tests {
         let expected = args(&["--inspect", "--out", "report.json", "--replace-out"]);
         assert_eq!(parse(&expected).unwrap(), expected);
         assert_eq!(
-            parse(&args(&["--replace-out", "--out", "report.json", "--inspect"]))
-                .unwrap(),
+            parse(&args(&[
+                "--replace-out",
+                "--out",
+                "report.json",
+                "--inspect"
+            ]))
+            .unwrap(),
             expected
         );
     }
