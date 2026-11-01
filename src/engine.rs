@@ -1208,12 +1208,20 @@ pub(crate) fn reserve_positions(
 
 pub fn apply(store: &Store, initial: bool) -> Result<String> {
     let _lock = native::exclusive("changes", &store.home)?;
-    apply_locked(store, initial)
+    apply_locked(store, initial, || {}, || true)?
+        .context("Explicit placement was unexpectedly deferred")
 }
 
 // The named changes mutex must be held by the caller. Both explicit Apply and
 // scheduled review share the exact same transaction and rollback logic.
-fn apply_locked(store: &Store, initial: bool) -> Result<String> {
+// An automatic review can stop after the potentially slow catalog refresh,
+// before the first file or review-checkpoint change.
+fn apply_locked(
+    store: &Store,
+    initial: bool,
+    before_commit: impl FnOnce(),
+    still_quiet: impl FnOnce() -> bool,
+) -> Result<Option<String>> {
     ensure!(
         store
             .get::<Progress>("learning")?
@@ -1252,11 +1260,10 @@ fn apply_locked(store: &Store, initial: bool) -> Result<String> {
     if let Some(l) = &snap {
         after.topology = l.topology.clone();
     }
-    if choice.added.is_empty() && choice.removed.is_empty() {
-        store.set("state", &after)?;
-        return Ok("Проверено: текущий состав сохранён".into());
-    }
-    let points = if let Some(l) = &snap {
+    let unchanged = choice.added.is_empty() && choice.removed.is_empty();
+    let points = if unchanged {
+        Vec::new()
+    } else if let Some(l) = &snap {
         reserve_positions(l, &cfg, &before, &choice.removed, choice.added.len())?
     } else {
         (0..choice.added.len())
@@ -1266,6 +1273,17 @@ fn apply_locked(store: &Store, initial: bool) -> Result<String> {
             })
             .collect()
     };
+    // Refresh, reconciliation, ranking, layout checks and position reservation
+    // can all take time. The earlier quiet check may have become stale.
+    // A deferred review must not advance its checkpoint or stage desktop files.
+    before_commit();
+    if !still_quiet() {
+        return Ok(None);
+    }
+    if unchanged {
+        store.set("state", &after)?;
+        return Ok(Some("Проверено: текущий состав сохранён".into()));
+    }
     let id = format!(
         "{}-{}",
         chrono::Utc::now().format("%Y%m%d-%H%M%S-%f"),
@@ -1448,7 +1466,7 @@ fn apply_locked(store: &Store, initial: bool) -> Result<String> {
         choice.removed.len()
     );
     store.event("layout", &message)?;
-    Ok(message)
+    Ok(Some(message))
 }
 
 pub fn suggest_zone(layout: &native::Layout, slots: usize) -> Result<(i32, i32, i32)> {
@@ -1973,7 +1991,29 @@ fn automatic_review_with_quiet_recheck(
     store: &Store,
     quiet: bool,
     before_apply: impl FnOnce(),
-    still_quiet: impl FnOnce() -> bool,
+    still_quiet: impl FnMut() -> bool,
+) -> Result<bool> {
+    automatic_review_with_boundaries(store, quiet, before_apply, || {}, still_quiet)
+}
+
+// Probe the second, later permission boundary using the real selector,
+// SQLite state and filesystem placement path.
+#[cfg(test)]
+fn automatic_review_with_precommit_boundary(
+    store: &Store,
+    quiet: bool,
+    before_commit: impl FnOnce(),
+    still_quiet: impl FnMut() -> bool,
+) -> Result<bool> {
+    automatic_review_with_boundaries(store, quiet, || {}, before_commit, still_quiet)
+}
+
+fn automatic_review_with_boundaries(
+    store: &Store,
+    quiet: bool,
+    before_apply: impl FnOnce(),
+    before_commit: impl FnOnce(),
+    mut still_quiet: impl FnMut() -> bool,
 ) -> Result<bool> {
     if store.get::<bool>("shutdown")? {
         return Ok(false);
@@ -2032,8 +2072,9 @@ fn automatic_review_with_quiet_recheck(
         if !still_quiet() {
             return Ok(false);
         }
-        apply_locked(store, !current_state.initialized)?;
-        return Ok(true);
+        return Ok(
+            apply_locked(store, !current_state.initialized, before_commit, still_quiet)?.is_some()
+        );
     }
     Ok(false)
 }
