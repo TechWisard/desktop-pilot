@@ -195,9 +195,7 @@ fn unclaimed_manual_policies_survive_worker_restart_without_replaying_file_actio
 
         // Explicit interruption cleanup is deliberately different: with no
         // running worker, it must cancel pending actions, not leave them queued.
-        store
-            .command(&format!("policy:{}:Never", app.id))
-            .unwrap();
+        store.command(&format!("policy:{}:Never", app.id)).unwrap();
         store.recover_commands().unwrap();
         assert!(store.pending().unwrap().is_empty());
         assert_eq!(store.app(&app.id).unwrap().policy, Policy::Always);
