@@ -2625,11 +2625,10 @@ pub fn monitor(home: PathBuf) -> Result<()> {
             if seconds > 0 {
                 learning_fraction -= f64::from(seconds);
                 if !record_learning_if_permitted(&store, seconds.min(4))? {
-                    // A pause or writer lock invalidates this sampling window.
-                    // Require fresh genuine input when collection resumes.
+                    // No learning update: collection paused, a temporary writer
+                    // lock, or learning already finished. Forget the fraction,
+                    // but keep ordinary foreground tracking enabled.
                     learning_fraction = 0.0;
-                    crate::activity::set_enabled(false);
-                    focus = crate::activity::FocusEvidence::default();
                 }
             }
         } else {
