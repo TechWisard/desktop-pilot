@@ -2410,10 +2410,18 @@ fn publish_heartbeat_if_due(
     {
         return Ok(false);
     }
-    store.set("heartbeat", &now())?;
-    // A failed SQLite write never advances the next-eligible checkpoint.
-    *last_written = Some(tick);
-    Ok(true)
+    match store.set("heartbeat", &now()) {
+        Ok(()) => {
+            *last_written = Some(tick);
+            Ok(true)
+        }
+        // This is a nonessential liveness signal, not a user command.
+        // A concurrent SQLite writer may briefly exhaust the busy timeout.
+        // Do not terminate the foreground monitor or claim a heartbeat was
+        // published. The next poll retries after the other writer releases.
+        Err(error) if sqlite_writer_contention(&error) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// Do not trigger a full Settings catalog reload once a minute merely to
