@@ -132,25 +132,19 @@ fn unclaimed_manual_policies_survive_worker_restart_without_replaying_file_actio
 
         // A command already marked running may have been partly performed,
         // so a restart must never replay it, even when it is a policy change.
-        store
-            .command(&format!("policy:{}:Auto", app.id))
-            .unwrap();
+        store.command(&format!("policy:{}:Auto", app.id)).unwrap();
         let interrupted = store.db.last_insert_rowid();
         assert!(store.claim_command(interrupted).unwrap());
 
         // Two unclaimed user choices straddle destructive actions. Preserve
         // their order, but do not re-run Apply or Undo after a crash.
-        store
-            .command(&format!("policy:{}:Never", app.id))
-            .unwrap();
+        store.command(&format!("policy:{}:Never", app.id)).unwrap();
         let never = store.db.last_insert_rowid();
         store.command("apply").unwrap();
         let apply = store.db.last_insert_rowid();
         store.command("rollback").unwrap();
         let undo = store.db.last_insert_rowid();
-        store
-            .command(&format!("policy:{}:Always", app.id))
-            .unwrap();
+        store.command(&format!("policy:{}:Always", app.id)).unwrap();
         let always = store.db.last_insert_rowid();
 
         store.recover_commands_for_monitor().unwrap();
@@ -164,11 +158,9 @@ fn unclaimed_manual_policies_survive_worker_restart_without_replaying_file_actio
         for id in [interrupted, apply, undo] {
             let status: String = store
                 .db
-                .query_row(
-                    "SELECT status FROM commands WHERE id=?1",
-                    [id],
-                    |row| row.get(0),
-                )
+                .query_row("SELECT status FROM commands WHERE id=?1", [id], |row| {
+                    row.get(0)
+                })
                 .unwrap();
             assert_eq!(status, "error");
         }
