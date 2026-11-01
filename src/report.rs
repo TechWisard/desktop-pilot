@@ -41,7 +41,32 @@ fn validate_name(path: &Path) -> Result<()> {
             && !name.starts_with("usage.sqlite")
             && !matches!(
                 extension.as_deref(),
-                Some("exe" | "dll" | "lnk" | "url" | "sqlite" | "sqlite3" | "db")
+                Some(
+                    "exe"
+                        | "dll"
+                        | "com"
+                        | "scr"
+                        | "msi"
+                        | "msp"
+                        | "cpl"
+                        | "bat"
+                        | "cmd"
+                        | "ps1"
+                        | "psm1"
+                        | "vbs"
+                        | "vbe"
+                        | "wsf"
+                        | "wsh"
+                        | "js"
+                        | "jse"
+                        | "hta"
+                        | "reg"
+                        | "lnk"
+                        | "url"
+                        | "sqlite"
+                        | "sqlite3"
+                        | "db"
+                )
             ),
         "Choose a separate JSON report file; application files and databases cannot be overwritten"
     );
@@ -147,6 +172,23 @@ mod tests {
             "desktop-pilot.exe. ",
             "Original.LNK",
             "Original.url",
+            "automation.bat",
+            "automation.cmd",
+            "automation.COM",
+            "helper.scr",
+            "installer.msi",
+            "installer.msp",
+            "helper.cpl",
+            "setup.ps1",
+            "module.psm1",
+            "automation.vbs",
+            "automation.vbe",
+            "task.wsf",
+            "task.wsh",
+            "helper.js",
+            "helper.jse",
+            "htmlapp.hta",
+            "registry.reg",
             "history.db",
             "document.txt:report.json",
             "CON.json",
@@ -159,6 +201,44 @@ mod tests {
             assert!(validate(Path::new(name)).is_err(), "{name}");
         }
         assert!(validate(Path::new("diagnostic-report.json")).is_ok());
+    }
+
+    #[test]
+    fn existing_script_files_survive_report_preflight_and_write() {
+        // --out publishes JSON, but a mistyped script path must not replace
+        // a user's automation, installer or registry file with that JSON.
+        let directory = std::env::temp_dir().join(format!(
+            "test-report-script-safety-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let original = b"keep existing user script\r\n";
+        for name in [
+            "automation.cmd",
+            "automation.bat",
+            "automation.ps1",
+            "automation.vbs",
+            "automation.js",
+            "automation.hta",
+            "installer.msi",
+            "registry.reg",
+        ] {
+            let path = directory.join(name);
+            std::fs::write(&path, original).unwrap();
+            assert!(preflight(&path).is_err(), "{name}");
+            assert!(write(&path, br#"{"report":true}"#).is_err(), "{name}");
+            assert_eq!(std::fs::read(&path).unwrap(), original, "{name}");
+        }
+        let allowed = directory.join("audit.json");
+        preflight(&allowed).unwrap();
+        write(&allowed, br#"{"report":true}"#).unwrap();
+        assert_eq!(std::fs::read(&allowed).unwrap(), br#"{"report":true}"#);
+        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 9);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
