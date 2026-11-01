@@ -3,8 +3,7 @@ use crate::store::Store;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static SERIAL: AtomicU64 = AtomicU64::new(0);
-const ORIGINAL: &[u8] =
-    b"[InternetShortcut]\r\nURL=https://example.invalid/legacy-owned\r\n";
+const ORIGINAL: &[u8] = b"[InternetShortcut]\r\nURL=https://example.invalid/legacy-owned\r\n";
 
 fn with_profile(test: impl FnOnce(&Store, &App, &Path, &Path)) {
     let root = std::env::temp_dir().join(format!(
