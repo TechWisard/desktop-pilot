@@ -167,3 +167,92 @@ fn non_lock_heartbeat_database_failure_is_not_hidden() {
         assert!(last.is_none());
     });
 }
+
+#[test]
+fn monitor_status_waits_for_writer_release_without_claiming_publication() {
+    in_temporary_profile(|store| {
+        let working = "Фоновый учёт работает";
+        let paused = "Учёт использования приостановлен";
+        store.set("status", &working).unwrap();
+        store.db.busy_timeout(Duration::from_millis(1)).unwrap();
+        let blocker = rusqlite::Connection::open(store.home.join("usage.sqlite")).unwrap();
+        blocker.execute_batch("BEGIN IMMEDIATE;").unwrap();
+
+        assert!(!publish_monitor_status_if_changed(store, paused).unwrap());
+        assert_eq!(store.get::<String>("status").unwrap(), working);
+
+        blocker.execute_batch("ROLLBACK;").unwrap();
+        drop(blocker);
+        assert!(publish_monitor_status_if_changed(store, paused).unwrap());
+        assert_eq!(store.get::<String>("status").unwrap(), paused);
+        let after = sql_writes(store);
+        assert!(!publish_monitor_status_if_changed(store, paused).unwrap());
+        assert_eq!(sql_writes(store), after);
+    });
+}
+
+#[test]
+fn monitor_status_preserves_non_lock_database_errors() {
+    in_temporary_profile(|store| {
+        store.db.execute_batch("DROP TABLE kv;").unwrap();
+        assert!(publish_monitor_status_if_changed(store, "working").is_err());
+    });
+}
+
+#[test]
+fn hook_warning_retries_atomic_status_and_event_after_writer_unlock() {
+    in_temporary_profile(|store| {
+        let working = "Фоновый учёт работает";
+        let warning = "Ввод временно недоступен";
+        store.set("status", &working).unwrap();
+        store.db.busy_timeout(Duration::from_millis(1)).unwrap();
+        let mut previous = None;
+        let event_count = store.events().unwrap().len();
+        let blocker = rusqlite::Connection::open(store.home.join("usage.sqlite")).unwrap();
+        blocker.execute_batch("BEGIN IMMEDIATE;").unwrap();
+
+        publish_hook_warning(store, &mut previous, Some(warning), true).unwrap();
+        assert!(previous.is_none());
+        assert_eq!(store.get::<String>("status").unwrap(), working);
+        assert_eq!(store.events().unwrap().len(), event_count);
+
+        blocker.execute_batch("ROLLBACK;").unwrap();
+        drop(blocker);
+        publish_hook_warning(store, &mut previous, Some(warning), true).unwrap();
+        assert_eq!(previous.as_deref(), Some(warning));
+        assert_eq!(
+            store.get::<String>("status").unwrap(),
+            format!("Изменения приостановлены: {warning}")
+        );
+        assert_eq!(store.events().unwrap().len(), event_count + 1);
+        publish_hook_warning(store, &mut previous, Some(warning), true).unwrap();
+        assert_eq!(store.events().unwrap().len(), event_count + 1);
+
+        let blocker = rusqlite::Connection::open(store.home.join("usage.sqlite")).unwrap();
+        blocker.execute_batch("BEGIN IMMEDIATE;").unwrap();
+        publish_hook_warning(store, &mut previous, None, true).unwrap();
+        assert_eq!(previous.as_deref(), Some(warning));
+        blocker.execute_batch("ROLLBACK;").unwrap();
+        drop(blocker);
+        publish_hook_warning(store, &mut previous, None, true).unwrap();
+        assert!(previous.is_none());
+        assert_eq!(store.get::<String>("status").unwrap(), working);
+        assert_eq!(store.events().unwrap().len(), event_count + 1);
+    });
+}
+
+#[test]
+fn hook_warning_non_lock_failure_rolls_back_status_and_is_reported() {
+    in_temporary_profile(|store| {
+        let working = "Фоновый учёт работает";
+        store.set("status", &working).unwrap();
+        store.db.execute_batch("DROP TABLE events;").unwrap();
+        let mut previous = None;
+
+        assert!(
+            publish_hook_warning(store, &mut previous, Some("Ввод не работает"), true).is_err()
+        );
+        assert!(previous.is_none());
+        assert_eq!(store.get::<String>("status").unwrap(), working);
+    });
+}
