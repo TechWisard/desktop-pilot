@@ -124,3 +124,120 @@ fn paused_observation_cannot_consume_first_session_or_replay_old_activity() {
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn temporary_sqlite_writer_lock_drops_uncommitted_samples_then_recovers_both_projects() {
+    let root = std::env::temp_dir().join(format!(
+        "desktop-pilot-transient-writer-{}-{}",
+        std::process::id(),
+        SERIAL.fetch_add(1, Ordering::Relaxed)
+    ));
+    let store = Store::open(&root).unwrap();
+    store
+        .set(
+            "config",
+            &Config {
+                collect: true,
+                learning_enabled: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    store.db.busy_timeout(std::time::Duration::from_millis(1)).unwrap();
+    let mut usage = UsageAccumulator::default();
+    let mut sessions = HashMap::new();
+
+    // A different process (backup/Settings) briefly holds SQLite's only writer.
+    // The sampler has already advanced its in-memory first-session marker.
+    let (id, seconds, first) = first_qualified_sample(&mut usage, "editor");
+    assert_eq!((seconds, first), (10, true));
+    let blocker = rusqlite::Connection::open(root.join("usage.sqlite")).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE;").unwrap();
+    assert!(
+        !persist_confirmed_usage(
+            &store, &mut sessions, &mut usage, &id, seconds, first, 10_000,
+        )
+        .unwrap(),
+        "a transient lock must not terminate foreground collection"
+    );
+    assert!(
+        !record_learning_if_permitted(&store, 2).unwrap(),
+        "a transient lock must not terminate learning either"
+    );
+    assert!(usage.windows.is_empty());
+    assert!(sessions.is_empty());
+    assert!(store.days().unwrap().is_empty());
+    assert_eq!(store.get::<Progress>("learning").unwrap().started_at, 0);
+
+    blocker.execute_batch("ROLLBACK;").unwrap();
+    drop(blocker);
+    // Old, uncommitted input must never be replayed. Fresh engagement can
+    // still earn the application's first session after the lock is released.
+    let (id, seconds, first) = first_qualified_sample(&mut usage, "editor");
+    assert_eq!((seconds, first), (10, true));
+    assert!(
+        persist_confirmed_usage(
+            &store, &mut sessions, &mut usage, &id, seconds, first, 10_020,
+        )
+        .unwrap()
+    );
+    assert!(record_learning_if_permitted(&store, 2).unwrap());
+    let progress: Progress = store.get("learning").unwrap();
+    assert_eq!(progress.day_seconds.values().sum::<u32>(), 2);
+
+    // A separate project earns one independent session. Returning quickly
+    // to the editor must not invent a second session or shift its checkpoint.
+    usage.sample(None, 2.0);
+    let (id, seconds, first) = first_qualified_sample(&mut usage, "browser");
+    assert_eq!((seconds, first), (10, true));
+    assert!(
+        persist_confirmed_usage(
+            &store, &mut sessions, &mut usage, &id, seconds, first, 10_040,
+        )
+        .unwrap()
+    );
+    usage.sample(None, 2.0);
+    let (id, seconds, first) = first_qualified_sample(&mut usage, "editor");
+    assert!(first);
+    assert!(
+        persist_confirmed_usage(
+            &store, &mut sessions, &mut usage, &id, seconds, first, 10_060,
+        )
+        .unwrap()
+    );
+    let days = store.days().unwrap();
+    assert_eq!(days.len(), 2);
+    let editor = days.iter().find(|day| day.app == "editor").unwrap();
+    let browser = days.iter().find(|day| day.app == "browser").unwrap();
+    assert_eq!((editor.seconds, editor.sessions), (20, 1));
+    assert_eq!((browser.seconds, browser.sessions), (10, 1));
+    assert_eq!(sessions["editor"], 10_060);
+    assert_eq!(sessions["browser"], 10_040);
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn corrupt_settings_errors_are_not_treated_as_transient_writer_locks() {
+    let root = std::env::temp_dir().join(format!(
+        "desktop-pilot-invalid-evidence-settings-{}-{}",
+        std::process::id(),
+        SERIAL.fetch_add(1, Ordering::Relaxed)
+    ));
+    let store = Store::open(&root).unwrap();
+    store.set("config", &"not a config").unwrap();
+    let mut usage = UsageAccumulator::default();
+    let mut sessions = HashMap::new();
+    let (id, seconds, first) = first_qualified_sample(&mut usage, "editor");
+    assert!(
+        persist_confirmed_usage(
+            &store, &mut sessions, &mut usage, &id, seconds, first, 10_000,
+        )
+        .is_err()
+    );
+    assert!(record_learning_if_permitted(&store, 2).is_err());
+    assert!(store.days().unwrap().is_empty());
+    assert!(sessions.is_empty());
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
