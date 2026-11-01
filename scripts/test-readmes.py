@@ -2,6 +2,10 @@
 from pathlib import Path
 import re
 
+# The guard must actually recognize old pinned compatibility prose.
+assert re.search(r"(?:Version|Версия)\s+\*\*\d+\.\d+\.\d+", "Version **0.2.11 is a preview")
+assert re.search(r"(?:Version|Версия)\s+\*\*\d+\.\d+\.\d+", "Версия **0.2.11 — предварительная")
+
 for path, heading in (
     ("README.md", "## Get started"),
     ("README.ru.md", "## Начало работы"),
@@ -16,7 +20,7 @@ for path, heading in (
     assert "DesktopPilot-*-windows-x64.zip" in step, path
     assert not re.search(r"DesktopPilot-\d+\.\d+\.\d+-windows-x64\.zip", step), path
     assert "`desktop-pilot.exe`" in section, path
-    assert not re.search(r"(?:Version|Версия)\\s+\\*\\*\\d+\\.\\d+\\.\\d+", text), (
+    assert not re.search(r"(?:Version|Версия)\s+\*\*\d+\.\d+\.\d+", text), (
         f"Outdated pinned version in compatibility text: {path}"
     )
     assert "SHA-256" in section, path
