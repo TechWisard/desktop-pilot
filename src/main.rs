@@ -29,9 +29,10 @@ fn home(args: &[String]) -> Result<PathBuf> {
 fn emit(args: &[String], value: &impl serde::Serialize) -> Result<()> {
     let text = serde_json::to_string_pretty(value)?;
     if let Some(i) = args.iter().position(|s| s == "--out") {
-        let written = report::write(
+        let written = report::write_report(
             Path::new(args.get(i + 1).context("Нет пути --out")?),
             text.as_bytes(),
+            args.iter().any(|argument| argument == "--replace-out"),
         );
         if matches!(
             args[0].as_str(),
@@ -48,7 +49,10 @@ fn emit(args: &[String], value: &impl serde::Serialize) -> Result<()> {
 }
 fn prepare_report(args: &[String]) -> Result<()> {
     if let Some(index) = args.iter().position(|argument| argument == "--out") {
-        report::preflight(Path::new(&args[index + 1]))?;
+        report::preflight_report(
+            Path::new(&args[index + 1]),
+            args.iter().any(|argument| argument == "--replace-out"),
+        )?;
     }
     Ok(())
 }
@@ -124,7 +128,11 @@ fn checked_launch_source(store: &Store, id: &str) -> Result<App> {
 fn run(error_profile: &mut Option<PathBuf>) -> Result<()> {
     let args = cli::parse(&std::env::args().skip(1).collect::<Vec<_>>())?;
     if let Some(index) = args.iter().position(|argument| argument == "--out") {
-        report::validate(Path::new(&args[index + 1]))?;
+        // Refuse an existing report before opening a profile or altering files.
+        report::preflight_report(
+            Path::new(&args[index + 1]),
+            args.iter().any(|argument| argument == "--replace-out"),
+        )?;
     }
     match args[0].as_str() {
         "--help" => {
@@ -434,6 +442,42 @@ fn self_test(home: &Path, args: &[String], error_profile: &mut Option<PathBuf>) 
         );
         std::fs::remove_file(destination)?;
     }
+    // An existing JSON file may belong to another application. Do not replace
+    // it before an explicit second choice, even if no profile exists yet.
+    let user_json = home.join("user-settings.json");
+    let original_json = br#"{"important":"local preferences"}"#;
+    std::fs::write(&user_json, original_json)?;
+    let rejected = std::process::Command::new(&exe)
+        .args(["--inspect", "--home"])
+        .arg(&unopened_profile)
+        .arg("--out")
+        .arg(&user_json)
+        .output()?;
+    ensure!(
+        !rejected.status.success()
+            && std::fs::read(&user_json)? == original_json
+            && !unopened_profile.exists(),
+        "An existing unrelated JSON file was replaced or an unrequested profile was created"
+    );
+    let empty_catalog = home.join("empty-catalog.json");
+    std::fs::write(&empty_catalog, b"[]")?;
+    let confirmed = std::process::Command::new(&exe)
+        .arg("--catalog")
+        .arg(&empty_catalog)
+        .arg("--out")
+        .arg(&user_json)
+        .arg("--replace-out")
+        .output()?;
+    ensure!(
+        confirmed.status.success()
+            && std::fs::read(&user_json)? != original_json
+            && serde_json::from_slice::<Vec<serde_json::Value>>(&std::fs::read(&user_json)?)?
+                .is_empty()
+            && !unopened_profile.exists(),
+        "Explicit JSON report replacement did not complete safely"
+    );
+    std::fs::remove_file(empty_catalog)?;
+    std::fs::remove_file(user_json)?;
     native::make_link(
         &original,
         &exe,

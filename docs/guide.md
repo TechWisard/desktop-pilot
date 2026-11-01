@@ -94,7 +94,7 @@ Local data is retained for recovery. After undo completes successfully and no ma
 
 Close the existing Settings window, extract the new release and run its `desktop-pilot.exe`. The current executable is installed safely, the previous background process is stopped and the new one starts using the same profile. A completely disabled profile stays disabled. If another version of Settings is still open, the app asks you to close it; unsaved edits are not discarded automatically. Settings, usage history, app rules and undo data are retained. The previous executable is kept as a local backup. An unsuccessful atomic file replacement leaves the installed copy intact. The app attempts to restore the previously running background process and reports any additional recovery failure separately. The installer checks the installed executable version and refuses to replace a newer version with an older one. Updates are started by you; there is no background downloader.
 
-On restart, unfinished commands are cancelled with a history entry. Old placement or undo requests are not replayed without a new request. Diagnostic reports are written atomically; the database, executable and shortcut paths cannot be used as report destinations.
+On restart, unfinished commands are cancelled with a history entry. Old placement or undo requests are not replayed without a new request. CLI JSON reports are written atomically. Use `--out NEW-FILE.json` for a new export; if that JSON file already exists, Desktop Pilot refuses to replace it unless you explicitly add `--replace-out` to the same command. This protects other applications' JSON settings from accidental replacement. Database, executable and shortcut paths cannot be used as report destinations.
 
 ## Source layout
 

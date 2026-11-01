@@ -7,9 +7,19 @@ pub fn parse(input: &[String]) -> Result<Vec<String>> {
     let mut operand = None;
     let mut home = None;
     let mut out = None;
+    let mut replace_out = false;
     let mut index = 0;
     while index < input.len() {
         let argument = &input[index];
+        if argument == "--replace-out" {
+            ensure!(
+                !replace_out,
+                "Option --replace-out was supplied more than once"
+            );
+            replace_out = true;
+            index += 1;
+            continue;
+        }
         if argument == "--home" || argument == "--out" {
             let value = input
                 .get(index + 1)
@@ -77,6 +87,10 @@ pub fn parse(input: &[String]) -> Result<Vec<String>> {
             "A report destination must end in .json; no files were changed"
         );
     }
+    ensure!(
+        !replace_out || out.is_some(),
+        "--replace-out requires an explicit --out JSON destination"
+    );
     if out.is_some() {
         ensure!(
             matches!(
@@ -104,12 +118,15 @@ pub fn parse(input: &[String]) -> Result<Vec<String>> {
     if let Some(out) = out {
         args.extend(["--out".into(), out]);
     }
+    if replace_out {
+        args.push("--replace-out".into());
+    }
     Ok(args)
 }
 
 pub const HELP: &str = "Desktop Pilot — adaptive desktop shortcuts for Windows
 
-Usage: desktop-pilot.exe [COMMAND] [--home DIRECTORY] [--out FILE]
+Usage: desktop-pilot.exe [COMMAND] [--home DIRECTORY] [--out FILE] [--replace-out]
 
   --settings                 Open settings (default)
   --background               Start the background process
@@ -132,6 +149,7 @@ Usage: desktop-pilot.exe [COMMAND] [--home DIRECTORY] [--out FILE]
   --version, -V              Show the version
 
 --home explicitly selects the profile. --out requires a .json file for report commands.
+An existing JSON file is never replaced unless --replace-out is explicitly supplied.
 Close the background process before direct apply or rollback commands.
 --disable stops it automatically and stays disabled until explicitly resumed.
 ";
@@ -211,6 +229,37 @@ mod tests {
                 "Valid JSON output {destination} was rejected"
             );
         }
+    }
+
+    #[test]
+    fn existing_json_overwrite_requires_explicit_opt_in() {
+        for input in [
+            vec!["--replace-out"],
+            vec!["--inspect", "--replace-out"],
+            vec![
+                "--inspect",
+                "--out",
+                "report.json",
+                "--replace-out",
+                "--replace-out",
+            ],
+            vec!["--help", "--replace-out"],
+            vec!["--inspect", "--out", "notes.txt", "--replace-out"],
+        ] {
+            assert!(parse(&args(&input)).is_err(), "{input:?}");
+        }
+        let expected = args(&["--inspect", "--out", "report.json", "--replace-out"]);
+        assert_eq!(parse(&expected).unwrap(), expected);
+        assert_eq!(
+            parse(&args(&[
+                "--replace-out",
+                "--out",
+                "report.json",
+                "--inspect"
+            ]))
+            .unwrap(),
+            expected
+        );
     }
 
     #[test]
