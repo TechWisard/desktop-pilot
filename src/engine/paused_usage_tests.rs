@@ -223,7 +223,9 @@ fn temporary_sqlite_writer_lock_drops_uncommitted_samples_then_recovers_both_pro
     );
     usage.sample(None, 2.0);
     let (id, seconds, first) = first_qualified_sample(&mut usage, "editor");
-    assert!(first);
+    // Returning within the accumulator's short-visit memory produces a
+    // continuation delta, not another first sample or a second session.
+    assert_eq!((seconds, first), (10, false));
     assert!(
         persist_confirmed_usage(
             &store,
