@@ -222,22 +222,31 @@ fn temporary_sqlite_writer_lock_drops_uncommitted_samples_then_recovers_both_pro
         .unwrap()
     );
     usage.sample(None, 2.0);
-    let (id, seconds, first) = first_qualified_sample(&mut usage, "editor");
-    // Returning within the accumulator's short-visit memory produces a
-    // continuation delta, not another first sample or a second session.
-    assert_eq!((seconds, first), (10, false));
-    assert!(
-        persist_confirmed_usage(
-            &store,
-            &mut sessions,
-            &mut usage,
-            &id,
-            seconds,
-            first,
-            10_060,
-        )
-        .unwrap()
-    );
+    // Returning within the accumulator's short-visit memory is *not* a new
+    // first-qualified visit: each confirmed 2-second poll can contribute a
+    // continuation delta. Persist each production sample instead of expecting
+    // five silent polls as on the first-ever visit.
+    assert!(usage.sample(Some("editor"), 2.0).is_none());
+    let mut return_seconds = 0;
+    for poll in 1..=5 {
+        let (id, seconds, first) = usage.sample(Some("editor"), 2.0).unwrap();
+        assert_eq!(id, "editor");
+        assert_eq!((seconds, first), (2, false));
+        assert!(
+            persist_confirmed_usage(
+                &store,
+                &mut sessions,
+                &mut usage,
+                &id,
+                seconds,
+                first,
+                10_050 + poll * 2,
+            )
+            .unwrap()
+        );
+        return_seconds += seconds;
+    }
+    assert_eq!(return_seconds, 10);
     let days = store.days().unwrap();
     assert_eq!(days.len(), 2);
     let editor = days.iter().find(|day| day.app == "editor").unwrap();
