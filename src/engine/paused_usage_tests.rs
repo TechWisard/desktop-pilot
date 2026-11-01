@@ -143,7 +143,10 @@ fn temporary_sqlite_writer_lock_drops_uncommitted_samples_then_recovers_both_pro
             },
         )
         .unwrap();
-    store.db.busy_timeout(std::time::Duration::from_millis(1)).unwrap();
+    store
+        .db
+        .busy_timeout(std::time::Duration::from_millis(1))
+        .unwrap();
     let mut usage = UsageAccumulator::default();
     let mut sessions = HashMap::new();
 
@@ -155,7 +158,13 @@ fn temporary_sqlite_writer_lock_drops_uncommitted_samples_then_recovers_both_pro
     blocker.execute_batch("BEGIN IMMEDIATE;").unwrap();
     assert!(
         !persist_confirmed_usage(
-            &store, &mut sessions, &mut usage, &id, seconds, first, 10_000,
+            &store,
+            &mut sessions,
+            &mut usage,
+            &id,
+            seconds,
+            first,
+            10_000,
         )
         .unwrap(),
         "a transient lock must not terminate foreground collection"
@@ -177,7 +186,13 @@ fn temporary_sqlite_writer_lock_drops_uncommitted_samples_then_recovers_both_pro
     assert_eq!((seconds, first), (10, true));
     assert!(
         persist_confirmed_usage(
-            &store, &mut sessions, &mut usage, &id, seconds, first, 10_020,
+            &store,
+            &mut sessions,
+            &mut usage,
+            &id,
+            seconds,
+            first,
+            10_020,
         )
         .unwrap()
     );
@@ -192,7 +207,13 @@ fn temporary_sqlite_writer_lock_drops_uncommitted_samples_then_recovers_both_pro
     assert_eq!((seconds, first), (10, true));
     assert!(
         persist_confirmed_usage(
-            &store, &mut sessions, &mut usage, &id, seconds, first, 10_040,
+            &store,
+            &mut sessions,
+            &mut usage,
+            &id,
+            seconds,
+            first,
+            10_040,
         )
         .unwrap()
     );
@@ -201,7 +222,13 @@ fn temporary_sqlite_writer_lock_drops_uncommitted_samples_then_recovers_both_pro
     assert!(first);
     assert!(
         persist_confirmed_usage(
-            &store, &mut sessions, &mut usage, &id, seconds, first, 10_060,
+            &store,
+            &mut sessions,
+            &mut usage,
+            &id,
+            seconds,
+            first,
+            10_060,
         )
         .unwrap()
     );
@@ -231,7 +258,13 @@ fn corrupt_settings_errors_are_not_treated_as_transient_writer_locks() {
     let (id, seconds, first) = first_qualified_sample(&mut usage, "editor");
     assert!(
         persist_confirmed_usage(
-            &store, &mut sessions, &mut usage, &id, seconds, first, 10_000,
+            &store,
+            &mut sessions,
+            &mut usage,
+            &id,
+            seconds,
+            first,
+            10_000,
         )
         .is_err()
     );
