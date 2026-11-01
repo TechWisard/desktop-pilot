@@ -137,7 +137,10 @@ fn temporary_writer_lock_drops_only_the_heartbeat_and_recovers_on_next_tick() {
         // The real periodic writer must not kill foreground observation when
         // a Settings/backup transaction briefly owns SQLite's only writer.
         assert!(!publish_heartbeat_if_due(store, &mut last, first_tick, false).unwrap());
-        assert!(last.is_none(), "a refused write is not a published heartbeat");
+        assert!(
+            last.is_none(),
+            "a refused write is not a published heartbeat"
+        );
         assert_eq!(store.get::<i64>("heartbeat").unwrap(), old);
 
         blocker.execute_batch("ROLLBACK;").unwrap();
@@ -146,15 +149,14 @@ fn temporary_writer_lock_drops_only_the_heartbeat_and_recovers_on_next_tick() {
         assert!(publish_heartbeat_if_due(store, &mut last, resumed, false).unwrap());
         assert_eq!(last, Some(resumed));
         assert!(store.get::<i64>("heartbeat").unwrap() > old);
-        assert!(
-            !publish_heartbeat_if_due(
-                store,
-                &mut last,
-                resumed + Duration::from_secs(2),
-                false,
-            )
-            .unwrap()
-        );
+        let not_due = publish_heartbeat_if_due(
+            store,
+            &mut last,
+            resumed + Duration::from_secs(2),
+            false,
+        )
+        .unwrap();
+        assert!(!not_due);
     });
 }
 
