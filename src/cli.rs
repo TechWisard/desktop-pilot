@@ -66,6 +66,17 @@ pub fn parse(input: &[String]) -> Result<Vec<String>> {
             "Help and version do not use profile or output options"
         );
     }
+    // A JSON report must never replace unrelated user documents or archives
+    // merely because their path was supplied to --out. The internal
+    // last-error.txt diagnostic is not a CLI report and remains unchanged.
+    if let Some(destination) = out.as_deref() {
+        ensure!(
+            std::path::Path::new(destination)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("json")),
+            "A report destination must end in .json; no files were changed"
+        );
+    }
     if out.is_some() {
         ensure!(
             matches!(
@@ -120,7 +131,7 @@ Usage: desktop-pilot.exe [COMMAND] [--home DIRECTORY] [--out FILE]
   --help, -h                 Show this help
   --version, -V              Show the version
 
---home explicitly selects the profile. --out writes JSON for report commands.
+--home explicitly selects the profile. --out requires a .json file for report commands.
 Close the background process before direct apply or rollback commands.
 --disable stops it automatically and stays disabled until explicitly resumed.
 ";
@@ -172,6 +183,33 @@ mod tests {
             vec!["--inspect", "--out", "one", "--out", "two"],
         ] {
             assert!(parse(&args(&input)).is_err(), "{input:?}");
+        }
+    }
+
+    #[test]
+    fn json_report_option_rejects_document_and_backup_paths() {
+        // All commands use this same parser before opening any profile.
+        for destination in [
+            "notes.txt",
+            "photo.jpg",
+            "report.pdf",
+            "document.docx",
+            "budget.xlsx",
+            "archive.zip",
+            "backup.json.bak",
+            "report",
+            "report.json.",
+        ] {
+            assert!(
+                parse(&args(&["--inspect", "--out", destination])).is_err(),
+                "Non-JSON output {destination} was accepted"
+            );
+        }
+        for destination in ["report.json", "REPORT.JSON", r"C:\Reports\audit.json"] {
+            assert!(
+                parse(&args(&["--inspect", "--out", destination])).is_ok(),
+                "Valid JSON output {destination} was rejected"
+            );
         }
     }
 

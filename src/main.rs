@@ -407,6 +407,33 @@ fn self_test(home: &Path, args: &[String], error_profile: &mut Option<PathBuf>) 
     let original = home.join("original.lnk");
     let marker = home.join("probe.json");
     let exe = std::env::current_exe()?;
+    // Exercise the real executable's CLI validation, not a duplicate parser.
+    // A mistaken report filename must neither replace an unrelated user file
+    // nor open/create a profile before reporting the error.
+    let unopened_profile = home.join("unopened-report-profile");
+    for filename in [
+        "important-notes.txt",
+        "family-photo.jpg",
+        "project-archive.zip",
+        "saved-document.pdf",
+    ] {
+        let destination = home.join(filename);
+        let original_bytes = b"keep the user's original bytes";
+        std::fs::write(&destination, original_bytes)?;
+        let rejected = std::process::Command::new(&exe)
+            .args(["--inspect", "--home"])
+            .arg(&unopened_profile)
+            .arg("--out")
+            .arg(&destination)
+            .output()?;
+        ensure!(
+            !rejected.status.success()
+                && std::fs::read(&destination)?.as_slice() == original_bytes
+                && !unopened_profile.exists(),
+            "A non-JSON report destination replaced a user file or opened a profile: {filename}"
+        );
+        std::fs::remove_file(destination)?;
+    }
     native::make_link(
         &original,
         &exe,
@@ -915,6 +942,7 @@ fn self_test(home: &Path, args: &[String], error_profile: &mut Option<PathBuf>) 
                 "delayed Windows startup honors Turn off without changing the profile",
                 "explicit resume restarts the worker",
                 "resume replaces an already stopping worker before reporting success",
+                "non-JSON report destinations preserve user files without opening a profile",
                 "report destination cannot overwrite the profile database",
                 "stateless catalog inspection does not create a profile",
                 "rejected foreign databases leave existing files untouched",
