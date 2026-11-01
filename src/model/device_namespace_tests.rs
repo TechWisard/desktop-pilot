@@ -29,7 +29,10 @@ fn device_namespace_is_not_a_relative_launch_path() {
     }
     // Known alternate spellings of the same ordinary drive or UNC path
     // must still resolve to the existing shortcut and policy.
-    assert_eq!(norm(r"\\?\C:\Tools\RareApp.exe"), norm(r"c:\tools\rareapp.exe"));
+    assert_eq!(
+        norm(r"\\?\C:\Tools\RareApp.exe"),
+        norm(r"c:\tools\rareapp.exe")
+    );
     assert_eq!(
         norm(r"\\?\UNC\Server\Share\RareApp.exe"),
         norm(r"\\server\share\rareapp.exe")
@@ -61,7 +64,11 @@ fn catalog_preserves_two_rules_when_a_device_path_resembles_a_relative_path() {
     store.put_app(&important).unwrap();
     store.put_app(&other).unwrap();
     let catalog = store.apps().unwrap();
-    assert_eq!(catalog.len(), 2, "unrelated shortcuts must not overwrite one another");
+    assert_eq!(
+        catalog.len(),
+        2,
+        "unrelated shortcuts must not overwrite one another"
+    );
     assert_eq!(store.app(&important.id).unwrap().policy, Policy::Always);
     assert_eq!(store.app(&other.id).unwrap().policy, Policy::Never);
     drop(store);
