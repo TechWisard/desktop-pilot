@@ -2387,7 +2387,8 @@ fn publish_hook_warning(
             store.event("warning", warning)?;
         } else if let Some(old) = previous.as_ref() {
             let status: String = store.get("status")?;
-            if status.starts_with(&format!("Изменения приостановлены: {old}")) {
+            if status.starts_with(&format!("Изменения приостановлены: {old}"))
+            {
                 let recovered = if collecting {
                     "Фоновый учёт работает"
                 } else {
