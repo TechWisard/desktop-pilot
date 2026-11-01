@@ -54,7 +54,9 @@ fn writer_contention_defers_both_rescan_and_manual_actions_until_unlock() {
         assert!(store.pending().unwrap().is_empty());
 
         store.finish(first, &Ok("scan finished".into())).unwrap();
-        store.finish(second, &Ok("manual choice finished".into())).unwrap();
+        store
+            .finish(second, &Ok("manual choice finished".into()))
+            .unwrap();
         let done: i64 = store
             .db
             .query_row(
