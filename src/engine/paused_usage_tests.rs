@@ -197,10 +197,14 @@ fn temporary_sqlite_writer_lock_drops_uncommitted_samples_then_recovers_both_pro
         .unwrap()
     );
     assert!(record_learning_if_permitted(&store, 2).unwrap());
-    let progress: Progress = store.get("learning").unwrap();
+    let mut progress: Progress = store.get("learning").unwrap();
     assert_eq!(progress.day_seconds.values().sum::<u32>(), 2);
+    progress.completed_at = now();
+    store.set("learning", &progress).unwrap();
+    assert!(!record_learning_if_permitted(&store, 2).unwrap());
 
-    // A separate project earns one independent session. Returning quickly
+    // Learning completion must not stop usage collection. A separate project
+    // earns one independent session. Returning quickly
     // to the editor must not invent a second session or shift its checkpoint.
     usage.sample(None, 2.0);
     let (id, seconds, first) = first_qualified_sample(&mut usage, "browser");
