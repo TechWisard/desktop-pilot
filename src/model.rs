@@ -18,8 +18,18 @@ pub fn norm(s: &str) -> String {
     let prefix = expanded.get(..8).unwrap_or_default();
     let ordinary = if prefix.eq_ignore_ascii_case(r"\\?\UNC\") {
         format!(r"\\{}", &expanded[8..])
+    } else if let Some(drive_path) = expanded.strip_prefix(r"\\?\").filter(|path| {
+        let bytes = path.as_bytes();
+        bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && bytes[2] == b'\\'
+    }) {
+        // Only ordinary absolute drive paths can drop the device prefix.
+        // Volume GUID and GLOBALROOT paths must not become relative names.
+        drive_path.to_owned()
     } else {
-        expanded.trim_start_matches(r"\\?\").to_owned()
+        expanded
     };
     ordinary.to_lowercase()
 }
