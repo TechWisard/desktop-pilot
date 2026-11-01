@@ -131,7 +131,7 @@ Usage: desktop-pilot.exe [COMMAND] [--home DIRECTORY] [--out FILE]
   --help, -h                 Show this help
   --version, -V              Show the version
 
---home explicitly selects the profile. --out writes JSON for report commands.
+--home explicitly selects the profile. --out requires a .json file for report commands.
 Close the background process before direct apply or rollback commands.
 --disable stops it automatically and stays disabled until explicitly resumed.
 ";
