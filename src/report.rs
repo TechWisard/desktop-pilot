@@ -134,9 +134,43 @@ pub fn preflight(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Publish a fully written report in one rename, preserving an older report if
-/// serialization, disk space, flushing or replacement fails.
+/// CLI reports must use a JSON filename, and replacing existing user data
+/// requires a separate, explicit --replace-out choice.
+pub fn preflight_report(path: &Path, replace_existing: bool) -> Result<()> {
+    ensure!(
+        path.extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("json")),
+        "Report destinations must end in .json"
+    );
+    validate(path)?;
+    ensure!(
+        replace_existing || !path.try_exists()?,
+        "The JSON destination already exists. Choose a new filename or add --replace-out to replace it."
+    );
+    preflight(path)
+}
+
+/// The check at publication time is authoritative: another process may create
+/// the output after preflight. Without --replace-out, MOVEFILE_REPLACE_EXISTING
+/// is deliberately absent, so the new file cannot replace the interloper.
+pub fn write_report(path: &Path, bytes: &[u8], replace_existing: bool) -> Result<()> {
+    ensure!(
+        path.extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("json")),
+        "Report destinations must end in .json"
+    );
+    publish(path, bytes, replace_existing)
+}
+
+/// Internal diagnostic logs retain their own original, atomic replacement
+/// behavior; they are not user-selected CLI report destinations.
 pub fn write(path: &Path, bytes: &[u8]) -> Result<()> {
+    publish(path, bytes, true)
+}
+
+/// Publish a fully written report in one rename, preserving the original if
+/// serialization, disk space, flushing or replacement fails.
+fn publish(path: &Path, bytes: &[u8], replace_existing: bool) -> Result<()> {
     validate(path)?;
     let destination = std::path::absolute(path)?;
     let (temporary, mut file) = reserve(&destination)?;
@@ -150,8 +184,19 @@ pub fn write(path: &Path, bytes: &[u8]) -> Result<()> {
         MoveFileExW(
             PCWSTR(from.as_ptr()),
             PCWSTR(to.as_ptr()),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )?;
+            if replace_existing {
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
+            } else {
+                MOVEFILE_WRITE_THROUGH
+            },
+        )
+        .with_context(|| {
+            if replace_existing {
+                "Unable to publish the JSON report"
+            } else {
+                "Output already exists or could not be created. Choose a different JSON filename, or use --replace-out."
+            }
+        })?;
     }
     Ok(())
 }
@@ -238,6 +283,50 @@ mod tests {
         write(&allowed, br#"{"report":true}"#).unwrap();
         assert_eq!(std::fs::read(&allowed).unwrap(), br#"{"report":true}"#);
         assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 9);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn cli_report_preserves_unrelated_json_and_prevents_racing_replacements() {
+        let directory = std::env::temp_dir().join(format!(
+            "test-report-json-consent-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("other-program-settings.json");
+        let original = br#"{"customApplicationPreferences":true}"#;
+        std::fs::write(&path, original).unwrap();
+
+        // Refuse an unrelated JSON file before any action starts.
+        assert!(preflight_report(&path, false).is_err());
+        // The final Windows move must independently reject a pre-existing file.
+        assert!(write_report(&path, br#"{"pilot":"report"}"#, false).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+
+        // A file created between a successful preflight and publication must
+        // not be overwritten without the explicit option.
+        let raced = directory.join("created-after-preflight.json");
+        preflight_report(&raced, false).unwrap();
+        std::fs::write(&raced, original).unwrap();
+        assert!(write_report(&raced, br#"{"pilot":"report"}"#, false).is_err());
+        assert_eq!(std::fs::read(&raced).unwrap(), original);
+
+        // Existing scripts can retain their intentional repeatable exports.
+        preflight_report(&path, true).unwrap();
+        write_report(&path, br#"{"pilot":"report"}"#, true).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), br#"{"pilot":"report"}"#);
+
+        let fresh = directory.join("first-export.JSON");
+        preflight_report(&fresh, false).unwrap();
+        write_report(&fresh, br#"{"first":true}"#, false).unwrap();
+        assert_eq!(std::fs::read(&fresh).unwrap(), br#"{"first":true}"#);
+        assert!(preflight_report(&fresh, false).is_err());
+        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 3);
         std::fs::remove_dir_all(directory).unwrap();
     }
 
