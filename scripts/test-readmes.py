@@ -16,6 +16,9 @@ for path, heading in (
     assert "DesktopPilot-*-windows-x64.zip" in step, path
     assert not re.search(r"DesktopPilot-\d+\.\d+\.\d+-windows-x64\.zip", step), path
     assert "`desktop-pilot.exe`" in section, path
+    assert not re.search(r"(?:Version|Версия)\\s+\\*\\*\\d+\\.\\d+\\.\\d+", text), (
+        f"Outdated pinned version in compatibility text: {path}"
+    )
     assert "SHA-256" in section, path
 
 print("README installation instructions: English and Russian use latest-release archives")

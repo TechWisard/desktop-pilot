@@ -135,7 +135,7 @@ No account, analytics, cloud synchronization or network service. The tracker sto
 
 ## Compatibility and verification
 
-Version **0.2.11 is a preview**, intended for Windows 10/11 x64 with the standard Explorer desktop. The release is checked on Windows Server 2022 and 2025 runners, with separate application screenshots and isolated filesystem fixtures. The current verification scope is recorded in the linked report. Automated geometry tests cover 100 combinations of resolution, scaling and desktop origin, including empty, occupied and insufficient-space cases. Those tests do not replace physical multi-monitor testing.
+Desktop Pilot remains a **preview**, intended for Windows 10/11 x64 with the standard Explorer desktop. The release is checked on Windows Server 2022 and 2025 runners, with separate application screenshots and isolated filesystem fixtures. The current verification scope is recorded in the linked report. Automated geometry tests cover 100 combinations of resolution, scaling and desktop origin, including empty, occupied and insufficient-space cases. Those tests do not replace physical multi-monitor testing.
 
 Explorer auto-arrange must be off for positioning. A display-layout change pauses placement until you accept the new geometry. Unrecognized taskbar data stops changes rather than guessing; the pin filter can be disabled explicitly. Alternative shells and virtual-desktop managers are not validated. See [verification scope](docs/verification.md).
 
