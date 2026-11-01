@@ -2377,22 +2377,36 @@ fn publish_hook_warning(
     if previous.as_deref() == warning {
         return Ok(());
     }
-    if let Some(warning) = warning {
-        store.set("status", &format!("Изменения приостановлены: {warning}"))?;
-        store.event("warning", warning)?;
-    } else if let Some(old) = previous.as_ref() {
-        let status: String = store.get("status")?;
-        if status.starts_with(&format!("Изменения приостановлены: {old}")) {
-            let recovered = if collecting {
-                "Фоновый учёт работает"
-            } else {
-                "Учёт использования приостановлен"
-            };
-            store.set("status", &recovered)?;
+    // A hook warning is one logical transition: either both the visible
+    // status and its event are committed, or neither is. A temporary SQLite
+    // writer lock must not stop foreground observation. Keep the old marker
+    // so the next poll retries the same transition.
+    let published = store.transaction(|| {
+        if let Some(warning) = warning {
+            store.set("status", &format!("Изменения приостановлены: {warning}"))?;
+            store.event("warning", warning)?;
+        } else if let Some(old) = previous.as_ref() {
+            let status: String = store.get("status")?;
+            if status.starts_with(&format!("Изменения приостановлены: {old}"))
+            {
+                let recovered = if collecting {
+                    "Фоновый учёт работает"
+                } else {
+                    "Учёт использования приостановлен"
+                };
+                store.set("status", &recovered)?;
+            }
         }
+        Ok(())
+    });
+    match published {
+        Ok(()) => {
+            *previous = warning.map(str::to_owned);
+            Ok(())
+        }
+        Err(error) if sqlite_writer_contention(&error) => Ok(()),
+        Err(error) => Err(error),
     }
-    *previous = warning.map(str::to_owned);
-    Ok(())
 }
 
 /// Keep startup and explicit commands responsive without rewriting the same
@@ -2430,8 +2444,13 @@ fn publish_monitor_status_if_changed(store: &Store, status: &str) -> Result<bool
     if store.get::<String>("status")? == status {
         return Ok(false);
     }
-    store.set("status", &status)?;
-    Ok(true)
+    match store.set("status", &status) {
+        Ok(()) => Ok(true),
+        // Advisory status writes are retried by the next maintenance pass.
+        // A temporary competing writer must not shut down observation.
+        Err(error) if sqlite_writer_contention(&error) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 pub fn monitor(home: PathBuf) -> Result<()> {
