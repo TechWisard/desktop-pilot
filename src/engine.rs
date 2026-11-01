@@ -2080,6 +2080,22 @@ impl UsageAccumulator {
         Some((id.to_owned(), delta, first))
     }
 }
+// Only SQLITE_BUSY/LOCKED is a recoverable sample-write interruption.
+// All other I/O, schema, configuration and database errors remain fatal.
+fn sqlite_writer_contention(error: &anyhow::Error) -> bool {
+    error.chain().any(|source| {
+        source
+            .downcast_ref::<rusqlite::Error>()
+            .and_then(rusqlite::Error::sqlite_error_code)
+            .is_some_and(|code| {
+                matches!(
+                    code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                )
+            })
+    })
+}
+
 // The usage write is one SQLite transaction; retry only lock contention, not
 // corruption, permissions, disk-full errors or an ambiguous non-SQLite failure.
 fn retry_locked_usage<T>(mut write: impl FnMut() -> Result<T>) -> Result<T> {
@@ -2087,21 +2103,7 @@ fn retry_locked_usage<T>(mut write: impl FnMut() -> Result<T>) -> Result<T> {
     for attempt in 0..ATTEMPTS {
         match write() {
             Ok(value) => return Ok(value),
-            Err(error)
-                if attempt + 1 < ATTEMPTS
-                    && error.chain().any(|source| {
-                        source
-                            .downcast_ref::<rusqlite::Error>()
-                            .and_then(rusqlite::Error::sqlite_error_code)
-                            .is_some_and(|code| {
-                                matches!(
-                                    code,
-                                    rusqlite::ErrorCode::DatabaseBusy
-                                        | rusqlite::ErrorCode::DatabaseLocked
-                                )
-                            })
-                    }) =>
-            {
+            Err(error) if attempt + 1 < ATTEMPTS && sqlite_writer_contention(&error) => {
                 std::thread::sleep(Duration::from_millis(125));
             }
             Err(error) => return Err(error),
@@ -2189,9 +2191,19 @@ fn persist_confirmed_usage(
     first: bool,
     time: i64,
 ) -> Result<bool> {
-    let committed = retry_locked_usage(|| {
+    let committed = match retry_locked_usage(|| {
         record_usage_inner(store, session_times, id, seconds, first, time, true)
-    })?;
+    }) {
+        Ok(committed) => committed,
+        Err(error) if sqlite_writer_contention(&error) => {
+            // The sample was already marked as recorded in memory. Discard
+            // uncommitted evidence rather than losing the first-session marker
+            // after the database becomes writable again.
+            *usage = UsageAccumulator::default();
+            return Ok(false);
+        }
+        Err(error) => return Err(error),
+    };
     if !committed {
         // Collection was paused or the worker was turned off after sampling.
         // Do not replay pre-pause evidence on resume or lose the first-session
@@ -2202,26 +2214,35 @@ fn persist_confirmed_usage(
 }
 
 fn record_learning_if_permitted(store: &Store, seconds: u32) -> Result<bool> {
-    store.transaction(|| {
-        let Some(config) = collection_permission(store)? else {
-            return Ok(false);
-        };
-        if !config.learning_enabled {
-            return Ok(false);
-        }
-        let mut progress: Progress = store.get("learning")?;
-        if progress.completed_at != 0 {
-            return Ok(false);
-        }
-        progress.observe(
-            now(),
-            &chrono::Local::now().date_naive().to_string(),
-            seconds,
-        );
-        progress.finish_if_ready(&config, now());
-        store.set("learning", &progress)?;
-        Ok(true)
-    })
+    let result = retry_locked_usage(|| {
+        store.transaction(|| {
+            let Some(config) = collection_permission(store)? else {
+                return Ok(false);
+            };
+            if !config.learning_enabled {
+                return Ok(false);
+            }
+            let mut progress: Progress = store.get("learning")?;
+            if progress.completed_at != 0 {
+                return Ok(false);
+            }
+            progress.observe(
+                now(),
+                &chrono::Local::now().date_naive().to_string(),
+                seconds,
+            );
+            progress.finish_if_ready(&config, now());
+            store.set("learning", &progress)?;
+            Ok(true)
+        })
+    });
+    match result {
+        Ok(saved) => Ok(saved),
+        // A concurrent Settings change or backup may temporarily own the
+        // SQLite writer. Drop just this uncommitted sample, not the monitor.
+        Err(error) if sqlite_writer_contention(&error) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 fn housekeeping_sessions(store: &Store, sessions: &mut HashMap<String, i64>) -> Result<()> {
@@ -2604,7 +2625,9 @@ pub fn monitor(home: PathBuf) -> Result<()> {
             if seconds > 0 {
                 learning_fraction -= f64::from(seconds);
                 if !record_learning_if_permitted(&store, seconds.min(4))? {
-                    // Do not carry a stale fractional sample across a pause.
+                    // No learning update: collection paused, a temporary writer
+                    // lock, or learning already finished. Forget the fraction,
+                    // but keep ordinary foreground tracking enabled.
                     learning_fraction = 0.0;
                 }
             }
