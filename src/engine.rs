@@ -1062,6 +1062,25 @@ fn reconcile_manual_locked(store: &Store) -> Result<()> {
         }
         kept.push(o);
     }
+    // Old profiles can contain two records for the same physical desktop
+    // shortcut. Coalesce exact duplicates after verifying the file, without
+    // choosing between conflicting manual/ownership metadata. A conflict
+    // must stop before any shortcut transaction can touch the user's file.
+    let mut unique_paths: HashMap<String, usize> = HashMap::new();
+    let mut unique: Vec<Owned> = Vec::with_capacity(kept.len());
+    for owned in kept {
+        let key = norm(&owned.path);
+        if let Some(&index) = unique_paths.get(&key) {
+            ensure!(
+                unique[index] == owned,
+                "Конфликт записей управления одним ярлыком. Файлы не изменены; проверьте размещение вручную."
+            );
+            continue;
+        }
+        unique_paths.insert(key, unique.len());
+        unique.push(owned);
+    }
+    let kept = unique;
     // A routine check of unchanged managed shortcuts must not reserve
     // SQLite's only WAL writer or invalidate Settings' catalog snapshot.
     // Genuine user edits, exclusions, and ownership changes still commit.
@@ -1263,7 +1282,7 @@ fn apply_locked(store: &Store, initial: bool) -> Result<String> {
         undo_layout: None,
     };
     let mut staging = StagedCopies(Vec::new());
-    for owned in &before.owned {
+    for (index, owned) in before.owned.iter().enumerate() {
         if choice.removed.contains(&owned.app) {
             let p = Path::new(&owned.path);
             safe_file(p, &desktop)?;
@@ -1275,7 +1294,7 @@ fn apply_locked(store: &Store, initial: bool) -> Result<String> {
                 .extension()
                 .and_then(|e| e.to_str())
                 .context("Shortcut extension is missing")?;
-            let backup = directory.join(format!("before-{}.{extension}", owned.app));
+            let backup = directory.join(format!("before-{index}-{}.{extension}", owned.app));
             copy_new(p, &backup)?;
             tx.changes.push(Change {
                 kind: "remove".into(),
@@ -4204,3 +4223,6 @@ mod hook_failure_tests;
 
 #[cfg(test)]
 mod reconcile_noop_tests;
+
+#[cfg(test)]
+mod legacy_owned_duplicate_tests;
