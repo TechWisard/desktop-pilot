@@ -1362,3 +1362,6 @@ mod selection_clock_tests;
 
 #[cfg(test)]
 mod compound_manual_control_tests;
+
+#[cfg(test)]
+mod device_namespace_tests;
