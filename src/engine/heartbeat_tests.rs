@@ -122,3 +122,50 @@ fn a_clock_correction_is_healed_by_the_actual_bounded_sqlite_writer() {
         );
     });
 }
+
+#[test]
+fn temporary_writer_lock_drops_only_the_heartbeat_and_recovers_on_next_tick() {
+    in_temporary_profile(|store| {
+        let old = 17_i64;
+        store.set("heartbeat", &old).unwrap();
+        store.db.busy_timeout(Duration::from_millis(1)).unwrap();
+        let blocker = rusqlite::Connection::open(store.home.join("usage.sqlite")).unwrap();
+        blocker.execute_batch("BEGIN IMMEDIATE;").unwrap();
+
+        let first_tick = Instant::now();
+        let mut last = None;
+        // The real periodic writer must not kill foreground observation when
+        // a Settings/backup transaction briefly owns SQLite's only writer.
+        assert!(!publish_heartbeat_if_due(store, &mut last, first_tick, false).unwrap());
+        assert!(last.is_none(), "a refused write is not a published heartbeat");
+        assert_eq!(store.get::<i64>("heartbeat").unwrap(), old);
+
+        blocker.execute_batch("ROLLBACK;").unwrap();
+        drop(blocker);
+        let resumed = first_tick + Duration::from_secs(2);
+        assert!(publish_heartbeat_if_due(store, &mut last, resumed, false).unwrap());
+        assert_eq!(last, Some(resumed));
+        assert!(store.get::<i64>("heartbeat").unwrap() > old);
+        assert!(
+            !publish_heartbeat_if_due(
+                store,
+                &mut last,
+                resumed + Duration::from_secs(2),
+                false,
+            )
+            .unwrap()
+        );
+    });
+}
+
+#[test]
+fn non_lock_heartbeat_database_failure_is_not_hidden() {
+    in_temporary_profile(|store| {
+        // Damage only an isolated synthetic profile. Unlike BUSY/LOCKED,
+        // a missing database table must remain an actionable error.
+        store.db.execute_batch("DROP TABLE kv;").unwrap();
+        let mut last = None;
+        assert!(publish_heartbeat_if_due(store, &mut last, Instant::now(), false).is_err());
+        assert!(last.is_none());
+    });
+}
