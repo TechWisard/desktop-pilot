@@ -2086,7 +2086,7 @@ fn retry_locked_usage<T>(mut write: impl FnMut() -> Result<T>) -> Result<T> {
     const ATTEMPTS: usize = 3;
     for attempt in 0..ATTEMPTS {
         match write() {
-            Ok(()) => return Ok(()),
+            Ok(value) => return Ok(value),
             Err(error)
                 if attempt + 1 < ATTEMPTS
                     && error.chain().any(|source| {
