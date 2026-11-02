@@ -507,6 +507,7 @@ const MAX_DISCOVERED_SHORTCUTS: usize = 6_000;
 thread_local! {
     static DISCOVERY_METADATA_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
+#[cfg(test)]
 fn visit_shortcut_paths(
     path: &Path,
     depth: usize,
