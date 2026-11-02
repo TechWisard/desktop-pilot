@@ -465,10 +465,8 @@ pub(crate) fn select_at(
         by_id.get(id).is_some_and(|a| a.policy == Policy::Always)
             || state.owned.iter().any(|o| o.app == id && o.manual)
     };
-    let fixed = |id: &str| {
-        hard_fixed(id)
-            || (!capacity_reduced && !manual_only && retained_offline(id))
-    };
+    let fixed =
+        |id: &str| hard_fixed(id) || (!capacity_reduced && !manual_only && retained_offline(id));
     let allowed = |id: &str| {
         scores.get(id).is_some_and(|r| r.eligible)
             || (fixed(id)
