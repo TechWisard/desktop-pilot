@@ -243,7 +243,13 @@ fn duplicate_known_folder_roots_cannot_starve_shortcuts_in_later_roots() {
         discover_shortcut_roots(&distinct_roots, &mut warnings, 2).unwrap(),
         discovered
     );
-    assert_eq!(std::fs::read(&visible).unwrap().as_slice(), &visible_bytes[..]);
-    assert_eq!(std::fs::read(&important).unwrap().as_slice(), &important_bytes[..]);
+    assert_eq!(
+        std::fs::read(&visible).unwrap().as_slice(),
+        &visible_bytes[..]
+    );
+    assert_eq!(
+        std::fs::read(&important).unwrap().as_slice(),
+        &important_bytes[..]
+    );
     std::fs::remove_dir_all(base).unwrap();
 }
