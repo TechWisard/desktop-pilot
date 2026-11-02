@@ -145,3 +145,85 @@ fn first_cleanup_of_an_upgraded_profile_defers_an_uncertain_future_clock() {
         assert_eq!(session_count(store), 1);
     });
 }
+
+#[test]
+fn far_future_clock_rows_are_preserved_but_not_loaded_into_cold_preview() {
+    with_profile(|store| {
+        let at = now();
+        let original = store.home.join("RareProject.url");
+        std::fs::write(
+            &original,
+            b"[InternetShortcut]\r\nURL=https://example.invalid/RareProject\r\n",
+        )
+        .unwrap();
+        let mut rare = crate::native::read_link(&original).unwrap();
+        assert!(rare.valid);
+        rare.policy = Policy::Always;
+        store.put_app(&rare).unwrap();
+        store
+            .set(
+                "config",
+                &Config {
+                    learning_enabled: false,
+                    slots: 2,
+                    ..Config::default()
+                },
+            )
+            .unwrap();
+
+        // Simulate a restored profile whose wall clock spent time in the
+        // distant future. These records must not be interpreted as current
+        // observations or loaded into the ordinary preview.
+        let future = at + 400 * DAY;
+        for index in 0..512 {
+            store
+                .db
+                .execute(
+                    "INSERT INTO days(app,date,sessions,launches,seconds) VALUES(?1,?2,1,0,300)",
+                    params![format!("clock-error-{index:04}"), future + i64::from(index)],
+                )
+                .unwrap();
+        }
+        store
+            .db
+            .execute(
+                "INSERT INTO days(app,date,sessions,launches,seconds) VALUES(?1,?2,2,1,300)",
+                params![rare.id, at - 3600],
+            )
+            .unwrap();
+        store
+            .db
+            .execute(
+                "INSERT INTO days(app,date,sessions,launches,seconds) VALUES(?1,?2,1,0,300)",
+                params!["nearby-clock-correction", at + 3600],
+            )
+            .unwrap();
+
+        let loaded = store.days().unwrap();
+        assert_eq!(
+            loaded.len(),
+            2,
+            "future rows must not bloat every catalog preview"
+        );
+        assert!(loaded.iter().any(|row| row.app == rare.id));
+        assert!(
+            loaded
+                .iter()
+                .any(|row| row.app == "nearby-clock-correction")
+        );
+        let preview = crate::engine::preview(store, true).unwrap();
+        assert_eq!(preview.selected, [rare.id.clone()]);
+        assert!(preview.removed.is_empty());
+        assert_eq!(preview.added, [rare.id.clone()]);
+
+        // Viewing a profile is read-only for these records; the original
+        // shortcut, manual rule and all 512 saved rows remain intact.
+        let persisted: i64 = store
+            .db
+            .query_row("SELECT COUNT(*) FROM days", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(persisted, 514);
+        assert_eq!(store.app(&rare.id).unwrap().policy, Policy::Always);
+        assert!(original.exists());
+    });
+}

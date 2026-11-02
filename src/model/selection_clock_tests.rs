@@ -163,7 +163,9 @@ fn short_clock_rewind_across_midnight_keeps_managed_usage_but_not_new_candidates
     store.set("state", &state).unwrap();
     store.set("config", &cfg).unwrap();
     let apps = store.apps().unwrap();
-    let days = store.days().unwrap();
+    // Preview and history loading must use the same injected wall-clock
+    // instant: this test models a date many years away from the CI runner.
+    let days = store.days_at(at).unwrap();
 
     let retained = engine::preview_loaded(&cfg, &apps, &days, &state, false, at).unwrap();
     assert_eq!(

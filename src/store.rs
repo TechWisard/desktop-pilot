@@ -237,18 +237,30 @@ impl Store {
         self.put_app(&a)
     }
     pub fn days(&self) -> Result<Vec<Day>> {
-        let mut q = self
-            .db
-            .prepare("SELECT app,date,sessions,launches,seconds FROM days WHERE date>=?1")?;
-        let rows = q.query_map([now() - 90 * 86400], |r| {
-            Ok(Day {
-                app: r.get(0)?,
-                date: r.get(1)?,
-                sessions: r.get(2)?,
-                launches: r.get(3)?,
-                seconds: r.get(4)?,
-            })
-        })?;
+        self.days_at(now())
+    }
+    // Use the same production query with a controlled clock for calendar
+    // correction regression tests. Normal callers always use the real clock.
+    pub(crate) fn days_at(&self, at: i64) -> Result<Vec<Day>> {
+        // An incorrectly advanced Windows clock may leave thousands of saved
+        // future rows. Preserve them in SQLite, but do not deserialize them
+        // into every preview; ranking rejects that evidence anyway. Keep the
+        // one-day correction window used by the production ranker.
+        let mut q = self.db.prepare(
+            "SELECT app,date,sessions,launches,seconds FROM days WHERE date>=?1 AND date<=?2",
+        )?;
+        let rows = q.query_map(
+            params![at.saturating_sub(90 * 86400), at.saturating_add(86400)],
+            |r| {
+                Ok(Day {
+                    app: r.get(0)?,
+                    date: r.get(1)?,
+                    sessions: r.get(2)?,
+                    launches: r.get(3)?,
+                    seconds: r.get(4)?,
+                })
+            },
+        )?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
     pub fn observe(&self, id: &str, seconds: u32, session: bool, launch: bool) -> Result<()> {
