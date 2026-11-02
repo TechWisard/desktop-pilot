@@ -27,9 +27,14 @@ pub struct Progress {
 }
 impl Progress {
     pub fn active_days(&self) -> u32 {
+        // Older or edited profiles may contain malformed calendar keys.
+        // Only a real local calendar date can count toward the learning gate.
         self.day_seconds
-            .values()
-            .filter(|seconds| **seconds >= QUALIFY_SECONDS)
+            .iter()
+            .filter(|(day, seconds)| {
+                **seconds >= QUALIFY_SECONDS
+                    && chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").is_ok()
+            })
             .count() as u32
     }
     pub fn criteria_met(&self, cfg: &Config) -> bool {
@@ -87,7 +92,10 @@ impl Progress {
             let incomplete = self
                 .day_seconds
                 .iter()
-                .find(|(_, seconds)| **seconds < QUALIFY_SECONDS)
+                .find(|(day, seconds)| {
+                    chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").is_err()
+                        || **seconds < QUALIFY_SECONDS
+                })
                 .map(|(day, _)| day.clone());
             if let Some(day) = incomplete {
                 self.day_seconds.remove(&day);
@@ -212,6 +220,60 @@ mod tests {
         assert_eq!(progress.started_at, 0);
         assert!(progress.day_seconds.is_empty());
     }
+    #[test]
+    fn invalid_saved_calendar_keys_never_unlock_learning_or_displace_real_days() {
+        let config = Config {
+            learning_mode: Mode::Days,
+            learning_days: 90,
+            ..Default::default()
+        };
+        let mut progress = Progress::default();
+        let first_day = chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+        for index in 0..89 {
+            progress
+                .day_seconds
+                .insert((first_day + chrono::Duration::days(index)).to_string(), 300);
+        }
+        // Simulate a legacy or edited persisted profile, not an observation:
+        // observe() already rejects malformed dates in fresh input.
+        progress.day_seconds.insert("9999-invalid".into(), 300);
+        let saved = serde_json::to_string(&progress).unwrap();
+        let mut restored: Progress = serde_json::from_str(&saved).unwrap();
+        assert_eq!(restored.day_seconds.len(), 90);
+        assert_eq!(restored.active_days(), 89);
+        assert!(!restored.ready(&config));
+
+        // On the very next real day, the bounded map must discard bad
+        // evidence rather than pruning each new sample forever.
+        activity(&mut restored, 10000, "2026-04-01", 300);
+        assert_eq!(restored.day_seconds.len(), 90);
+        assert!(!restored.day_seconds.contains_key("9999-invalid"));
+        assert_eq!(restored.active_days(), 90);
+        assert!(restored.ready(&config));
+        restored.finish_if_ready(&config, 20000);
+        assert_eq!(restored.completed_at, 20000);
+    }
+
+    #[test]
+    fn invalid_saved_days_are_ignored_without_erasing_completed_learning() {
+        let config = Config {
+            learning_mode: Mode::Days,
+            learning_days: 2,
+            ..Default::default()
+        };
+        let mut progress = Progress::default();
+        for day in ["2026-02-28", "2026-02-30", "2026-02-28-extra", "junk"] {
+            progress.day_seconds.insert(day.into(), 300);
+        }
+        assert_eq!(progress.active_days(), 1);
+        assert!(!progress.ready(&config));
+        // A historical completion remains intact on read; do not reset
+        // explicitly completed learning just because of malformed keys.
+        progress.completed_at = 12345;
+        assert!(progress.ready(&config));
+        assert_eq!(progress.day_seconds.len(), 4);
+    }
+
     #[test]
     fn short_days_cannot_erase_qualified_progress_towards_ninety_days() {
         let config = Config {
