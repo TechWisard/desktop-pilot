@@ -526,8 +526,7 @@ fn visit_shortcut_paths(
                 // they cannot possibly be shortcuts or directories.
                 let name = entry.file_name();
                 let shortcut_name = Path::new(&name).extension().is_some_and(|extension| {
-                    extension.eq_ignore_ascii_case("lnk")
-                        || extension.eq_ignore_ascii_case("url")
+                    extension.eq_ignore_ascii_case("lnk") || extension.eq_ignore_ascii_case("url")
                 });
                 match entry.file_type() {
                     Ok(kind) if shortcut_name || kind.is_dir() || kind.is_symlink() => {
