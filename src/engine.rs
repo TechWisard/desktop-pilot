@@ -2214,13 +2214,21 @@ impl UsageAccumulator {
         {
             self.windows.remove(&oldest);
         }
-        let window = self.windows.entry(id.to_owned()).or_default();
-        window.last_seen = self.elapsed;
-        // The first sample after a switch is ambiguous. Repeated confirmed
-        // short visits to one app may count, but never the switching tick.
+        // A first (ambiguous) tick establishes a new window's expiry clock,
+        // but a later incidental glance must not renew old partial evidence.
+        // Only confirmed consecutive samples extend its twenty-minute life.
+        let observed_at = self.elapsed;
+        let window = self
+            .windows
+            .entry(id.to_owned())
+            .or_insert_with(|| UsageWindow {
+                last_seen: observed_at,
+                ..UsageWindow::default()
+            });
         if !continuing {
             return None;
         }
+        window.last_seen = observed_at;
         window.seconds += elapsed;
         let whole = window.seconds.floor().min(f64::from(u32::MAX)) as u32;
         if whole < 10 || whole <= window.recorded {
@@ -4216,6 +4224,63 @@ mod tests {
         for _ in 0..3 {
             assert!(usage.sample(Some("editor"), 2.0).is_none());
         }
+    }
+
+    #[test]
+    fn incidental_focus_glances_cannot_keep_old_partial_usage_alive() {
+        with_store(|store| {
+            let mut usage = UsageAccumulator::default();
+            let mut session_times = HashMap::new();
+            // An initial confirmed visit is too short to qualify on its own.
+            for _ in 0..5 {
+                assert!(usage.sample(Some("editor"), 2.0).is_none());
+            }
+            assert_eq!(usage.windows["editor"].seconds, 8.0);
+
+            // Four quick glances, each about nineteen minutes apart, have no
+            // consecutive evidence. The old logic refreshed last_seen on each
+            // switching tick, so a later two-second sample falsely completed
+            // the original visit after more than an hour.
+            for _ in 0..4 {
+                for _ in 0..568 {
+                    assert!(usage.sample(None, 2.0).is_none());
+                }
+                assert!(usage.sample(Some("editor"), 2.0).is_none());
+                assert!(usage.sample(None, 2.0).is_none());
+            }
+            assert_eq!(usage.windows["editor"].seconds, 0.0);
+            assert!(usage.sample(Some("editor"), 2.0).is_none());
+            if let Some((id, seconds, first)) = usage.sample(Some("editor"), 2.0) {
+                record_usage(store, &mut session_times, &id, seconds, first, now()).unwrap();
+            }
+            assert!(store.days().unwrap().is_empty());
+            assert!(session_times.is_empty());
+        });
+    }
+
+    #[test]
+    fn confirmed_return_within_short_visit_window_keeps_real_usage() {
+        with_store(|store| {
+            let mut usage = UsageAccumulator::default();
+            let mut session_times = HashMap::new();
+            for _ in 0..5 {
+                assert!(usage.sample(Some("editor"), 2.0).is_none());
+            }
+            // A real return before the twenty-minute timeout may finish the
+            // previous verified eight seconds; only its second tick counts.
+            for _ in 0..560 {
+                assert!(usage.sample(None, 2.0).is_none());
+            }
+            assert!(usage.sample(Some("editor"), 2.0).is_none());
+            let (id, seconds, first) = usage.sample(Some("editor"), 2.0).unwrap();
+            assert_eq!((id.as_str(), seconds, first), ("editor", 10, true));
+            record_usage(store, &mut session_times, &id, seconds, first, now()).unwrap();
+            let history = store.days().unwrap();
+            assert_eq!(history.len(), 1);
+            assert_eq!(history[0].app, "editor");
+            assert_eq!(history[0].seconds, 10);
+            assert_eq!(history[0].sessions, 1);
+        });
     }
 
     #[test]
