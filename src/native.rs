@@ -297,7 +297,9 @@ fn namespace_has_valid_clsid(mut target: &str) -> bool {
         if suffix.is_empty() {
             return true;
         }
-        if let Some(child) = suffix.strip_prefix('\\').or_else(|| suffix.strip_prefix('/'))
+        if let Some(child) = suffix
+            .strip_prefix('\\')
+            .or_else(|| suffix.strip_prefix('/'))
             && child.starts_with("::{")
         {
             target = child;
