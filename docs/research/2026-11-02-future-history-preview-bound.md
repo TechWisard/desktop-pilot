@@ -15,3 +15,7 @@ The actual SQLite query now has the same bounded time horizon as the existing pr
 ## Boundaries and continuation
 
 Run unchanged Windows 2022/2025 formatting, full Rust tests, strict Clippy, build, native integration and publication guards on the candidate and then on `main`. Keep organizer drafts #98 and #101 untouched. Physical Windows 11 cold-start latency, 5,000-shortcut optional roots, disconnected network folders, GUI at 200%, and long mixed-project transitions remain acceptance work. No new setting, telemetry, network dependency, or elevated access is introduced.
+
+## Historical clock-rewind acceptance
+
+The initial candidate passed formatting but exposed a pre-existing test's synthetic clock mismatch: `model::selection_clock_tests::short_clock_rewind_across_midnight_keeps_managed_usage_but_not_new_candidates` used a fixed 2033-era timestamp for the ranking while calling `Store::days()` against the Windows runner's real 2026 clock. Once SQL correctly rejected far-future rows, that test lost its intentionally injected two-hour clock-rewind evidence. The production Store query is now reused by a private `days_at(at)` clock seam, and this test loads history using the *same* injected instant as `preview_loaded`. Neither the test's eligibility assertions nor its stability requirements are relaxed. This failure is a source/fixture time-domain mismatch, not a new observed user-facing regression.
