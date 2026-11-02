@@ -730,13 +730,9 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
     }
     let mut paths = Vec::new();
     for (index, (root, _)) in roots.iter().enumerate() {
-        if let Err(e) = visit_shortcut_paths(
-            root,
-            0,
-            &mut paths,
-            &mut warnings,
-            MAX_DISCOVERED_SHORTCUTS,
-        ) {
+        if let Err(e) =
+            visit_shortcut_paths(root, 0, &mut paths, &mut warnings, MAX_DISCOVERED_SHORTCUTS)
+        {
             if index == 0 {
                 return Err(e);
             }
