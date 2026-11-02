@@ -26,14 +26,21 @@ pub struct Progress {
     pub day_seconds: BTreeMap<String, u32>,
 }
 impl Progress {
+    fn plausible_day(day: &str, latest: chrono::NaiveDate) -> bool {
+        chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d")
+            .is_ok_and(|parsed| parsed <= latest)
+    }
+
     pub fn active_days(&self) -> u32 {
-        // Older or edited profiles may contain malformed calendar keys.
-        // Only a real local calendar date can count toward the learning gate.
+        // Restored profiles can contain valid future dates from a corrected
+        // Windows clock. Those are not completed days today. A one-day window
+        // tolerates small time and time-zone corrections without erasing data.
+        let today = chrono::Local::now().date_naive();
+        let latest = today.succ_opt().unwrap_or(today);
         self.day_seconds
             .iter()
             .filter(|(day, seconds)| {
-                **seconds >= QUALIFY_SECONDS
-                    && chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").is_ok()
+                **seconds >= QUALIFY_SECONDS && Self::plausible_day(day, latest)
             })
             .count() as u32
     }
@@ -89,10 +96,15 @@ impl Progress {
             // The learning goal is cumulative. Brief visits must not push an
             // already qualified day out of progress and make a 90-day goal
             // impossible to finish. Keep the same bounded amount of local data.
+            // Remove implausible future records before a new, incomplete
+            // real day. Otherwise a saved future 90th day can be counted as
+            // learning and can prevent a genuine day from accumulating.
+            let today = chrono::Local::now().date_naive();
+            let latest = today.succ_opt().unwrap_or(today);
             let incomplete = self
                 .day_seconds
                 .keys()
-                .find(|day| chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").is_err())
+                .find(|day| !Self::plausible_day(day, latest))
                 .cloned()
                 .or_else(|| {
                     self.day_seconds
@@ -255,6 +267,78 @@ mod tests {
         assert!(restored.ready(&config));
         restored.finish_if_ready(&config, 20000);
         assert_eq!(restored.completed_at, 20000);
+    }
+
+    #[test]
+    fn future_saved_day_does_not_unlock_learning_or_block_the_ninetieth_real_day() {
+        let config = Config {
+            learning_mode: Mode::Days,
+            learning_days: 90,
+            ..Default::default()
+        };
+        let today = chrono::Local::now().date_naive();
+        let future = (today + chrono::Duration::days(400)).to_string();
+        let mut progress = Progress::default();
+        for index in 0..89 {
+            let day = today - chrono::Duration::days(100 - index);
+            progress.day_seconds.insert(day.to_string(), 300);
+        }
+        progress.day_seconds.insert(future.clone(), 300);
+        let home = std::env::temp_dir().join(format!(
+            "desktop-pilot-future-learning-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = crate::store::Store::open(&home).unwrap();
+        store.set("learning", &progress).unwrap();
+        let mut restored: Progress = store.get("learning").unwrap();
+        assert_eq!(restored.day_seconds.len(), 90);
+        assert_eq!(restored.active_days(), 89);
+        assert!(!restored.ready(&config));
+        // A new real day must accumulate samples, not be repeatedly pruned.
+        activity(&mut restored, 10000, &today.to_string(), 300);
+        assert_eq!(restored.day_seconds.len(), 90);
+        assert!(!restored.day_seconds.contains_key(&future));
+        assert_eq!(restored.active_days(), 90);
+        assert!(restored.ready(&config));
+        restored.finish_if_ready(&config, 20000);
+        store.set("learning", &restored).unwrap();
+        let persisted: Progress = store.get("learning").unwrap();
+        assert_eq!(persisted.completed_at, 20000);
+        assert_eq!(persisted.active_days(), 90);
+        drop(store);
+        // Brief sharing violations during SQLite shutdown are not a
+        // functional failure of the learning gate.
+        for attempt in 0..5 {
+            match std::fs::remove_dir_all(&home) {
+                Ok(()) => break,
+                Err(_) if attempt < 4 => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(error) => panic!("could not remove test profile: {error}"),
+            }
+        }
+    }
+
+    #[test]
+    fn future_saved_days_do_not_reset_previously_completed_learning() {
+        let mut progress = Progress {
+            completed_at: 12345,
+            ..Default::default()
+        };
+        let future = (chrono::Local::now().date_naive() + chrono::Duration::days(400)).to_string();
+        progress.day_seconds.insert(future, 300);
+        let config = Config {
+            learning_mode: Mode::Days,
+            learning_days: 1,
+            ..Default::default()
+        };
+        assert_eq!(progress.active_days(), 0);
+        assert!(progress.ready(&config));
+        assert_eq!(progress.completed_at, 12345);
     }
 
     #[test]
