@@ -91,12 +91,15 @@ impl Progress {
             // impossible to finish. Keep the same bounded amount of local data.
             let incomplete = self
                 .day_seconds
-                .iter()
-                .find(|(day, seconds)| {
-                    chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").is_err()
-                        || **seconds < QUALIFY_SECONDS
-                })
-                .map(|(day, _)| day.clone());
+                .keys()
+                .find(|day| chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").is_err())
+                .cloned()
+                .or_else(|| {
+                    self.day_seconds
+                        .iter()
+                        .find(|(_, seconds)| **seconds < QUALIFY_SECONDS)
+                        .map(|(day, _)| day.clone())
+                });
             if let Some(day) = incomplete {
                 self.day_seconds.remove(&day);
             } else {
