@@ -202,3 +202,54 @@ fn unrelated_files_do_not_multiply_directory_metadata_work() {
     DISCOVERY_METADATA_LOOKUPS.with(|calls| assert_eq!(calls.get(), 3));
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn duplicate_known_folder_roots_cannot_starve_shortcuts_in_later_roots() {
+    static SERIAL: AtomicU64 = AtomicU64::new(0);
+    let base = std::env::temp_dir().join(format!(
+        "desktop-pilot-shared-roots-{}-{}-{}",
+        std::process::id(),
+        now(),
+        SERIAL.fetch_add(1, Ordering::Relaxed)
+    ));
+    let desktop = base.join("Desktop");
+    let menu = base.join("StartMenu");
+    std::fs::create_dir_all(&desktop).unwrap();
+    std::fs::create_dir_all(&menu).unwrap();
+    let visible = desktop.join("Visible.url");
+    let important = menu.join("Important.url");
+    let visible_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/visible\r\n";
+    let important_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/important\r\n";
+    std::fs::write(&visible, visible_bytes).unwrap();
+    std::fs::write(&important, important_bytes).unwrap();
+
+    // Before root deduplication, this fills the two-slot budget with the
+    // same Desktop file twice; later Start Menu files disappear from results.
+    let roots = [
+        (desktop.clone(), "Desktop"),
+        (desktop.clone(), "Desktop"),
+        (menu.clone(), "Start menu"),
+    ];
+    let mut warnings = Vec::new();
+    let discovered = discover_shortcut_roots(&roots, &mut warnings, 2).unwrap();
+    assert_eq!(discovered.len(), 2);
+    assert!(discovered.contains(&visible));
+    assert!(discovered.contains(&important));
+    assert_eq!(warnings.len(), 1, "The real budget remains enforced");
+
+    warnings.clear();
+    let distinct_roots = [(desktop.clone(), "Desktop"), (menu.clone(), "Start menu")];
+    assert_eq!(
+        discover_shortcut_roots(&distinct_roots, &mut warnings, 2).unwrap(),
+        discovered
+    );
+    assert_eq!(
+        std::fs::read(&visible).unwrap().as_slice(),
+        &visible_bytes[..]
+    );
+    assert_eq!(
+        std::fs::read(&important).unwrap().as_slice(),
+        &important_bytes[..]
+    );
+    std::fs::remove_dir_all(base).unwrap();
+}
