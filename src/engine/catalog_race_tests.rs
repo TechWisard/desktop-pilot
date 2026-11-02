@@ -401,3 +401,45 @@ fn concurrent_policy_only_edit_does_not_hide_verified_source_changes() {
         assert_eq!(std::fs::read(&source).unwrap(), new_bytes);
     });
 }
+
+#[test]
+fn changing_taskbar_filter_during_scan_restarts_from_current_settings() {
+    with_profile(|store| {
+        let mut important = url(store, &store.home, "Important", "Rare-project");
+        important.policy = Policy::Always;
+        store.put_app(&important).unwrap();
+        let original_bytes = std::fs::read(&important.source).unwrap();
+        let before: State = store.get("state").unwrap();
+        let baseline: Config = store.get("config").unwrap();
+        assert!(!baseline.respect_taskbar_pins);
+
+        // Settings saves after the scanner reads its configuration but before
+        // its actual SQLite commit. This uses the real Store and scan hook.
+        SCAN_SHORTCUT_READS.with(|reads| reads.set(0));
+        at_commit(|store| {
+            let mut latest: Config = store.get("config").unwrap();
+            latest.respect_taskbar_pins = true;
+            store.set("config", &latest).unwrap();
+        });
+        refresh_apps(store).unwrap();
+        let reads = SCAN_SHORTCUT_READS.with(|reads| reads.get());
+        assert!(
+            reads >= 2,
+            "The scan published stale pin-filter settings rather than retrying"
+        );
+        let current: Config = store.get("config").unwrap();
+        assert!(current.respect_taskbar_pins);
+        assert!(store.get::<bool>("pins_verified").unwrap());
+        assert_eq!(store.get::<State>("state").unwrap().owned, before.owned);
+
+        // The next explicit Apply uses the current preference, preserves the
+        // original link, and remains fully reversible.
+        let plan = preview(store, true).unwrap();
+        assert_eq!(plan.selected, [important.id.clone()]);
+        apply(store, true).unwrap();
+        assert_eq!(store.get::<State>("state").unwrap().owned.len(), 1);
+        rollback(store).unwrap();
+        assert!(store.get::<State>("state").unwrap().owned.is_empty());
+        assert_eq!(std::fs::read(&important.source).unwrap(), original_bytes);
+    });
+}

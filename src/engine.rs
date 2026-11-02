@@ -899,6 +899,13 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
         // A placement may have entered its prepared state while scanning.
         // Recheck under the writer before changing any catalog row.
         ensure_no_unfinished(store)?;
+        // Taskbar filtering controls which apps may be recommended. A Settings
+        // change during slow shortcut enumeration invalidates both the saved
+        // pinned flags and the verification result. Retry the scan with the
+        // current choice instead of publishing its old permission snapshot.
+        if store.get::<Config>("config")?.respect_taskbar_pins != config.respect_taskbar_pins {
+            return Ok(false);
+        }
         let pins_verified = !real || !config.respect_taskbar_pins || pins.is_some();
         if store.get::<bool>("pins_verified")? != pins_verified {
             store.set("pins_verified", &pins_verified)?;
