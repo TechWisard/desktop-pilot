@@ -107,8 +107,11 @@ fn nested_shortcut_budget_is_global_and_independent_of_creation_order() {
         for name in relative {
             let file = desktop.join(name);
             std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-            std::fs::write(&file, b"[InternetShortcut]\r\nURL=https://example.invalid/\r\n")
-                .unwrap();
+            std::fs::write(
+                &file,
+                b"[InternetShortcut]\r\nURL=https://example.invalid/\r\n",
+            )
+            .unwrap();
         }
         let mut paths = Vec::new();
         let mut warnings = Vec::new();
@@ -139,9 +142,11 @@ fn nested_shortcut_budget_is_global_and_independent_of_creation_order() {
         warnings.clear();
         visit_shortcut_paths(&desktop, 0, &mut paths, &mut warnings, 4).unwrap();
         assert_eq!(paths.len(), 4);
-        assert!(paths
-            .iter()
-            .all(|path| path.file_name().unwrap() != "z-root.url"));
+        assert!(
+            paths
+                .iter()
+                .all(|path| path.file_name().unwrap() != "z-root.url")
+        );
         assert_eq!(warnings.len(), 1);
     }
     std::fs::remove_dir_all(base).unwrap();
