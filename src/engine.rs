@@ -602,6 +602,31 @@ fn visit_shortcut_paths(
     Ok(())
 }
 
+// Redirected Known Folder paths can refer to the same directory. Spending
+// the shared limit on a repeated root can hide shortcuts in later roots.
+fn discover_shortcut_roots(
+    roots: &[(PathBuf, &str)],
+    warnings: &mut Vec<String>,
+    limit: usize,
+) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    let mut visited_roots = HashSet::new();
+    for (index, (root, _)) in roots.iter().enumerate() {
+        if !visited_roots.insert(norm(&root.to_string_lossy())) {
+            continue;
+        }
+        if let Err(error) = visit_shortcut_paths(root, 0, &mut paths, warnings, limit) {
+            if index == 0 {
+                return Err(error);
+            }
+            warnings.push(format!("{}: {error:#}", root.display()));
+        }
+    }
+    paths.sort_by_key(|path| norm(&path.to_string_lossy()));
+    paths.dedup_by(|a, b| norm(&a.to_string_lossy()) == norm(&b.to_string_lossy()));
+    Ok(paths)
+}
+
 fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<bool> {
     ensure!(!cancelled(), "Background catalog scan cancelled");
     ensure_no_unfinished(store)?;
@@ -759,19 +784,7 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
             }
         }
     }
-    let mut paths = Vec::new();
-    for (index, (root, _)) in roots.iter().enumerate() {
-        if let Err(e) =
-            visit_shortcut_paths(root, 0, &mut paths, &mut warnings, MAX_DISCOVERED_SHORTCUTS)
-        {
-            if index == 0 {
-                return Err(e);
-            }
-            warnings.push(format!("{}: {e:#}", root.display()));
-        }
-    }
-    paths.sort_by_key(|p| norm(&p.to_string_lossy()));
-    paths.dedup_by(|a, b| norm(&a.to_string_lossy()) == norm(&b.to_string_lossy()));
+    let paths = discover_shortcut_roots(&roots, &mut warnings, MAX_DISCOVERED_SHORTCUTS)?;
     // A user may rename a managed quick copy before manual reconciliation.
     // A missing or replaced saved path alone does not mean the copy became
     // an independent original. Its filesystem identity remains authoritative.
