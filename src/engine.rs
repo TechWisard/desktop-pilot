@@ -2218,10 +2218,13 @@ impl UsageAccumulator {
         // but a later incidental glance must not renew old partial evidence.
         // Only confirmed consecutive samples extend its twenty-minute life.
         let observed_at = self.elapsed;
-        let window = self.windows.entry(id.to_owned()).or_insert_with(|| UsageWindow {
-            last_seen: observed_at,
-            ..UsageWindow::default()
-        });
+        let window = self
+            .windows
+            .entry(id.to_owned())
+            .or_insert_with(|| UsageWindow {
+                last_seen: observed_at,
+                ..UsageWindow::default()
+            });
         if !continuing {
             return None;
         }
