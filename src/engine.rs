@@ -503,6 +503,10 @@ fn refresh_apps_guarded(store: &Store, cancelled: impl Fn() -> bool) -> Result<(
 // applying the cap; otherwise the same unchanged tree can yield a different
 // set of apps on a later scan.
 const MAX_DISCOVERED_SHORTCUTS: usize = 6_000;
+#[cfg(test)]
+thread_local! {
+    static DISCOVERY_METADATA_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 fn visit_shortcut_paths(
     path: &Path,
     depth: usize,
@@ -516,7 +520,22 @@ fn visit_shortcut_paths(
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(path)? {
         match entry {
-            Ok(entry) => entries.push((entry.file_name(), entry)),
+            Ok(entry) => {
+                // A catalog root may also contain thousands of photos, logs
+                // and other ordinary files. Do not sort or stat them when
+                // they cannot possibly be shortcuts or directories.
+                let name = entry.file_name();
+                let shortcut_name = Path::new(&name).extension().is_some_and(|extension| {
+                    extension.eq_ignore_ascii_case("lnk") || extension.eq_ignore_ascii_case("url")
+                });
+                match entry.file_type() {
+                    Ok(kind) if shortcut_name || kind.is_dir() || kind.is_symlink() => {
+                        entries.push((name, entry));
+                    }
+                    Ok(_) => {}
+                    Err(error) => warnings.push(error.to_string()),
+                }
+            }
             Err(error) => warnings.push(error.to_string()),
         }
     }
@@ -531,6 +550,8 @@ fn visit_shortcut_paths(
             break;
         }
         let path = entry.path();
+        #[cfg(test)]
+        DISCOVERY_METADATA_LOOKUPS.with(|calls| calls.set(calls.get().saturating_add(1)));
         let metadata = match path.symlink_metadata() {
             Ok(metadata) => metadata,
             Err(error) => {

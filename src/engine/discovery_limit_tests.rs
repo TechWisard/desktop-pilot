@@ -158,3 +158,47 @@ fn direct_desktop_shortcuts_win_the_shared_budget_independent_of_creation_order(
     }
     std::fs::remove_dir_all(base).unwrap();
 }
+
+#[test]
+fn unrelated_files_do_not_multiply_directory_metadata_work() {
+    static SERIAL: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "desktop-pilot-filtered-discovery-{}-{}-{}",
+        std::process::id(),
+        now(),
+        SERIAL.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    // This folder intentionally ends in .url: it is a directory, not a URL
+    // file, and must still be traversed after early filename filtering.
+    let nested = root.join("Archive.url");
+    std::fs::create_dir_all(&nested).unwrap();
+    for i in 0..512 {
+        std::fs::write(root.join(format!("notes-{i:04}.txt")), b"unrelated").unwrap();
+        std::fs::write(nested.join(format!("asset-{i:04}.png")), b"unrelated").unwrap();
+    }
+    let contents = b"[InternetShortcut]\r\nURL=https://example.invalid/valid\r\n";
+    std::fs::write(root.join("Visible.URL"), contents).unwrap();
+    std::fs::write(nested.join("Nested.lnk"), contents).unwrap();
+
+    DISCOVERY_METADATA_LOOKUPS.with(|calls| calls.set(0));
+    let mut paths = Vec::new();
+    let mut warnings = Vec::new();
+    visit_shortcut_paths(&root, 0, &mut paths, &mut warnings, 6_000).unwrap();
+    let selected: Vec<_> = paths
+        .iter()
+        .map(|path| path.strip_prefix(&root).unwrap().to_path_buf())
+        .collect();
+    assert_eq!(
+        selected,
+        [
+            PathBuf::from("Visible.URL"),
+            PathBuf::from("Archive.url").join("Nested.lnk"),
+        ]
+    );
+    assert!(warnings.is_empty());
+    // The directory and two candidate files need actual reparse-point and
+    // regular-file metadata checks. The 1,024 unrelated files do not.
+    DISCOVERY_METADATA_LOOKUPS.with(|calls| assert_eq!(calls.get(), 3));
+    std::fs::remove_dir_all(root).unwrap();
+}
