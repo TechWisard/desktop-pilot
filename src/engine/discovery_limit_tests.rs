@@ -290,10 +290,18 @@ fn overlapping_known_folder_subroots_count_only_distinct_shortcuts() {
         3,
     )
     .unwrap();
-    assert_eq!(selected.len(), 3, "overlapping roots must not starve later sources");
+    assert_eq!(
+        selected.len(),
+        3,
+        "overlapping roots must not starve later sources"
+    );
     for path in [&a, &b, &c] {
-        assert!(selected.contains(path), "missing distinct shortcut: {}", path.display());
-        assert_eq!(std::fs::read(path).unwrap(), source);
+        assert!(
+            selected.contains(path),
+            "missing distinct shortcut: {}",
+            path.display()
+        );
+        assert_eq!(std::fs::read(path).unwrap(), source.to_vec());
     }
     assert_eq!(warnings.len(), 1);
     assert!(warnings[0].contains("limit reached (3)"));
