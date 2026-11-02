@@ -253,3 +253,69 @@ fn duplicate_known_folder_roots_cannot_starve_shortcuts_in_later_roots() {
     );
     std::fs::remove_dir_all(base).unwrap();
 }
+
+#[test]
+fn overlapping_known_folder_subroots_count_only_distinct_shortcuts() {
+    static SERIAL: AtomicU64 = AtomicU64::new(0);
+    let base = std::env::temp_dir().join(format!(
+        "desktop-pilot-overlap-budget-{}-{}-{}",
+        std::process::id(),
+        now(),
+        SERIAL.fetch_add(1, Ordering::Relaxed)
+    ));
+    let desktop = base.join("Desktop");
+    let nested = desktop.join("Shared");
+    let menu = base.join("StartMenu");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::create_dir_all(&menu).unwrap();
+    let a = desktop.join("Alpha.url");
+    let b = nested.join("Beta.url");
+    let c = menu.join("Gamma.url");
+    let source = b"[InternetShortcut]\r\nURL=https://example.invalid/keep\r\n";
+    for path in [&a, &b, &c] {
+        std::fs::write(path, source).unwrap();
+    }
+
+    // The first root visits Alpha and nested Beta. A second Known Folder
+    // points inside that root; re-visiting Beta must not consume the third
+    // and final slot before the independent Start Menu source.
+    let mut warnings = Vec::new();
+    let selected = discover_shortcut_roots(
+        &[
+            (desktop.clone(), "Desktop"),
+            (nested.clone(), "Desktop"),
+            (menu.clone(), "Start menu"),
+        ],
+        &mut warnings,
+        3,
+    )
+    .unwrap();
+    assert_eq!(
+        selected.len(),
+        3,
+        "overlapping roots must not starve later sources"
+    );
+    for path in [&a, &b, &c] {
+        assert!(
+            selected.contains(path),
+            "missing distinct shortcut: {}",
+            path.display()
+        );
+        assert_eq!(std::fs::read(path).unwrap(), source.to_vec());
+    }
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("limit reached (3)"));
+
+    // An ordinary non-overlapping root list must produce exactly the same
+    // unique catalog under the same boundary and traversal ordering.
+    let mut normal_warnings = Vec::new();
+    let normal = discover_shortcut_roots(
+        &[(desktop, "Desktop"), (menu, "Start menu")],
+        &mut normal_warnings,
+        3,
+    )
+    .unwrap();
+    assert_eq!(selected, normal);
+    assert_eq!(warnings, normal_warnings);
+    std::fs::remove_dir_all(base).unwrap();
+}

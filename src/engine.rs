@@ -507,12 +507,28 @@ const MAX_DISCOVERED_SHORTCUTS: usize = 6_000;
 thread_local! {
     static DISCOVERY_METADATA_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
+#[cfg(test)]
 fn visit_shortcut_paths(
     path: &Path,
     depth: usize,
     out: &mut Vec<PathBuf>,
     warnings: &mut Vec<String>,
     limit: usize,
+) -> Result<()> {
+    let mut seen_paths = HashSet::new();
+    visit_shortcut_paths_seen(path, depth, out, warnings, limit, &mut seen_paths)
+}
+
+// A Known Folder can be redirected into another scanned Known Folder. The
+// global budget counts distinct shortcut paths, not how many roots traverse
+// the same file. Keep this set shared across roots and recursive directories.
+fn visit_shortcut_paths_seen(
+    path: &Path,
+    depth: usize,
+    out: &mut Vec<PathBuf>,
+    warnings: &mut Vec<String>,
+    limit: usize,
+    seen_paths: &mut HashSet<String>,
 ) -> Result<()> {
     if depth > 5 || out.len() >= limit {
         return Ok(());
@@ -582,6 +598,9 @@ fn visit_shortcut_paths(
                 extension.eq_ignore_ascii_case("lnk") || extension.eq_ignore_ascii_case("url")
             })
         {
+            if !seen_paths.insert(norm(&path.to_string_lossy())) {
+                continue;
+            }
             out.push(path);
             if out.len() >= limit {
                 warnings.push(format!(
@@ -595,7 +614,9 @@ fn visit_shortcut_paths(
         if out.len() >= limit {
             break;
         }
-        if let Err(error) = visit_shortcut_paths(&path, depth + 1, out, warnings, limit) {
+        if let Err(error) =
+            visit_shortcut_paths_seen(&path, depth + 1, out, warnings, limit, seen_paths)
+        {
             warnings.push(format!("{}: {error:#}", path.display()));
         }
     }
@@ -611,11 +632,14 @@ fn discover_shortcut_roots(
 ) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     let mut visited_roots = HashSet::new();
+    let mut seen_shortcuts = HashSet::new();
     for (index, (root, _)) in roots.iter().enumerate() {
         if !visited_roots.insert(norm(&root.to_string_lossy())) {
             continue;
         }
-        if let Err(error) = visit_shortcut_paths(root, 0, &mut paths, warnings, limit) {
+        if let Err(error) =
+            visit_shortcut_paths_seen(root, 0, &mut paths, warnings, limit, &mut seen_shortcuts)
+        {
             if index == 0 {
                 return Err(error);
             }
