@@ -159,7 +159,6 @@ fn direct_desktop_shortcuts_win_the_shared_budget_independent_of_creation_order(
     std::fs::remove_dir_all(base).unwrap();
 }
 
-
 #[test]
 fn unrelated_files_do_not_multiply_directory_metadata_work() {
     static SERIAL: AtomicU64 = AtomicU64::new(0);
