@@ -1454,12 +1454,10 @@ mod tests {
             slots: 1,
             ..Default::default()
         };
-        for (index, target) in ["steam://", "steam:///", "shell:", "::{"]
-            .iter()
-            .enumerate()
-        {
+        let incomplete_targets = ["steam://", "steam:///", "shell:", "::{"];
+        for (index, target) in incomplete_targets.into_iter().enumerate() {
             let path = directory.join(format!("Incomplete-{index}.url"));
-            let bytes = format!("[InternetShortcut]\\r\\nURL={target}\\r\\n");
+            let bytes = format!("[InternetShortcut]\r\nURL={target}\r\n");
             std::fs::write(&path, bytes.as_bytes()).unwrap();
             let mut invalid = read_link(&path).unwrap();
             assert!(!invalid.valid, "{target}");
