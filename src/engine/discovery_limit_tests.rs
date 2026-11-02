@@ -81,6 +81,7 @@ fn five_thousand_real_shortcuts_remain_discoverable_and_manual_rules_survive_res
 
 #[test]
 fn nested_shortcut_budget_is_global_and_independent_of_creation_order() {
+    static SERIAL: AtomicU64 = AtomicU64::new(0);
     // The production visitor is run with a tiny limit so this regression
     // exercises the exact 6,000-entry boundary without creating thousands of
     // shortcuts on every CI run.
