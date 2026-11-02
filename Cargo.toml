@@ -1,6 +1,6 @@
 [package]
 name = "desktop-pilot"
-version = "0.2.93"
+version = "0.2.94"
 description = "Local adaptive desktop shortcuts for Windows"
 repository = "https://github.com/TechWisard/desktop-pilot"
 readme = "README.md"
