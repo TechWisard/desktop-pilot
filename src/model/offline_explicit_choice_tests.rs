@@ -84,7 +84,7 @@ fn new_manual_always_replaces_an_offline_auto_before_an_available_auto() {
 fn create_url(path: &Path, target: &str) -> App {
     fs::write(
         path,
-        format!("[InternetShortcut]\\r\\nURL={target}\\r\\n").as_bytes(),
+        format!("[InternetShortcut]\r\nURL={target}\r\n").as_bytes(),
     )
     .unwrap();
     let app = native::read_link(path).unwrap();
