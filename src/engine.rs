@@ -614,7 +614,9 @@ fn visit_shortcut_paths_seen(
         if out.len() >= limit {
             break;
         }
-        if let Err(error) = visit_shortcut_paths_seen(&path, depth + 1, out, warnings, limit, seen_paths) {
+        if let Err(error) =
+            visit_shortcut_paths_seen(&path, depth + 1, out, warnings, limit, seen_paths)
+        {
             warnings.push(format!("{}: {error:#}", path.display()));
         }
     }
@@ -635,14 +637,9 @@ fn discover_shortcut_roots(
         if !visited_roots.insert(norm(&root.to_string_lossy())) {
             continue;
         }
-        if let Err(error) = visit_shortcut_paths_seen(
-            root,
-            0,
-            &mut paths,
-            warnings,
-            limit,
-            &mut seen_shortcuts,
-        ) {
+        if let Err(error) =
+            visit_shortcut_paths_seen(root, 0, &mut paths, warnings, limit, &mut seen_shortcuts)
+        {
             if index == 0 {
                 return Err(error);
             }
