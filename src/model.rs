@@ -458,13 +458,15 @@ pub(crate) fn select_at(
         .map(|owned| owned.app.as_str())
         .collect::<HashSet<_>>();
     let capacity_reduced = distinct_owned.len() > cfg.slots;
-    let fixed = |id: &str| {
+    // A deliberate Always choice or manual placement is a hard constraint.
+    // Outage grace is only a soft constraint: once a new Always choice
+    // overfills the layout, evict an offline Auto copy before a usable one.
+    let hard_fixed = |id: &str| {
         by_id.get(id).is_some_and(|a| a.policy == Policy::Always)
             || state.owned.iter().any(|o| o.app == id && o.manual)
-            // In Manual mode an unchanged offline Auto copy remains selected,
-            // but cannot block an explicit new Always choice when space is full.
-            || (!capacity_reduced && !manual_only && retained_offline(id))
     };
+    let fixed =
+        |id: &str| hard_fixed(id) || (!capacity_reduced && !manual_only && retained_offline(id));
     let allowed = |id: &str| {
         scores.get(id).is_some_and(|r| r.eligible)
             || (fixed(id)
@@ -504,7 +506,10 @@ pub(crate) fn select_at(
         let worst = result
             .iter()
             .enumerate()
-            .filter(|(_, id)| !fixed(id))
+            // Only hard user choices are irremovable when over capacity.
+            // Transient offline Auto grace must not eject a working copy
+            // solely because a new explicit Always choice needs a slot.
+            .filter(|(_, id)| !hard_fixed(id))
             .min_by(|(_, a), (_, b)| {
                 let a_usable = by_id.get(a.as_str()).is_some_and(|app| app.valid);
                 let b_usable = by_id.get(b.as_str()).is_some_and(|app| app.valid);
@@ -1372,3 +1377,6 @@ mod compound_manual_control_tests;
 
 #[cfg(test)]
 mod device_namespace_tests;
+
+#[cfg(test)]
+mod offline_explicit_choice_tests;
