@@ -248,13 +248,13 @@ impl Store {
         let rows = q.query_map(
             params![at.saturating_sub(90 * 86400), at.saturating_add(86400)],
             |r| {
-            Ok(Day {
-                app: r.get(0)?,
-                date: r.get(1)?,
-                sessions: r.get(2)?,
-                launches: r.get(3)?,
-                seconds: r.get(4)?,
-            })
+                Ok(Day {
+                    app: r.get(0)?,
+                    date: r.get(1)?,
+                    sessions: r.get(2)?,
+                    launches: r.get(3)?,
+                    seconds: r.get(4)?,
+                })
             },
         )?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)

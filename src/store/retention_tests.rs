@@ -200,9 +200,17 @@ fn far_future_clock_rows_are_preserved_but_not_loaded_into_cold_preview() {
             .unwrap();
 
         let loaded = store.days().unwrap();
-        assert_eq!(loaded.len(), 2, "future rows must not bloat every catalog preview");
+        assert_eq!(
+            loaded.len(),
+            2,
+            "future rows must not bloat every catalog preview"
+        );
         assert!(loaded.iter().any(|row| row.app == rare.id));
-        assert!(loaded.iter().any(|row| row.app == "nearby-clock-correction"));
+        assert!(
+            loaded
+                .iter()
+                .any(|row| row.app == "nearby-clock-correction")
+        );
         let preview = crate::engine::preview(store, true).unwrap();
         assert_eq!(preview.selected, [rare.id.clone()]);
         assert!(preview.removed.is_empty());
