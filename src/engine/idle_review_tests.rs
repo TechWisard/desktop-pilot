@@ -298,3 +298,77 @@ fn active_user_during_slow_preflight_defers_the_same_due_review_without_churn() 
         assert!(!automatic_review_with_quiet_recheck(store, true, || {}, || true).unwrap());
     });
 }
+
+#[test]
+fn user_returning_during_copy_preparation_defers_review_without_orphaned_files() {
+    with_store(|store| {
+        let desktop = store.home.join("Desktop");
+        std::fs::create_dir_all(&desktop).unwrap();
+        store
+            .set("test_desktop", &desktop.to_string_lossy())
+            .unwrap();
+        let source = store.home.join("Rare session.url");
+        let original = b"[InternetShortcut]\r\nURL=https://example.com/rare-session\r\n";
+        std::fs::write(&source, original).unwrap();
+        let mut app = native::read_link(&source).unwrap();
+        app.policy = Policy::Always;
+        store.put_app(&app).unwrap();
+        store
+            .set(
+                "config",
+                &Config {
+                    automatic: true,
+                    collect: true,
+                    learning_enabled: false,
+                    slots: 1,
+                    ..Config::default()
+                },
+            )
+            .unwrap();
+        let before = State {
+            initialized: true,
+            last_review: now() - 8 * 86400,
+            ..State::default()
+        };
+        store.set("state", &before).unwrap();
+
+        // The first two production quiet checks pass. The third runs after
+        // real staging and backup preparation but before the durable journal.
+        // In the old implementation there was no third check: the quick
+        // shortcut was published even though the user had returned.
+        let checks = std::cell::Cell::new(0usize);
+        let deferred = automatic_review_with_quiet_recheck(store, true, || {}, || {
+            checks.set(checks.get() + 1);
+            checks.get() < 3
+        })
+        .unwrap();
+        assert!(!deferred);
+        assert_eq!(checks.get(), 3);
+        let state: State = store.get("state").unwrap();
+        assert_eq!(state.last_review, before.last_review);
+        assert!(state.owned.is_empty());
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+        assert!(std::fs::read_dir(&desktop).unwrap().next().is_none());
+        let history = store.home.join("history");
+        if history.exists() {
+            assert!(std::fs::read_dir(history).unwrap().next().is_none());
+        }
+        let journals: i64 = store
+            .db
+            .query_row("SELECT COUNT(*) FROM transactions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(journals, 0);
+
+        // Once idle again, the same real selector, SQLite journal and
+        // filesystem apply/Undo path can finish without losing user intent.
+        assert!(automatic_review_with_quiet_recheck(store, true, || {}, || true).unwrap());
+        let applied: State = store.get("state").unwrap();
+        assert_eq!(applied.owned.len(), 1);
+        assert_eq!(applied.owned[0].app, app.id);
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+        rollback(store).unwrap();
+        assert!(store.get::<State>("state").unwrap().owned.is_empty());
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+        assert!(std::fs::read_dir(&desktop).unwrap().next().is_none());
+    });
+}
