@@ -271,6 +271,44 @@ fn web_target_has_host(target: &str) -> bool {
             || (port.bytes().all(|digit| digit.is_ascii_digit()) && port.parse::<u16>().is_ok())
     })
 }
+// Shell namespace paths begin with a CLSID, not an arbitrary braced label.
+// Validate every leading namespace component; later object names are
+// extension-defined and must not be guessed or probed at catalog time.
+fn namespace_has_valid_clsid(mut target: &str) -> bool {
+    loop {
+        let Some(after_open) = target.strip_prefix("::{") else {
+            return false;
+        };
+        let Some((clsid, suffix)) = after_open.split_once('}') else {
+            return false;
+        };
+        let bytes = clsid.as_bytes();
+        if bytes.len() != 36
+            || !bytes.iter().enumerate().all(|(index, byte)| {
+                if matches!(index, 8 | 13 | 18 | 23) {
+                    *byte == b'-'
+                } else {
+                    byte.is_ascii_hexdigit()
+                }
+            })
+        {
+            return false;
+        }
+        if suffix.is_empty() {
+            return true;
+        }
+        if let Some(child) = suffix.strip_prefix('\\').or_else(|| suffix.strip_prefix('/'))
+            && child.starts_with("::{")
+        {
+            target = child;
+            continue;
+        }
+        // Namespace extensions may use their own object names after a root
+        // CLSID, but an unseparated trailing label cannot be a component.
+        return suffix.starts_with('\\') || suffix.starts_with('/') || suffix.starts_with(',');
+    }
+}
+
 pub fn valid_target(a: &App) -> bool {
     let target = a.target.trim();
     if target.is_empty() || target.contains('\0') {
@@ -289,7 +327,7 @@ pub fn valid_target(a: &App) -> bool {
         return !target["shell:".len()..].trim().is_empty();
     }
     if lower.starts_with("::{") {
-        return target["::{".len()..].contains('}');
+        return namespace_has_valid_clsid(target);
     }
     // Registered launchers (Epic, mailto, etc.) are valid shell targets too.
     if let Some((scheme, _)) = target.split_once(':')
@@ -1454,7 +1492,17 @@ mod tests {
             slots: 1,
             ..Default::default()
         };
-        let incomplete_targets = ["steam://", "steam:///", "shell:", "::{"];
+        let incomplete_targets = [
+            "steam://",
+            "steam:///",
+            "shell:",
+            "::{",
+            "::{}",
+            "::{not-a-guid}",
+            "::{20D04FE0-3AEA-1069-A2D8-08002B30309}",
+            "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}garbage",
+            "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\::{}",
+        ];
         for (index, target) in incomplete_targets.into_iter().enumerate() {
             let path = directory.join(format!("Incomplete-{index}.url"));
             let bytes = format!("[InternetShortcut]\r\nURL={target}\r\n");
@@ -1488,6 +1536,7 @@ mod tests {
             "steam://rungameid/480",
             "shell:AppsFolder",
             "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}",
+            "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\::{21EC2020-3AEA-1069-A2DD-08002B30309D}",
         ] {
             assert!(
                 valid_target(&App {
