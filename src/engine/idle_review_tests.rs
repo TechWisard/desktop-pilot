@@ -337,10 +337,15 @@ fn user_returning_during_copy_preparation_defers_review_without_orphaned_files()
         // In the old implementation there was no third check: the quick
         // shortcut was published even though the user had returned.
         let checks = std::cell::Cell::new(0usize);
-        let deferred = automatic_review_with_quiet_recheck(store, true, || {}, || {
-            checks.set(checks.get() + 1);
-            checks.get() < 3
-        })
+        let deferred = automatic_review_with_quiet_recheck(
+            store,
+            true,
+            || {},
+            || {
+                checks.set(checks.get() + 1);
+                checks.get() < 3
+            },
+        )
         .unwrap();
         assert!(!deferred);
         assert_eq!(checks.get(), 3);
