@@ -1310,7 +1310,7 @@ fn apply_locked(
     store: &Store,
     initial: bool,
     before_commit: impl FnOnce(),
-    still_quiet: impl FnOnce() -> bool,
+    mut still_quiet: impl FnMut() -> bool,
 ) -> Result<Option<String>> {
     ensure!(
         store
@@ -1467,6 +1467,15 @@ fn apply_locked(
             restore_file_id: None,
         });
         after.owned.push(owned);
+    }
+    // Building backups and hidden staging copies can be slow, especially on
+    // redirected or busy desktop storage. A user may resume work after the
+    // earlier quiet check. Defer before publishing or recording the review.
+    // These files belong to this unique, uncommitted preparation directory.
+    if !still_quiet() {
+        drop(staging);
+        std::fs::remove_dir_all(&directory)?;
+        return Ok(None);
     }
     after.last_change = now();
     tx.after = after;
