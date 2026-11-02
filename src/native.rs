@@ -280,8 +280,16 @@ pub fn valid_target(a: &App) -> bool {
     if lower.starts_with("https://") || lower.starts_with("http://") {
         return web_target_has_host(target);
     }
-    if lower.starts_with("steam://") || lower.starts_with("shell:") || lower.starts_with("::{") {
-        return true;
+    // A protocol prefix without a destination is not a launchable shortcut.
+    // Keep valid Steam commands and Shell namespace paths unchanged.
+    if lower.starts_with("steam://") {
+        return !target["steam://".len()..].trim_matches('/').is_empty();
+    }
+    if lower.starts_with("shell:") {
+        return !target["shell:".len()..].trim().is_empty();
+    }
+    if lower.starts_with("::{") {
+        return target["::{".len()..].contains('}');
     }
     // Registered launchers (Epic, mailto, etc.) are valid shell targets too.
     if let Some((scheme, _)) = target.split_once(':')
@@ -1414,6 +1422,82 @@ mod tests {
             target: "HTTPS://example.com/A".into(),
             ..Default::default()
         }));
+    }
+
+    #[test]
+    fn incomplete_protocol_shortcuts_cannot_displace_a_working_choice() {
+        // Use real .url parsing, launch validation and the production selector.
+        // A stale high score must not turn an empty scheme into a quick shortcut.
+        let directory = std::env::temp_dir().join(format!(
+            "desktop-pilot-empty-protocol-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let working_path = directory.join("Working.url");
+        std::fs::write(
+            &working_path,
+            b"[InternetShortcut]\r\nURL=https://example.invalid/working\r\n",
+        )
+        .unwrap();
+        let mut working = read_link(&working_path).unwrap();
+        assert!(working.valid);
+        let at = crate::model::now();
+        working.seed = 20.0;
+        working.seed_at = at;
+        let config = crate::model::Config {
+            collect: true,
+            learning_enabled: false,
+            slots: 1,
+            ..Default::default()
+        };
+        let incomplete_targets = ["steam://", "steam:///", "shell:", "::{"];
+        for (index, target) in incomplete_targets.into_iter().enumerate() {
+            let path = directory.join(format!("Incomplete-{index}.url"));
+            let bytes = format!("[InternetShortcut]\r\nURL={target}\r\n");
+            std::fs::write(&path, bytes.as_bytes()).unwrap();
+            let mut invalid = read_link(&path).unwrap();
+            assert!(!invalid.valid, "{target}");
+            invalid.seed = 1000.0;
+            invalid.seed_at = at;
+            let preview = crate::engine::preview_loaded(
+                &config,
+                &[invalid.clone(), working.clone()],
+                &[],
+                &crate::model::State::default(),
+                true,
+                at,
+            )
+            .unwrap();
+            assert_eq!(preview.selected, [working.id.clone()], "{target}");
+            assert!(
+                !preview
+                    .ranking
+                    .iter()
+                    .find(|ranked| ranked.id == invalid.id)
+                    .unwrap()
+                    .eligible,
+                "{target}"
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), bytes.as_bytes());
+        }
+        for target in [
+            "steam://rungameid/480",
+            "shell:AppsFolder",
+            "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}",
+        ] {
+            assert!(
+                valid_target(&App {
+                    target: target.into(),
+                    ..Default::default()
+                }),
+                "{target}"
+            );
+        }
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
