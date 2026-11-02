@@ -1,6 +1,10 @@
 use super::*;
 use crate::{engine, native, store::Store};
-use std::{fs, path::Path, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{
+    fs,
+    path::Path,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 fn managed(id: &str) -> Owned {
     Owned {
@@ -94,7 +98,10 @@ fn create_url(path: &Path, target: &str) -> App {
 
 #[test]
 fn sqlite_catalog_preview_preserves_live_file_and_rules_when_always_is_added() {
-    let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
     let home = std::env::temp_dir().join(format!(
         "desktop-pilot-offline-always-{}-{unique}",
         std::process::id()
