@@ -521,24 +521,27 @@ fn visit_shortcut_paths(
         }
     }
     entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    // User-visible shortcuts in this directory take priority over deeper
+    // folders when the shared discovery budget is exhausted. Otherwise a
+    // large alphabetically early project folder can hide a desktop shortcut.
+    // Keep names sorted within both passes for stable cold-start results.
+    let mut directories = Vec::new();
     for (_, entry) in entries {
-        // A child can exhaust the shared budget. Never process siblings after
-        // it returns, even when this parent started below the limit.
         if out.len() >= limit {
             break;
         }
-        let p = entry.path();
-        let m = match p.symlink_metadata() {
-            Ok(m) => m,
-            Err(e) => {
-                warnings.push(e.to_string());
+        let path = entry.path();
+        let metadata = match path.symlink_metadata() {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                warnings.push(error.to_string());
                 continue;
             }
         };
-        if is_reparse(&m) {
+        if is_reparse(&metadata) {
             continue;
         }
-        if m.is_dir() {
+        if metadata.is_dir() {
             let name = entry.file_name().to_string_lossy().to_lowercase();
             if [
                 "служебное",
@@ -552,20 +555,27 @@ fn visit_shortcut_paths(
             {
                 continue;
             }
-            if let Err(e) = visit_shortcut_paths(&p, depth + 1, out, warnings, limit) {
-                warnings.push(format!("{}: {e:#}", p.display()));
-            }
-        } else if m.is_file()
-            && p.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("lnk") || e.eq_ignore_ascii_case("url"))
+            directories.push(path);
+        } else if metadata.is_file()
+            && path.extension().is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("lnk") || extension.eq_ignore_ascii_case("url")
+            })
         {
-            out.push(p);
+            out.push(path);
             if out.len() >= limit {
                 warnings.push(format!(
                     "Shortcut scan limit reached ({limit}); existing catalog entries were retained"
                 ));
                 break;
             }
+        }
+    }
+    for path in directories {
+        if out.len() >= limit {
+            break;
+        }
+        if let Err(error) = visit_shortcut_paths(&path, depth + 1, out, warnings, limit) {
+            warnings.push(format!("{}: {error:#}", path.display()));
         }
     }
     Ok(())

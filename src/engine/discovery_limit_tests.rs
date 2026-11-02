@@ -80,7 +80,7 @@ fn five_thousand_real_shortcuts_remain_discoverable_and_manual_rules_survive_res
 }
 
 #[test]
-fn nested_shortcut_budget_is_global_and_independent_of_creation_order() {
+fn direct_desktop_shortcuts_win_the_shared_budget_independent_of_creation_order() {
     static SERIAL: AtomicU64 = AtomicU64::new(0);
     // The production visitor is run with a tiny limit so this regression
     // exercises the exact 6,000-entry boundary without creating thousands of
@@ -124,10 +124,10 @@ fn nested_shortcut_budget_is_global_and_independent_of_creation_order() {
         assert_eq!(
             selected,
             [
+                PathBuf::from("z-root.url"),
                 PathBuf::from("01-nested/a.url"),
-                PathBuf::from("01-nested/b.url"),
             ],
-            "the nested budget must not allow a later root-level shortcut"
+            "a large nested project folder must not hide a direct desktop shortcut"
         );
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("limit reached (2)"));
@@ -136,17 +136,23 @@ fn nested_shortcut_budget_is_global_and_independent_of_creation_order() {
         }
         previous = Some(selected);
 
-        // A larger budget still includes the next directory, but never
-        // processes the remaining root-level entry once its nested child
-        // reaches the limit.
+        // Even with more capacity, direct shortcuts retain priority and
+        // the nested directory remains alphabetically ordered.
         paths.clear();
         warnings.clear();
         visit_shortcut_paths(&desktop, 0, &mut paths, &mut warnings, 4).unwrap();
-        assert_eq!(paths.len(), 4);
-        assert!(
-            paths
-                .iter()
-                .all(|path| path.file_name().unwrap() != "z-root.url")
+        let selected: Vec<_> = paths
+            .iter()
+            .map(|path| path.strip_prefix(&desktop).unwrap().to_path_buf())
+            .collect();
+        assert_eq!(
+            selected,
+            [
+                PathBuf::from("z-root.url"),
+                PathBuf::from("01-nested/a.url"),
+                PathBuf::from("01-nested/b.url"),
+                PathBuf::from("01-nested/c.url"),
+            ]
         );
         assert_eq!(warnings.len(), 1);
     }
