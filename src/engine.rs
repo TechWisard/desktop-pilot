@@ -498,6 +498,79 @@ fn refresh_apps_guarded(store: &Store, cancelled: impl Fn() -> bool) -> Result<(
     unreachable!("Two bounded scan attempts return or report a conflict")
 }
 
+// The catalog is bounded across *all* recursion levels and roots. Directory
+// enumeration order depends on the filesystem, so sort each directory before
+// applying the cap; otherwise the same unchanged tree can yield a different
+// set of apps on a later scan.
+const MAX_DISCOVERED_SHORTCUTS: usize = 6_000;
+fn visit_shortcut_paths(
+    path: &Path,
+    depth: usize,
+    out: &mut Vec<PathBuf>,
+    warnings: &mut Vec<String>,
+    limit: usize,
+) -> Result<()> {
+    if depth > 5 || out.len() >= limit {
+        return Ok(());
+    }
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(path)? {
+        match entry {
+            Ok(entry) => entries.push((entry.file_name(), entry)),
+            Err(error) => warnings.push(error.to_string()),
+        }
+    }
+    entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    for (_, entry) in entries {
+        // A child can exhaust the shared budget. Never process siblings after
+        // it returns, even when this parent started below the limit.
+        if out.len() >= limit {
+            break;
+        }
+        let p = entry.path();
+        let m = match p.symlink_metadata() {
+            Ok(m) => m,
+            Err(e) => {
+                warnings.push(e.to_string());
+                continue;
+            }
+        };
+        if is_reparse(&m) {
+            continue;
+        }
+        if m.is_dir() {
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            if [
+                "служебное",
+                "node_modules",
+                "архив ярлыков",
+                ".git",
+                "venv",
+                ".venv",
+            ]
+            .contains(&name.as_str())
+            {
+                continue;
+            }
+            if let Err(e) = visit_shortcut_paths(&p, depth + 1, out, warnings, limit) {
+                warnings.push(format!("{}: {e:#}", p.display()));
+            }
+        } else if m.is_file()
+            && p.extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("lnk") || e.eq_ignore_ascii_case("url"))
+        {
+            out.push(p);
+            if out.len() >= limit {
+                warnings.push(format!(
+                    "Shortcut scan limit reached ({limit}); existing catalog entries were retained"
+                ));
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<bool> {
     ensure!(!cancelled(), "Background catalog scan cancelled");
     ensure_no_unfinished(store)?;
@@ -639,67 +712,7 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
         }
     }
     // A locked or inaccessible unrelated subfolder must not stop the catalog.
-    // Keep discovery bounded, but include the documented 5,000-entry catalog
-    // workflow; the previous 3,000-link ceiling silently hid later shortcuts.
-    const MAX_DISCOVERED_SHORTCUTS: usize = 6_000;
-    fn visit(
-        path: &Path,
-        depth: usize,
-        out: &mut Vec<PathBuf>,
-        warnings: &mut Vec<String>,
-    ) -> Result<()> {
-        if depth > 5 || out.len() >= MAX_DISCOVERED_SHORTCUTS {
-            return Ok(());
-        }
-        for entry in std::fs::read_dir(path)? {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(e) => {
-                    warnings.push(e.to_string());
-                    continue;
-                }
-            };
-            let p = entry.path();
-            let m = match p.symlink_metadata() {
-                Ok(m) => m,
-                Err(e) => {
-                    warnings.push(e.to_string());
-                    continue;
-                }
-            };
-            if is_reparse(&m) {
-                continue;
-            }
-            if m.is_dir() {
-                let name = entry.file_name().to_string_lossy().to_lowercase();
-                if [
-                    "служебное",
-                    "node_modules",
-                    "архив ярлыков",
-                    ".git",
-                    "venv",
-                    ".venv",
-                ]
-                .contains(&name.as_str())
-                {
-                    continue;
-                }
-                if let Err(e) = visit(&p, depth + 1, out, warnings) {
-                    warnings.push(format!("{}: {e:#}", p.display()));
-                }
-            } else if m.is_file()
-                && p.extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("lnk") || e.eq_ignore_ascii_case("url"))
-            {
-                out.push(p);
-                if out.len() >= MAX_DISCOVERED_SHORTCUTS {
-                    warnings.push(format!("Shortcut scan limit reached ({MAX_DISCOVERED_SHORTCUTS}); existing catalog entries were retained"));
-                    break;
-                }
-            }
-        }
-        Ok(())
-    }
+    // Keep discovery bounded, including the documented 5,000-entry workflow.
     let desktop = root(store)?;
     let mut roots = vec![(desktop.clone(), "Desktop")];
     if real {
@@ -717,7 +730,9 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
     }
     let mut paths = Vec::new();
     for (index, (root, _)) in roots.iter().enumerate() {
-        if let Err(e) = visit(root, 0, &mut paths, &mut warnings) {
+        if let Err(e) =
+            visit_shortcut_paths(root, 0, &mut paths, &mut warnings, MAX_DISCOVERED_SHORTCUTS)
+        {
             if index == 0 {
                 return Err(e);
             }
