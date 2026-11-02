@@ -241,7 +241,7 @@ impl Store {
     }
     // Use the same production query with a controlled clock for calendar
     // correction regression tests. Normal callers always use the real clock.
-    fn days_at(&self, at: i64) -> Result<Vec<Day>> {
+    pub(crate) fn days_at(&self, at: i64) -> Result<Vec<Day>> {
         // An incorrectly advanced Windows clock may leave thousands of saved
         // future rows. Preserve them in SQLite, but do not deserialize them
         // into every preview; ranking rejects that evidence anyway. Keep the
