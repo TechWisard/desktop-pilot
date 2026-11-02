@@ -27,8 +27,7 @@ pub struct Progress {
 }
 impl Progress {
     fn plausible_day(day: &str, latest: chrono::NaiveDate) -> bool {
-        chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d")
-            .is_ok_and(|parsed| parsed <= latest)
+        chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").is_ok_and(|parsed| parsed <= latest)
     }
 
     pub fn active_days(&self) -> u32 {
