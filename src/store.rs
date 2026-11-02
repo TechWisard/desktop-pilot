@@ -124,6 +124,14 @@ fn begin_immediate_with_retry(db: &Connection) -> rusqlite::Result<Transaction<'
     unreachable!("the last attempt always returns")
 }
 
+#[cfg(test)]
+thread_local! {
+    // Observe the exact read boundary in the concurrent policy regression.
+    // This hook is absent from release builds and does not change policy data.
+    static POLICY_AFTER_READ: std::cell::RefCell<Option<std::sync::mpsc::Sender<()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 impl Store {
     pub fn open(home: &Path) -> Result<Self> {
         std::fs::create_dir_all(home)?;
@@ -232,9 +240,21 @@ impl Store {
         Ok(())
     }
     pub fn policy(&self, id: &str, policy: Policy) -> Result<()> {
-        let mut a = self.app(id)?;
-        a.policy = policy;
-        self.put_app(&a)
+        // Acquire the SQLite writer before reading the app. In WAL mode a
+        // separate reader can otherwise see a stale version and write it
+        // back after a concurrent catalog update, losing user metadata.
+        // Nested callers use the existing savepoint path.
+        self.transaction(|| {
+            let mut a = self.app(id)?;
+            #[cfg(test)]
+            POLICY_AFTER_READ.with(|hook| {
+                if let Some(signal) = hook.borrow_mut().take() {
+                    let _ = signal.send(());
+                }
+            });
+            a.policy = policy;
+            self.put_app(&a)
+        })
     }
     pub fn days(&self) -> Result<Vec<Day>> {
         self.days_at(now())
@@ -659,6 +679,62 @@ mod tests {
                 store.get("app_session_times").unwrap();
             assert_eq!(retained.len(), 1);
             assert!(retained.contains_key("recent"));
+        });
+    }
+    #[test]
+    fn manual_policy_does_not_overwrite_concurrent_catalog_metadata() {
+        with_store(|store| {
+            let original = App {
+                id: "concurrent-policy".into(),
+                name: "Original shortcut".into(),
+                note: "Original note".into(),
+                ..Default::default()
+            };
+            store.put_app(&original).unwrap();
+
+            let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+            let (start_tx, start_rx) = std::sync::mpsc::channel();
+            let (read_tx, read_rx) = std::sync::mpsc::channel();
+            let home = store.home.clone();
+            let worker = std::thread::spawn(move || {
+                let other = Store::open(&home).unwrap();
+                ready_tx.send(()).unwrap();
+                start_rx.recv().unwrap();
+                POLICY_AFTER_READ.with(|hook| *hook.borrow_mut() = Some(read_tx));
+                other.policy("concurrent-policy", Policy::Always).unwrap();
+            });
+            ready_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+
+            // An import or catalog edit holds SQLite's writer and updates
+            // metadata while a second connection starts a manual policy save.
+            store.db.execute_batch("BEGIN IMMEDIATE").unwrap();
+            let mut newer = original.clone();
+            newer.name = "Updated shortcut".into();
+            newer.note = "Edited project note".into();
+            store.put_app(&newer).unwrap();
+            start_tx.send(()).unwrap();
+
+            // A policy read before obtaining the writer would observe stale
+            // metadata in WAL mode. Its eventual UPDATE could erase the edit.
+            assert!(
+                read_rx.recv_timeout(Duration::from_millis(350)).is_err(),
+                "Manual policy read the old app while another writer was active"
+            );
+            store.db.execute_batch("COMMIT").unwrap();
+
+            read_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            worker.join().unwrap();
+            let saved = store.app(&original.id).unwrap();
+            assert_eq!(saved.policy, Policy::Always);
+            assert_eq!(saved.name, "Updated shortcut");
+            assert_eq!(saved.note, "Edited project note");
+
+            // A later explicit reversal also preserves the updated fields.
+            store.policy(&original.id, Policy::Auto).unwrap();
+            let restored = store.app(&original.id).unwrap();
+            assert_eq!(restored.policy, Policy::Auto);
+            assert_eq!(restored.name, "Updated shortcut");
+            assert_eq!(restored.note, "Edited project note");
         });
     }
     #[test]
