@@ -1980,7 +1980,10 @@ mod tests {
         std::fs::write(&good_path, good_bytes).unwrap();
         let mut bad = read_link(&bad_path).unwrap();
         let mut good = read_link(&good_path).unwrap();
-        assert!(!bad.valid, "percent-decoded slash in host is not launchable");
+        assert!(
+            !bad.valid,
+            "percent-decoded slash in host is not launchable"
+        );
         assert!(good.valid);
         let at = crate::model::now();
         bad.seed = 500.0;
@@ -2054,9 +2057,7 @@ mod tests {
         for attempt in 0..5 {
             match std::fs::remove_dir_all(&root) {
                 Ok(()) => break,
-                Err(_) if attempt < 4 => {
-                    std::thread::sleep(std::time::Duration::from_millis(50))
-                }
+                Err(_) if attempt < 4 => std::thread::sleep(std::time::Duration::from_millis(50)),
                 Err(error) => panic!("Cannot remove test profile: {error}"),
             }
         }
