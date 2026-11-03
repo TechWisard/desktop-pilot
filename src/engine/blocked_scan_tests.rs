@@ -47,6 +47,32 @@ fn slow_catalog_read_cannot_delay_manual_policy_heartbeat_or_shutdown() {
         )
         .unwrap();
     store.put_app(&app).unwrap();
+    // The real monitor must prune old SQLite evidence without waiting for
+    // this deliberately blocked filesystem scanner to finish. Mimic a long-
+    // running profile whose last housekeeping pass was recent.
+    let old_day = now().saturating_sub(110 * 86_400);
+    let recent_day = now().saturating_sub(86_400);
+    for day in [old_day, recent_day] {
+        store
+            .db
+            .execute(
+                "INSERT INTO days(app,date,sessions,launches,seconds) VALUES(?1,?2,1,0,300)",
+                rusqlite::params![app.id, day],
+            )
+            .unwrap();
+    }
+    store
+        .set(
+            "retention_clock",
+            &serde_json::json!({"last_observed": now(), "hold_until": 0}),
+        )
+        .unwrap();
+    store
+        .set(
+            "app_session_times",
+            &HashMap::from([(app.id.clone(), old_day)]),
+        )
+        .unwrap();
 
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
@@ -75,6 +101,20 @@ fn slow_catalog_read_cannot_delay_manual_policy_heartbeat_or_shutdown() {
         first_heartbeat > 0,
         "Worker must publish readiness before scanning"
     );
+    // The scanner is still waiting on its real discovery gate. Prior builds
+    // ran housekeeping only after scan completion and left these rows behind.
+    let old_rows: i64 = store
+        .db
+        .query_row("SELECT COUNT(*) FROM days WHERE date=?1", [old_day], |row| row.get(0))
+        .unwrap();
+    let recent_rows: i64 = store
+        .db
+        .query_row("SELECT COUNT(*) FROM days WHERE date=?1", [recent_day], |row| row.get(0))
+        .unwrap();
+    let retained_session_times: HashMap<String, i64> = store.get("app_session_times").unwrap();
+    let retention_during_scan = old_rows == 0
+        && recent_rows == 1
+        && !retained_session_times.contains_key(&app.id);
     store.command(&format!("policy:{}:Never", app.id)).unwrap();
     let command_id = store.db.last_insert_rowid();
     let started = Instant::now();
@@ -148,6 +188,10 @@ fn slow_catalog_read_cannot_delay_manual_policy_heartbeat_or_shutdown() {
     drop(store);
     std::fs::remove_dir_all(&home).unwrap();
 
+    assert!(
+        retention_during_scan,
+        "A blocked catalog scan must not delay bounded SQLite history retention"
+    );
     assert!(
         policy_done_in_time,
         "A slow catalog scan blocked the user's policy command"
