@@ -2799,26 +2799,22 @@ impl Settings {
             self.app_page = 0;
             self.page_scroll_reset = true;
         }
-        let always_count = self
-            .apps
-            .iter()
-            .filter(|app| app.valid && app.policy == Policy::Always)
-            .count();
-        if always_count > self.saved_config.slots {
+        let required_slots = manual_slot_requirements(&self.apps, &self.state);
+        if required_slots > self.saved_config.slots {
             card(ui, |ui| {
                 ui.colored_label(
                     WARNING,
                     format!(
                         "{}: {} · {}: {}",
-                        t("Всегда на столе", "Always on desktop"),
-                        always_count,
+                        t("Закреплено вручную", "Manually reserved"),
+                        required_slots,
                         t("Доступно мест", "Available slots"),
                         self.saved_config.slots
                     ),
                 );
                 ui.label(t(
-                    "Для всех закреплённых приложений не хватает мест. Увеличьте число ярлыков или измените правило у части приложений; затем можно применить состав.",
-                    "There are not enough slots for all pinned apps. Add more slots or change some app rules before applying the selection.",
+                    "Ручные позиции и правило «Всегда» требуют больше мест, чем доступно. Увеличьте число мест, снимите ручное закрепление или измените правило у приложения; затем примените состав.",
+                    "Manual positions and Always rules require more slots than available. Increase the slot count, release a manual position, or change an app rule before applying.",
                 ));
                 if ui
                     .button(t("Изменить число мест", "Change slot count"))

@@ -418,6 +418,32 @@ pub fn select(
     select_at(apps, ranking, state, cfg, initial, now())
 }
 
+/// Number of distinct slots already required by a user's explicit choices.
+/// This includes owned, manually positioned Auto shortcuts as well as Always
+/// rules. Only a valid original or a retained, unchanged offline original
+/// can reserve a slot; Never and obsolete ownership cannot block placement.
+pub(crate) fn manual_slot_requirements(apps: &[App], state: &State) -> usize {
+    let managed: HashSet<&str> = state.owned.iter().map(|entry| entry.app.as_str()).collect();
+    let moved: HashSet<&str> = state
+        .owned
+        .iter()
+        .filter(|entry| entry.manual)
+        .map(|entry| entry.app.as_str())
+        .collect();
+    apps.iter()
+        .filter(|app| {
+            let id = app.id.as_str();
+            app.policy != Policy::Never
+                && ((app.valid && app.policy == Policy::Always)
+                    || ((app.valid || app.unavailable_since > 0)
+                        && (moved.contains(id)
+                            || (app.policy == Policy::Always && managed.contains(id)))))
+        })
+        .map(|app| app.id.as_str())
+        .collect::<HashSet<_>>()
+        .len()
+}
+
 pub(crate) fn select_at(
     apps: &[App],
     ranking: &[Ranked],
@@ -1380,3 +1406,6 @@ mod device_namespace_tests;
 
 #[cfg(test)]
 mod offline_explicit_choice_tests;
+
+#[cfg(test)]
+mod manual_slot_conflict_tests;
