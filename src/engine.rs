@@ -2139,18 +2139,28 @@ fn automatic_review_with_boundaries(
     config.validate()?;
     let state: State = store.get("state")?;
     let mut progress: Progress = store.get("learning")?;
-    let previous_completion = progress.completed_at;
-    progress.finish_if_ready(&config, now());
-    // A no-op review must not acquire SQLite's sole WAL writer or rewrite
-    // completed learning progress. Persist only the real completion transition.
-    if progress.completed_at != previous_completion {
+    // Most reviews must stay read-only. Only a candidate completion needs
+    // SQLite's writer; the user can reset learning or raise its goal after
+    // this optimistic read but before the completion is committed.
+    if progress.completed_at == 0 && config.learning_enabled && progress.criteria_met(&config) {
         #[cfg(test)]
         BEFORE_IDLE_LEARNING_WRITE.with(|hook| {
             if let Some(callback) = hook.borrow_mut().take() {
                 callback(store);
             }
         });
-        store.set("learning", &progress)?;
+        progress = store.transaction(|| {
+            // Serialize this final decision with Settings reset and goal edits.
+            // Never restore an old Progress snapshot over the user's choice.
+            let current_config: Config = store.get("config")?;
+            let mut current: Progress = store.get("learning")?;
+            let previous_completion = current.completed_at;
+            current.finish_if_ready(&current_config, now());
+            if current.completed_at != previous_completion {
+                store.set("learning", &current)?;
+            }
+            Ok(current)
+        })?;
     }
     let review_at = now();
     let review_due = scheduled_review_due(&state, &config, review_at);
