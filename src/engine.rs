@@ -2117,6 +2117,14 @@ fn automatic_review_with_precommit_boundary(
     automatic_review_with_boundaries(store, quiet, || {}, before_commit, still_quiet)
 }
 
+// Test-only boundary recreates a concurrent Settings reset before an idle
+// reviewer commits a previously computed completion. Release builds omit it.
+#[cfg(test)]
+thread_local! {
+    static BEFORE_IDLE_LEARNING_WRITE: std::cell::RefCell<Option<Box<dyn FnOnce(&Store)>>> =
+        std::cell::RefCell::new(None);
+}
+
 fn automatic_review_with_boundaries(
     store: &Store,
     quiet: bool,
@@ -2136,6 +2144,12 @@ fn automatic_review_with_boundaries(
     // A no-op review must not acquire SQLite's sole WAL writer or rewrite
     // completed learning progress. Persist only the real completion transition.
     if progress.completed_at != previous_completion {
+        #[cfg(test)]
+        BEFORE_IDLE_LEARNING_WRITE.with(|hook| {
+            if let Some(callback) = hook.borrow_mut().take() {
+                callback(store);
+            }
+        });
         store.set("learning", &progress)?;
     }
     let review_at = now();
