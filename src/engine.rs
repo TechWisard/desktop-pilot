@@ -1999,6 +1999,7 @@ pub fn observe_match(apps: &[App], process: &str) -> Option<String> {
     let process = norm(process);
     let mut matching = Vec::new();
     let mut profile_sensitive_target = false;
+    let mut rooted_identities = HashSet::new();
     for app in apps {
         let direct = norm(&app.target) == process;
         // A foreground process path contains no shortcut launch arguments.
@@ -2007,9 +2008,6 @@ pub fn observe_match(apps: &[App], process: &str) -> Option<String> {
         if direct && !app.arguments.trim().is_empty() {
             profile_sensitive_target = true;
         }
-        if !app.valid {
-            continue;
-        }
         // A distinctive observed application root can still identify a
         // launched game even when its shortcut uses a URI or arguments.
         let rooted = !direct
@@ -2017,9 +2015,21 @@ pub fn observe_match(apps: &[App], process: &str) -> Option<String> {
                 let root = norm(root).trim_end_matches('\\').to_owned();
                 root.len() > 5 && process.starts_with(&(root + "\\"))
             });
+        if rooted {
+            // Missing launch shortcuts do not prove their processes stopped.
+            // Include every matching saved root when testing whether a process
+            // really identifies one launch profile, not only valid catalog rows.
+            rooted_identities.insert(app.identity());
+        }
+        if !app.valid {
+            continue;
+        }
         if direct || rooted {
             matching.push((app, direct));
         }
+    }
+    if rooted_identities.len() > 1 {
+        return None;
     }
     let matching: Vec<_> = matching
         .into_iter()
