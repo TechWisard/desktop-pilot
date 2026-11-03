@@ -460,7 +460,6 @@ fn user_returning_during_copy_preparation_defers_review_without_orphaned_files()
     });
 }
 
-
 #[test]
 fn clearing_usage_must_not_graduate_a_pending_learning_gate() {
     with_store(|store| {
