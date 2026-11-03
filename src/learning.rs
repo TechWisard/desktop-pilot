@@ -57,9 +57,16 @@ impl Progress {
         !cfg.learning_enabled || self.completed_at > 0 || self.criteria_met(cfg)
     }
     pub fn observe(&mut self, time: i64, day: &str, seconds: u32) {
-        if self.completed_at > 0 || time <= 0 || seconds == 0 || seconds > 4 {
+        if self.completed_at > 0
+            || time <= 0
+            || seconds == 0
+            || seconds > 4
+            || chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").is_err()
+        {
             return;
         }
+        // Reject invalid calendar input before any clock-correction handling:
+        // even a non-counted rewind must not discard a real partial session.
         // Replayed samples cannot create usage. The caller confirms elapsed
         // foreground seconds; this checkpoint is wall time and may jump.
         if self.last_active_at > 0 && time <= self.last_active_at {
@@ -80,9 +87,6 @@ impl Progress {
         } else {
             seconds
         };
-        if chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").is_err() {
-            return;
-        }
         if self.started_at == 0 {
             self.started_at = time;
         }
@@ -241,6 +245,62 @@ mod tests {
         assert_eq!(progress.started_at, 0);
         assert!(progress.day_seconds.is_empty());
     }
+    #[test]
+    fn malformed_day_during_clock_rewind_does_not_erase_saved_partial_session() {
+        let home = std::env::temp_dir().join(format!(
+            "desktop-pilot-learning-invalid-rewind-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = crate::store::Store::open(&home).unwrap();
+        let cfg = Config {
+            learning_sessions: 1,
+            learning_mode: Mode::Sessions,
+            ..Config::default()
+        };
+        let mut progress = Progress::default();
+        activity(&mut progress, 10_000, "2026-01-01", 240);
+        assert_eq!(progress.session_seconds, 240);
+        store.set("learning", &progress).unwrap();
+
+        let mut restored: Progress = store.get("learning").unwrap();
+        let previous = restored.last_active_at;
+        // An invalid day is not an observation or evidence of a clock change.
+        // The old code nevertheless reset this incomplete session to zero.
+        restored.observe(6_000, "2026-02-30", 2);
+        restored.observe(6_002, "not-a-date", 2);
+        assert_eq!(restored.session_seconds, 240);
+        assert_eq!(restored.last_active_at, previous);
+        assert_eq!(restored.day_seconds["2026-01-01"], 240);
+        assert_eq!(restored.sessions, 0);
+        assert!(!restored.ready(&cfg));
+
+        // A genuine return in the same learning session must still complete
+        // its remaining minute without manufacturing an extra session.
+        activity(&mut restored, 10_300, "2026-01-01", 60);
+        assert_eq!(restored.session_seconds, 300);
+        assert_eq!(restored.sessions, 1);
+        restored.finish_if_ready(&cfg, 10_400);
+        store.set("learning", &restored).unwrap();
+        let saved: Progress = store.get("learning").unwrap();
+        assert_eq!(saved.completed_at, 10_400);
+        assert_eq!(saved.sessions, 1);
+        assert_eq!(saved.day_seconds.len(), 1);
+        drop(store);
+        for attempt in 0..5 {
+            match std::fs::remove_dir_all(&home) {
+                Ok(()) => break,
+                Err(_) if attempt < 4 => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(error) => panic!("could not remove test profile: {error}"),
+            }
+        }
+    }
+
     #[test]
     fn invalid_saved_calendar_keys_never_unlock_learning_or_displace_real_days() {
         let config = Config {
