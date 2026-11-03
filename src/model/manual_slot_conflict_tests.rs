@@ -120,8 +120,12 @@ fn offline_manual_reservations_count_once_and_never_rules_release_them() {
     };
     let row = Owned {
         app: manual.id.clone(),
+        path: String::new(),
+        sha: String::new(),
+        position: Point::default(),
         manual: true,
-        ..Default::default()
+        since: 0,
+        file_id: None,
     };
     let state = State {
         owned: vec![row.clone(), row],
