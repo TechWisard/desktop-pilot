@@ -148,7 +148,6 @@ fn a_truly_unambiguous_plain_shortcut_still_learns_and_undoes_safely() {
     });
 }
 
-
 #[test]
 fn unavailable_competing_profile_with_the_same_process_root_blocks_attribution() {
     with_browser_shortcut("--profile-directory=Work", |store, executable, work| {
