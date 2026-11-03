@@ -60,8 +60,8 @@ impl Progress {
         if self.completed_at > 0 || time <= 0 || seconds == 0 || seconds > 4 {
             return;
         }
-        // Replayed samples and backwards clock corrections cannot create usage.
-        // The caller supplies monotonic elapsed time; wall time identifies the day.
+        // Replayed samples cannot create usage. The caller confirms elapsed
+        // foreground seconds; this checkpoint is wall time and may jump.
         if self.last_active_at > 0 && time <= self.last_active_at {
             if time < self.last_active_at {
                 // A large backwards wall-clock correction must not glue an
