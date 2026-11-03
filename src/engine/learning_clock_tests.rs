@@ -23,7 +23,10 @@ fn confirmed_learning_across_midnight_persists_one_consistent_clock_sample() {
     // deterministic without altering the runner's Windows system clock.
     // Each observation still enters the real Store transaction and Progress.
     let zone = FixedOffset::east_opt(0).unwrap();
-    let start = zone.with_ymd_and_hms(2026, 11, 3, 23, 58, 0).single().unwrap();
+    let start = zone
+        .with_ymd_and_hms(2026, 11, 3, 23, 58, 0)
+        .single()
+        .unwrap();
     for tick in 0..150 {
         let observed = start + CalendarDuration::seconds(2 * tick);
         assert!(record_learning_at(&store, 2, observed).unwrap());
