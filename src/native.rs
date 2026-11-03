@@ -223,6 +223,39 @@ pub fn read_link(path: &Path) -> Result<App> {
     a.valid = path.is_file() && valid_target(&a);
     Ok(a)
 }
+// A percent-encoded byte in an HTTP(S) hostname is decoded before host
+// validation. A hidden slash, '@', control byte, or malformed escape is not a
+// usable destination, even though the original authority looks well formed.
+// Keep this guard on the host/port only: encoded path or userinfo characters
+// do not invalidate an otherwise usable shortcut.
+fn invalid_encoded_host_byte(host_port: &str) -> bool {
+    let bytes = host_port.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            index += 1;
+            continue;
+        }
+        let Some(hex) = bytes.get(index + 1..index + 3) else {
+            return true;
+        };
+        let Ok(hex) = std::str::from_utf8(hex) else {
+            return true;
+        };
+        let Ok(decoded) = u8::from_str_radix(hex, 16) else {
+            return true;
+        };
+        if decoded.is_ascii_control()
+            || decoded.is_ascii_whitespace()
+            || br"#/:<>?@[\\]^|%".contains(&decoded)
+        {
+            return true;
+        }
+        index += 3;
+    }
+    false
+}
+
 // A web shortcut without an authority cannot open a real destination, even
 // when its URL still begins with a familiar protocol prefix. Inspect only the
 // authority: path and query components may legitimately contain spaces.
@@ -234,6 +267,7 @@ fn web_target_has_host(target: &str) -> bool {
     let host_port = authority.rsplit('@').next().unwrap_or_default();
     if host_port.is_empty()
         || host_port.starts_with(':')
+        || invalid_encoded_host_byte(host_port)
         || host_port
             .chars()
             .any(|ch| ch.is_whitespace() || ch.is_control() || r"\<>^|".contains(ch))
