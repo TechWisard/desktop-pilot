@@ -284,10 +284,23 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
     pub fn observe(&self, id: &str, seconds: u32, session: bool, launch: bool) -> Result<()> {
+        let observed = chrono::Local::now().fixed_offset();
+        self.observe_at(id, seconds, session, launch, &observed)
+    }
+    pub(crate) fn observe_at(
+        &self,
+        id: &str,
+        seconds: u32,
+        session: bool,
+        launch: bool,
+        observed: &chrono::DateTime<chrono::FixedOffset>,
+    ) -> Result<()> {
         if seconds == 0 && !session && !launch {
             return Ok(());
         }
-        let day = chrono::Local::now().date_naive();
+        // The date and session checkpoint must describe the same confirmed
+        // sample even when a SQLite writer lock pushes the commit past midnight.
+        let day = observed.date_naive();
         // Some timezone transitions skip midnight. Use the first existing hour
         // of that same date instead of terminating background collection.
         let date = (0..24)

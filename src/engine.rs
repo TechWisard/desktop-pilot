@@ -2340,15 +2340,16 @@ fn collection_permission(store: &Store) -> Result<Option<Config>> {
     Ok(config.collect.then_some(config))
 }
 
-fn record_usage_inner(
+fn record_usage_inner_at(
     store: &Store,
     session_times: &mut HashMap<String, i64>,
     id: &str,
     seconds: u32,
     first: bool,
-    time: i64,
+    observed: &chrono::DateTime<chrono::FixedOffset>,
     require_collection: bool,
 ) -> Result<bool> {
+    let time = observed.timestamp();
     let session = first
         && session_times.get(id).is_none_or(|last| {
             // A clearly future checkpoint can result from correcting the
@@ -2364,7 +2365,7 @@ fn record_usage_inner(
         if require_collection && collection_permission(store)?.is_none() {
             return Ok(None);
         }
-        store.observe(id, seconds, session, false)?;
+        store.observe_at(id, seconds, session, false, observed)?;
         // Measure the gap from the last confirmed activity, not the beginning
         // of a possibly hours-long session. Persist it with the usage counters
         // so a brief focus switch or worker restart cannot inflate the ranking.
@@ -2382,6 +2383,33 @@ fn record_usage_inner(
     } else {
         Ok(false)
     }
+}
+
+// Replay a synthetic observation through the same production transaction,
+// preserving its local calendar day rather than reading the clock again.
+#[cfg(test)]
+fn record_usage_inner(
+    store: &Store,
+    session_times: &mut HashMap<String, i64>,
+    id: &str,
+    seconds: u32,
+    first: bool,
+    time: i64,
+    require_collection: bool,
+) -> Result<bool> {
+    let observed = chrono::DateTime::<chrono::Utc>::from_timestamp(time, 0)
+        .context("Invalid usage sample timestamp")?
+        .with_timezone(&chrono::Local)
+        .fixed_offset();
+    record_usage_inner_at(
+        store,
+        session_times,
+        id,
+        seconds,
+        first,
+        &observed,
+        require_collection,
+    )
 }
 
 // Existing low-level session/retention tests intentionally exercise the
@@ -2408,10 +2436,10 @@ fn persist_confirmed_usage(
     id: &str,
     seconds: u32,
     first: bool,
-    time: i64,
+    observed: &chrono::DateTime<chrono::FixedOffset>,
 ) -> Result<bool> {
     let committed = match retry_locked_usage(|| {
-        record_usage_inner(store, session_times, id, seconds, first, time, true)
+        record_usage_inner_at(store, session_times, id, seconds, first, observed, true)
     }) {
         Ok(committed) => committed,
         Err(error) if sqlite_writer_contention(&error) => {
@@ -2913,7 +2941,7 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                 &id,
                 seconds,
                 first,
-                now(),
+                &chrono::Local::now().fixed_offset(),
             )?
         {
             // The same pause is authoritative for input provenance too.
@@ -3001,6 +3029,16 @@ mod tests {
         test(&store);
         drop(store);
         std::fs::remove_dir_all(home).unwrap();
+    }
+    fn test_local_noon() -> i64 {
+        chrono::Local::now()
+            .date_naive()
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_local_timezone(chrono::Local)
+            .earliest()
+            .unwrap()
+            .timestamp()
     }
     fn add_test_app(store: &Store, name: &str, target: &str) -> App {
         let source = store
@@ -3386,7 +3424,7 @@ mod tests {
     fn brief_switches_after_long_use_and_restart_do_not_create_new_sessions() {
         with_store(|store| {
             let mut times = HashMap::new();
-            let start = 10000;
+            let start = test_local_noon();
             for index in 0..=1800 {
                 record_usage(store, &mut times, "app", 2, index == 0, start + index * 2).unwrap();
             }
@@ -4233,7 +4271,7 @@ mod tests {
             let mut usage = UsageAccumulator::default();
             let mut session_times = HashMap::new();
             let mut firsts = HashMap::<String, u32>::new();
-            let mut timestamp = 10_000_i64;
+            let mut timestamp = test_local_noon();
             // Each visit is six seconds; before this fix all were discarded.
             for _ in 0..3 {
                 for app in ["editor", "browser"] {
