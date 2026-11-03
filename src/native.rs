@@ -1085,10 +1085,28 @@ fn command_belongs_to_home(command: &str, home: &Path) -> bool {
         return false;
     };
     let target = norm(&home.to_string_lossy());
-    if let Some(index) = args.iter().position(|value| value == "--home") {
-        return args
-            .get(index + 1)
-            .is_some_and(|value| norm(value) == target);
+    // A legacy Run entry may use either spelling accepted by the launcher.
+    // A conflicting or incomplete --home is not proof of ownership: never
+    // remove another profile's startup registration on that basis.
+    let mut explicit = None;
+    for (index, argument) in args.iter().enumerate().skip(1) {
+        let value = if argument == "--home" {
+            args.get(index + 1).map(String::as_str)
+        } else if let Some(value) = argument.strip_prefix("--home=") {
+            Some(value)
+        } else {
+            continue;
+        };
+        let Some(value) = value else {
+            return false;
+        };
+        if value.trim().is_empty() || value.starts_with("--") || explicit.is_some() {
+            return false;
+        }
+        explicit = Some(value);
+    }
+    if let Some(value) = explicit {
+        return norm(value) == target;
     }
     args.first()
         .and_then(|value| Path::new(value).parent())
@@ -1852,6 +1870,39 @@ mod tests {
             r#""C:\Pilot\desktop-pilot.exe" --background --home "C:\Profile B""#,
             Path::new(r"C:\Profile A")
         ));
+    }
+
+    #[test]
+    fn legacy_startup_detects_inline_named_profile_without_claiming_other_profiles() {
+        let alpha = Path::new(r"C:\Profiles\Project Alpha");
+        let beta = Path::new(r"C:\Profiles\Project Beta");
+        // Exercise the real Windows CommandLineToArgvW parser, including
+        // the quoted single-token spelling used in shortcut target fields.
+        for option in [
+            r#"--home="C:\Profiles\Project Alpha""#,
+            r#""--home=C:\Profiles\Project Alpha""#,
+            r#"--home "C:\Profiles\Project Alpha""#,
+        ] {
+            let command = format!(r#""C:\Pilot\desktop-pilot.exe" --background {option}"#);
+            assert!(command_belongs_to_home(&command, alpha), "{command}");
+            assert!(!command_belongs_to_home(&command, beta), "{command}");
+        }
+        // An explicit different profile must override the executable's
+        // adjacent-profile fallback even when that executable is in alpha.
+        let installed = r#""C:\Profiles\Project Alpha\desktop-pilot.exe" --background"#;
+        assert!(command_belongs_to_home(installed, alpha));
+        for command in [
+            r#""C:\Profiles\Project Alpha\desktop-pilot.exe" --background --home=C:\Profiles\ProjectBeta"#,
+            r#""C:\Pilot\desktop-pilot.exe" --background --home=C:\Profiles\ProjectBeta --home="C:\Profiles\Project Alpha""#,
+            r#""C:\Pilot\desktop-pilot.exe" --background --home "C:\Profiles\Project Alpha" --home=C:\Profiles\ProjectBeta"#,
+            r#""C:\Pilot\desktop-pilot.exe" --background --home="#,
+            r#""C:\Pilot\desktop-pilot.exe" --background --home --stop"#,
+        ] {
+            assert!(
+                !command_belongs_to_home(command, alpha),
+                "Ambiguous legacy startup entry must be retained: {command}"
+            );
+        }
     }
 
     #[test]
