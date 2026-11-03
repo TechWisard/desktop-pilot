@@ -223,6 +223,39 @@ pub fn read_link(path: &Path) -> Result<App> {
     a.valid = path.is_file() && valid_target(&a);
     Ok(a)
 }
+// A percent-encoded byte in an HTTP(S) hostname is decoded before host
+// validation. A hidden slash, '@', control byte, or malformed escape is not a
+// usable destination, even though the original authority looks well formed.
+// Keep this guard on the host/port only: encoded path or userinfo characters
+// do not invalidate an otherwise usable shortcut.
+fn invalid_encoded_host_byte(host_port: &str) -> bool {
+    let bytes = host_port.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            index += 1;
+            continue;
+        }
+        let Some(hex) = bytes.get(index + 1..index + 3) else {
+            return true;
+        };
+        let Ok(hex) = std::str::from_utf8(hex) else {
+            return true;
+        };
+        let Ok(decoded) = u8::from_str_radix(hex, 16) else {
+            return true;
+        };
+        if decoded.is_ascii_control()
+            || decoded.is_ascii_whitespace()
+            || br"#/:<>?@[\\]^|%".contains(&decoded)
+        {
+            return true;
+        }
+        index += 3;
+    }
+    false
+}
+
 // A web shortcut without an authority cannot open a real destination, even
 // when its URL still begins with a familiar protocol prefix. Inspect only the
 // authority: path and query components may legitimately contain spaces.
@@ -234,6 +267,7 @@ fn web_target_has_host(target: &str) -> bool {
     let host_port = authority.rsplit('@').next().unwrap_or_default();
     if host_port.is_empty()
         || host_port.starts_with(':')
+        || invalid_encoded_host_byte(host_port)
         || host_port
             .chars()
             .any(|ch| ch.is_whitespace() || ch.is_control() || r"\<>^|".contains(ch))
@@ -1957,5 +1991,109 @@ mod tests {
         drop(lock);
         assert!(!is_running("test", &home).unwrap());
         assert!(try_exclusive("test", &home).unwrap().is_some());
+    }
+
+    #[test]
+    fn percent_encoded_forbidden_http_host_bytes_cannot_take_a_quick_slot() {
+        // Real Internet Shortcut parsing, SQLite history and production preview.
+        // Percent-decoded host delimiters are not part of a valid HTTP hostname.
+        let root = std::env::temp_dir().join(format!(
+            "desktop-pilot-encoded-host-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let bad_path = root.join("Malformed.url");
+        let good_path = root.join("Working.url");
+        let bad_bytes = b"[InternetShortcut]\r\nURL=https://work%2Fproject.invalid/dashboard\r\n";
+        let good_bytes = b"[InternetShortcut]\r\nURL=https://work.example.invalid/dashboard\r\n";
+        std::fs::write(&bad_path, bad_bytes).unwrap();
+        std::fs::write(&good_path, good_bytes).unwrap();
+        let mut bad = read_link(&bad_path).unwrap();
+        let mut good = read_link(&good_path).unwrap();
+        assert!(
+            !bad.valid,
+            "percent-decoded slash in host is not launchable"
+        );
+        assert!(good.valid);
+        let at = crate::model::now();
+        bad.seed = 500.0;
+        bad.seed_at = at;
+        good.seed = 30.0;
+        good.seed_at = at;
+        let store = crate::store::Store::open(&root.join("profile")).unwrap();
+        store.put_app(&bad).unwrap();
+        store.put_app(&good).unwrap();
+        store
+            .set(
+                "config",
+                &crate::model::Config {
+                    slots: 1,
+                    collect: true,
+                    learning_enabled: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let choice = crate::engine::preview(&store, true).unwrap();
+        assert_eq!(choice.selected, vec![good.id.clone()]);
+        assert!(
+            !choice
+                .ranking
+                .iter()
+                .find(|r| r.id == bad.id)
+                .unwrap()
+                .eligible
+        );
+        assert_eq!(std::fs::read(&bad_path).unwrap(), bad_bytes);
+        assert_eq!(std::fs::read(&good_path).unwrap(), good_bytes);
+
+        for host in [
+            "bad%2fhost.invalid",
+            "bad%5Chost.invalid",
+            "bad%40host.invalid",
+            "bad%23host.invalid",
+            "bad%3Ahost.invalid",
+            "bad%00host.invalid",
+            "bad%20host.invalid",
+            "bad%7fhost.invalid",
+            "bad%GGhost.invalid",
+            "bad%host.invalid",
+        ] {
+            let url = format!("https://{host}/work");
+            assert!(
+                !valid_target(&App {
+                    target: url.clone(),
+                    ..Default::default()
+                }),
+                "{url}"
+            );
+        }
+        for url in [
+            "https://ex%61mple.invalid/work",
+            "https://example.invalid/path%2Fpart?q=%3F",
+            "https://user%2Fname:secret@example.invalid/work",
+            "https://[::1]:443/work",
+        ] {
+            assert!(
+                valid_target(&App {
+                    target: url.into(),
+                    ..Default::default()
+                }),
+                "{url}"
+            );
+        }
+
+        drop(store);
+        for attempt in 0..5 {
+            match std::fs::remove_dir_all(&root) {
+                Ok(()) => break,
+                Err(_) if attempt < 4 => std::thread::sleep(std::time::Duration::from_millis(50)),
+                Err(error) => panic!("Cannot remove test profile: {error}"),
+            }
+        }
     }
 }
