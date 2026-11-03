@@ -60,10 +60,17 @@ impl Progress {
         if self.completed_at > 0 || time <= 0 || seconds == 0 || seconds > 4 {
             return;
         }
-        // Replayed samples and backwards clock corrections cannot create usage.
-        // The caller supplies monotonic elapsed time; wall time identifies the day.
+        // Replayed samples cannot create usage. The caller confirms elapsed
+        // foreground seconds; this checkpoint is wall time and may jump.
         if self.last_active_at > 0 && time <= self.last_active_at {
             if time < self.last_active_at {
+                // A large backwards wall-clock correction must not glue an
+                // unfinished session to a later visit at the corrected time.
+                // Keep an already counted session counted, so the correction
+                // cannot manufacture a duplicate session either.
+                if self.last_active_at.saturating_sub(time) >= SESSION_GAP {
+                    self.session_seconds = 0;
+                }
                 self.last_active_at = time;
             }
             return;
@@ -384,5 +391,81 @@ mod tests {
         assert!(progress.ready(&config));
         progress.finish_if_ready(&config, 20000000);
         assert_eq!(progress.completed_at, 20000000);
+    }
+    #[test]
+    fn large_clock_rewind_does_not_complete_a_stale_partial_learning_session() {
+        let home = std::env::temp_dir().join(format!(
+            "desktop-pilot-learning-rewind-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = crate::store::Store::open(&home).unwrap();
+        let config = Config {
+            learning_sessions: 1,
+            learning_mode: Mode::Sessions,
+            ..Config::default()
+        };
+        let day = "2026-01-01";
+        let mut progress = Progress::default();
+        activity(&mut progress, 10_000, day, 240);
+        assert_eq!(progress.session_seconds, 240);
+        assert!(!progress.ready(&config));
+        store.set("learning", &progress).unwrap();
+
+        // Simulate a saved profile restored after Windows time moved back by
+        // more than the session gap. The first corrected tick cannot earn time
+        // or keep four minutes of an uncompleted session alive.
+        let mut restored: Progress = store.get("learning").unwrap();
+        restored.observe(6_000, day, 2);
+        activity(&mut restored, 6_002, day, 60);
+        assert_eq!(restored.session_seconds, 60);
+        assert_eq!(restored.sessions, 0);
+        assert!(!restored.ready(&config));
+        store.set("learning", &restored).unwrap();
+        assert_eq!(store.get::<Progress>("learning").unwrap().sessions, 0);
+
+        // Genuine subsequent activity can still finish learning after an
+        // ordinary interval, using the same production observation method.
+        activity(&mut restored, 20_000, day, 300);
+        assert_eq!(restored.sessions, 1);
+        assert!(restored.ready(&config));
+        restored.finish_if_ready(&config, 20_400);
+        store.set("learning", &restored).unwrap();
+        assert_eq!(
+            store.get::<Progress>("learning").unwrap().completed_at,
+            20_400
+        );
+        drop(store);
+        for attempt in 0..5 {
+            match std::fs::remove_dir_all(&home) {
+                Ok(()) => break,
+                Err(_) if attempt < 4 => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(error) => panic!("could not remove test profile: {error}"),
+            }
+        }
+    }
+
+    #[test]
+    fn short_clock_rewind_preserves_partial_progress_without_extra_sessions() {
+        let day = "2026-01-01";
+        let mut partial = Progress::default();
+        activity(&mut partial, 10_000, day, 240);
+        partial.observe(9_700, day, 2);
+        activity(&mut partial, 9_702, day, 60);
+        assert_eq!(partial.sessions, 1);
+        assert_eq!(partial.session_seconds, 300);
+
+        // A completed session remains counted even when a much larger
+        // correction happens during ongoing observation.
+        let mut counted = Progress::default();
+        activity(&mut counted, 10_000, day, 300);
+        counted.observe(6_000, day, 2);
+        activity(&mut counted, 6_002, day, 300);
+        assert_eq!(counted.sessions, 1);
     }
 }
