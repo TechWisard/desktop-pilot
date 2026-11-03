@@ -283,6 +283,7 @@ impl Store {
         )?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
+    #[cfg(test)]
     pub fn observe(&self, id: &str, seconds: u32, session: bool, launch: bool) -> Result<()> {
         let observed = chrono::Local::now().fixed_offset();
         self.observe_at(id, seconds, session, launch, &observed)

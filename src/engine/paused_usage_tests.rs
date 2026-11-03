@@ -3,6 +3,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static SERIAL: AtomicU64 = AtomicU64::new(0);
 
+fn test_observed_at(offset: i64) -> chrono::DateTime<chrono::FixedOffset> {
+    // Existing pause/lock simulations use synthetic session gaps. Anchor
+    // those gaps on today's local midday so their SQLite day is meaningful.
+    let noon = chrono::Local::now()
+        .date_naive()
+        .and_hms_opt(12, 0, 0)
+        .unwrap()
+        .and_local_timezone(chrono::Local)
+        .earliest()
+        .unwrap();
+    (noon + chrono::Duration::seconds(offset - 10_000)).fixed_offset()
+}
+
 fn first_qualified_sample(usage: &mut UsageAccumulator, app: &str) -> (String, u32, bool) {
     // The first poll after changing applications is deliberately ignored.
     assert!(usage.sample(Some(app), 2.0).is_none());
@@ -45,7 +58,7 @@ fn paused_observation_cannot_consume_first_session_or_replay_old_activity() {
             &id,
             seconds,
             first,
-            10_000,
+            &test_observed_at(10_000),
         )
         .unwrap()
     );
@@ -70,11 +83,11 @@ fn paused_observation_cannot_consume_first_session_or_replay_old_activity() {
             &id,
             seconds,
             first,
-            10_020,
+            &test_observed_at(10_020),
         )
         .unwrap()
     );
-    assert_eq!(checkpoints.get("editor"), Some(&10_020));
+    assert_eq!(checkpoints.get("editor"), Some(&test_observed_at(10_020).timestamp()));
     let days = store.days().unwrap();
     let editor = days.iter().find(|d| d.app == "editor").unwrap();
     assert_eq!((editor.seconds, editor.sessions), (10, 1));
@@ -93,12 +106,12 @@ fn paused_observation_cannot_consume_first_session_or_replay_old_activity() {
             &id,
             seconds,
             first,
-            10_030,
+            &test_observed_at(10_030),
         )
         .unwrap()
     );
     assert_eq!(store.days().unwrap().len(), 1);
-    assert_eq!(checkpoints.get("editor"), Some(&10_020));
+    assert_eq!(checkpoints.get("editor"), Some(&test_observed_at(10_020).timestamp()));
     assert!(!checkpoints.contains_key("browser"));
 
     cfg.collect = true;
@@ -112,7 +125,7 @@ fn paused_observation_cannot_consume_first_session_or_replay_old_activity() {
         &id,
         seconds,
         first,
-        10_050,
+        &test_observed_at(10_050),
     )
     .unwrap();
     let days = store.days().unwrap();
@@ -164,7 +177,7 @@ fn temporary_sqlite_writer_lock_drops_uncommitted_samples_then_recovers_both_pro
             &id,
             seconds,
             first,
-            10_000,
+            &test_observed_at(10_000),
         )
         .unwrap(),
         "a transient lock must not terminate foreground collection"
@@ -192,7 +205,7 @@ fn temporary_sqlite_writer_lock_drops_uncommitted_samples_then_recovers_both_pro
             &id,
             seconds,
             first,
-            10_020,
+            &test_observed_at(10_020),
         )
         .unwrap()
     );
@@ -217,7 +230,7 @@ fn temporary_sqlite_writer_lock_drops_uncommitted_samples_then_recovers_both_pro
             &id,
             seconds,
             first,
-            10_040,
+            &test_observed_at(10_040),
         )
         .unwrap()
     );
@@ -240,7 +253,7 @@ fn temporary_sqlite_writer_lock_drops_uncommitted_samples_then_recovers_both_pro
                 &id,
                 seconds,
                 first,
-                10_050 + poll * 2,
+                &test_observed_at(10_050 + poll * 2),
             )
             .unwrap()
         );
@@ -253,8 +266,8 @@ fn temporary_sqlite_writer_lock_drops_uncommitted_samples_then_recovers_both_pro
     let browser = days.iter().find(|day| day.app == "browser").unwrap();
     assert_eq!((editor.seconds, editor.sessions), (20, 1));
     assert_eq!((browser.seconds, browser.sessions), (10, 1));
-    assert_eq!(sessions["editor"], 10_060);
-    assert_eq!(sessions["browser"], 10_040);
+    assert_eq!(sessions["editor"], test_observed_at(10_060).timestamp());
+    assert_eq!(sessions["browser"], test_observed_at(10_040).timestamp());
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -279,7 +292,7 @@ fn corrupt_settings_errors_are_not_treated_as_transient_writer_locks() {
             &id,
             seconds,
             first,
-            10_000,
+            &test_observed_at(10_000),
         )
         .is_err()
     );
