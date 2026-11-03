@@ -1977,8 +1977,10 @@ pub fn command(store: &Store, action: &str) -> Result<String> {
                         store.put_app(&a)?;
                     }
                 }
-                let mut progress: Progress = store.get("learning")?;
-                progress.finish_if_ready(&store.get("config")?, now());
+                // Clear history resets unfinished learning. Never convert pending
+                // evidence into a permanent completion while discarding it.
+                // A previously committed completion remains valid.
+                let progress: Progress = store.get("learning")?;
                 store.set(
                     "learning",
                     &Progress {
