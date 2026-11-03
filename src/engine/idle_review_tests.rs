@@ -459,3 +459,81 @@ fn user_returning_during_copy_preparation_defers_review_without_orphaned_files()
         assert!(std::fs::read_dir(&desktop).unwrap().next().is_none());
     });
 }
+
+
+#[test]
+fn clearing_usage_must_not_graduate_a_pending_learning_gate() {
+    with_store(|store| {
+        let config = Config {
+            collect: true,
+            automatic: false,
+            ..Config::default()
+        };
+        store.set("config", &config).unwrap();
+        // A just-qualified profile can be waiting for its next idle review.
+        // Clear history is an explicit reset, not another completion event.
+        store
+            .set(
+                "learning",
+                &Progress {
+                    started_at: now() - 7200,
+                    sessions: config.learning_sessions,
+                    session_seconds: QUALIFY_SECONDS,
+                    completed_at: 0,
+                    ..Progress::default()
+                },
+            )
+            .unwrap();
+
+        command(store, "clear_stats").unwrap();
+        let cleared: Progress = store.get("learning").unwrap();
+        assert_eq!(cleared.sessions, 0);
+        assert_eq!(cleared.session_seconds, 0);
+        assert_eq!(
+            cleared.completed_at, 0,
+            "clear history must not turn uncommitted learning into permanent eligibility"
+        );
+        assert!(!cleared.ready(&config));
+        assert!(!automatic_review(store, false).unwrap());
+        assert_eq!(
+            store.get::<Progress>("learning").unwrap().completed_at,
+            0,
+            "subsequent idle review must respect the reset"
+        );
+    });
+}
+
+#[test]
+fn clearing_usage_preserves_only_previously_completed_learning() {
+    with_store(|store| {
+        let config = Config {
+            collect: true,
+            automatic: false,
+            ..Config::default()
+        };
+        store.set("config", &config).unwrap();
+        let completed_at = now() - 3600;
+        store
+            .set(
+                "learning",
+                &Progress {
+                    started_at: now() - 7200,
+                    sessions: config.learning_sessions,
+                    completed_at,
+                    ..Progress::default()
+                },
+            )
+            .unwrap();
+
+        command(store, "clear_stats").unwrap();
+        let cleared: Progress = store.get("learning").unwrap();
+        assert_eq!(cleared.sessions, 0);
+        assert_eq!(cleared.completed_at, completed_at);
+        assert!(cleared.ready(&config));
+        assert!(!automatic_review(store, false).unwrap());
+        assert_eq!(
+            store.get::<Progress>("learning").unwrap().completed_at,
+            completed_at
+        );
+    });
+}
