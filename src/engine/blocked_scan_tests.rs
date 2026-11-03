@@ -105,16 +105,23 @@ fn slow_catalog_read_cannot_delay_manual_policy_heartbeat_or_shutdown() {
     // ran housekeeping only after scan completion and left these rows behind.
     let old_rows: i64 = store
         .db
-        .query_row("SELECT COUNT(*) FROM days WHERE date=?1", [old_day], |row| row.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM days WHERE date=?1",
+            [old_day],
+            |row| row.get(0),
+        )
         .unwrap();
     let recent_rows: i64 = store
         .db
-        .query_row("SELECT COUNT(*) FROM days WHERE date=?1", [recent_day], |row| row.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM days WHERE date=?1",
+            [recent_day],
+            |row| row.get(0),
+        )
         .unwrap();
     let retained_session_times: HashMap<String, i64> = store.get("app_session_times").unwrap();
-    let retention_during_scan = old_rows == 0
-        && recent_rows == 1
-        && !retained_session_times.contains_key(&app.id);
+    let retention_during_scan =
+        old_rows == 0 && recent_rows == 1 && !retained_session_times.contains_key(&app.id);
     store.command(&format!("policy:{}:Never", app.id)).unwrap();
     let command_id = store.db.last_insert_rowid();
     let started = Instant::now();
