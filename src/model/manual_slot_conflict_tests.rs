@@ -83,10 +83,7 @@ fn manual_auto_anchor_and_new_always_rule_report_a_conflict_before_apply() {
         // Revoking the manual anchor resolves the conflict without removing
         // the user's original file or changing the requested Always rule.
         store.policy(&manual.id, Policy::Never).unwrap();
-        assert_eq!(
-            manual_slot_requirements(&store.apps().unwrap(), &state),
-            1
-        );
+        assert_eq!(manual_slot_requirements(&store.apps().unwrap(), &state), 1);
         let preview = engine::preview(&store, false).unwrap();
         assert_eq!(preview.selected, [chosen.id.clone()]);
         assert_eq!(preview.removed, [manual.id.clone()]);
@@ -96,10 +93,7 @@ fn manual_auto_anchor_and_new_always_rule_report_a_conflict_before_apply() {
 
         // A later Undo of the policy choice restores the same explanation.
         store.policy(&manual.id, Policy::Auto).unwrap();
-        assert_eq!(
-            manual_slot_requirements(&store.apps().unwrap(), &state),
-            2
-        );
+        assert_eq!(manual_slot_requirements(&store.apps().unwrap(), &state), 2);
         assert!(engine::preview(&store, false).is_err());
     }
     for attempt in 0..5 {
