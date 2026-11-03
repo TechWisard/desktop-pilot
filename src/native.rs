@@ -1974,8 +1974,8 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let bad_path = root.join("Malformed.url");
         let good_path = root.join("Working.url");
-        let bad_bytes = b"[InternetShortcut]\\r\\nURL=https://work%2Fproject.invalid/dashboard\\r\\n";
-        let good_bytes = b"[InternetShortcut]\\r\\nURL=https://work.example.invalid/dashboard\\r\\n";
+        let bad_bytes = b"[InternetShortcut]\r\nURL=https://work%2Fproject.invalid/dashboard\r\n";
+        let good_bytes = b"[InternetShortcut]\r\nURL=https://work.example.invalid/dashboard\r\n";
         std::fs::write(&bad_path, bad_bytes).unwrap();
         std::fs::write(&good_path, good_bytes).unwrap();
         let mut bad = read_link(&bad_path).unwrap();
@@ -2003,7 +2003,14 @@ mod tests {
             .unwrap();
         let choice = crate::engine::preview(&store, true).unwrap();
         assert_eq!(choice.selected, vec![good.id.clone()]);
-        assert!(!choice.ranking.iter().find(|r| r.id == bad.id).unwrap().eligible);
+        assert!(
+            !choice
+                .ranking
+                .iter()
+                .find(|r| r.id == bad.id)
+                .unwrap()
+                .eligible
+        );
         assert_eq!(std::fs::read(&bad_path).unwrap(), bad_bytes);
         assert_eq!(std::fs::read(&good_path).unwrap(), good_bytes);
 
@@ -2020,7 +2027,13 @@ mod tests {
             "bad%host.invalid",
         ] {
             let url = format!("https://{host}/work");
-            assert!(!valid_target(&App { target: url.clone(), ..Default::default() }), "{url}");
+            assert!(
+                !valid_target(&App {
+                    target: url.clone(),
+                    ..Default::default()
+                }),
+                "{url}"
+            );
         }
         for url in [
             "https://ex%61mple.invalid/work",
@@ -2028,7 +2041,13 @@ mod tests {
             "https://user%2Fname:secret@example.invalid/work",
             "https://[::1]:443/work",
         ] {
-            assert!(valid_target(&App { target: url.into(), ..Default::default() }), "{url}");
+            assert!(
+                valid_target(&App {
+                    target: url.into(),
+                    ..Default::default()
+                }),
+                "{url}"
+            );
         }
 
         drop(store);
