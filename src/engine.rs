@@ -2472,6 +2472,13 @@ fn record_learning_at(
     seconds: u32,
     observed: chrono::DateTime<chrono::FixedOffset>,
 ) -> Result<bool> {
+    // An already completed learning gate is immutable until the user
+    // explicitly resets it. Avoid taking SQLite's only writer lock for every
+    // subsequent foreground tick. The transaction below still rechecks the
+    // current state for profiles that have not finished learning.
+    if store.get::<Progress>("learning")?.completed_at != 0 {
+        return Ok(false);
+    }
     let at = observed.timestamp();
     let day = observed.date_naive().to_string();
     let result = retry_locked_usage(|| {

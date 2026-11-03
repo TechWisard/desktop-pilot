@@ -71,3 +71,72 @@ fn confirmed_learning_across_midnight_persists_one_consistent_clock_sample() {
         }
     }
 }
+
+#[test]
+fn completed_learning_never_needs_a_sqlite_writer_even_during_a_foreground_sample() {
+    let home = std::env::temp_dir().join(format!(
+        "desktop-pilot-completed-learning-readonly-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let store = Store::open(&home).unwrap();
+    let config = Config {
+        collect: true,
+        learning_sessions: 1,
+        ..Config::default()
+    };
+    store.set("config", &config).unwrap();
+    let completed = Progress {
+        started_at: 10_000,
+        completed_at: 10_300,
+        sessions: 1,
+        ..Progress::default()
+    };
+    store.set("learning", &completed).unwrap();
+    let observed = FixedOffset::east_opt(0)
+        .unwrap()
+        .with_ymd_and_hms(2026, 11, 3, 12, 0, 0)
+        .single()
+        .unwrap();
+
+    // SQLite's query_only connection can read this saved profile, but BEGIN
+    // IMMEDIATE would fail with SQLITE_READONLY. A completed gate must not
+    // take that writer path, even if new confirmed input keeps arriving.
+    store.db.execute_batch("PRAGMA query_only=ON").unwrap();
+    for _ in 0..3 {
+        assert!(!record_learning_at(&store, 2, observed).unwrap());
+    }
+    let unchanged: Progress = store.get("learning").unwrap();
+    assert_eq!(unchanged.completed_at, completed.completed_at);
+    assert_eq!(unchanged.sessions, completed.sessions);
+    assert_eq!(unchanged.started_at, completed.started_at);
+
+    // Do not accidentally apply the same no-write shortcut to an unfinished
+    // gate: it still needs the transactional permission and persistence check.
+    store.db.execute_batch("PRAGMA query_only=OFF").unwrap();
+    store.set("learning", &Progress::default()).unwrap();
+    store.db.execute_batch("PRAGMA query_only=ON").unwrap();
+    assert!(record_learning_at(&store, 2, observed).is_err());
+    assert_eq!(store.get::<Progress>("learning").unwrap().started_at, 0);
+    store.db.execute_batch("PRAGMA query_only=OFF").unwrap();
+    assert!(record_learning_at(&store, 2, observed).unwrap());
+    let started: Progress = store.get("learning").unwrap();
+    assert_eq!(started.started_at, observed.timestamp());
+    assert_eq!(started.session_seconds, 2);
+    assert_eq!(started.sessions, 0);
+    assert_eq!(started.day_seconds.get("2026-11-03"), Some(&2));
+
+    drop(store);
+    for attempt in 0..5 {
+        match std::fs::remove_dir_all(&home) {
+            Ok(()) => break,
+            Err(_) if attempt < 4 => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(error) => panic!("Could not remove test profile: {error}"),
+        }
+    }
+}
