@@ -26,7 +26,11 @@ pub fn parse(input: &[String]) -> Result<Vec<String>> {
         let inline = argument
             .strip_prefix("--home=")
             .map(|value| ("--home", value))
-            .or_else(|| argument.strip_prefix("--out=").map(|value| ("--out", value)));
+            .or_else(|| {
+                argument
+                    .strip_prefix("--out=")
+                    .map(|value| ("--out", value))
+            });
         if argument == "--home" || argument == "--out" || inline.is_some() {
             let (option, value, consumed) = if let Some((option, value)) = inline {
                 (option, value.to_owned(), 1)
@@ -296,8 +300,7 @@ mod tests {
             ])
         );
         assert_eq!(
-            parse(&args(&["--out=report.json", "--home=profile", "--inspect"]))
-                .unwrap(),
+            parse(&args(&["--out=report.json", "--home=profile", "--inspect"])).unwrap(),
             args(&["--inspect", "--home", "profile", "--out", "report.json"])
         );
         for invocation in [
@@ -308,7 +311,12 @@ mod tests {
             vec!["--inspect", "--out="],
             vec!["--settings", "--home="],
             vec!["--inspect", "--out=backup.zip"],
-            vec!["--inspect", "--out=report.json", "--replace-out", "--replace-out"],
+            vec![
+                "--inspect",
+                "--out=report.json",
+                "--replace-out",
+                "--replace-out",
+            ],
             vec!["--home=--disable", "--settings"],
         ] {
             assert!(parse(&args(&invocation)).is_err(), "{invocation:?}");
@@ -330,13 +338,12 @@ mod tests {
         ));
         let profile = root.join("Project Alpha");
         let store = Store::open(&profile).unwrap();
-        store.set("inline_home_probe", &"existing user settings").unwrap();
+        store
+            .set("inline_home_probe", &"existing user settings")
+            .unwrap();
         drop(store);
 
-        let arguments = vec![
-            format!("--home={}", profile.display()),
-            "--inspect".into(),
-        ];
+        let arguments = vec![format!("--home={}", profile.display()), "--inspect".into()];
         let normalized = parse(&arguments).unwrap();
         let selected = crate::profile::home(&normalized).unwrap();
         let expected = crate::profile::ordinary_path(std::fs::canonicalize(&profile).unwrap());
