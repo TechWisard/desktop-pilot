@@ -87,7 +87,10 @@ fn paused_observation_cannot_consume_first_session_or_replay_old_activity() {
         )
         .unwrap()
     );
-    assert_eq!(checkpoints.get("editor"), Some(&test_observed_at(10_020).timestamp()));
+    assert_eq!(
+        checkpoints.get("editor"),
+        Some(&test_observed_at(10_020).timestamp())
+    );
     let days = store.days().unwrap();
     let editor = days.iter().find(|d| d.app == "editor").unwrap();
     assert_eq!((editor.seconds, editor.sessions), (10, 1));
@@ -111,7 +114,10 @@ fn paused_observation_cannot_consume_first_session_or_replay_old_activity() {
         .unwrap()
     );
     assert_eq!(store.days().unwrap().len(), 1);
-    assert_eq!(checkpoints.get("editor"), Some(&test_observed_at(10_020).timestamp()));
+    assert_eq!(
+        checkpoints.get("editor"),
+        Some(&test_observed_at(10_020).timestamp())
+    );
     assert!(!checkpoints.contains_key("browser"));
 
     cfg.collect = true;
