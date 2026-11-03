@@ -2481,6 +2481,31 @@ fn housekeeping_sessions(store: &Store, sessions: &mut HashMap<String, i64>) -> 
     Ok(())
 }
 
+// Retention is a monitor responsibility, not a scanner success callback.
+// A disconnected drive can indefinitely delay shortcut discovery while the
+// rest of the monitor continues collecting usage and recording commands.
+const HOUSEKEEPING_INTERVAL: Duration = Duration::from_secs(6 * 3600);
+
+fn housekeeping_if_due(
+    store: &Store,
+    sessions: &mut HashMap<String, i64>,
+    last: &mut Option<Instant>,
+) -> Result<bool> {
+    if last.is_some_and(|previous| previous.elapsed() < HOUSEKEEPING_INTERVAL) {
+        return Ok(false);
+    }
+    match retry_locked_usage(|| housekeeping_sessions(store, sessions)) {
+        Ok(()) => {
+            *last = Some(Instant::now());
+            Ok(true)
+        }
+        // A competing Settings write is temporary. Keep the timer due so
+        // the next maintenance pass retries without terminating monitoring.
+        Err(error) if sqlite_writer_contention(&error) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 
 /// This is the monitor's actual input-hook lifecycle, not a separate model.
@@ -2703,6 +2728,7 @@ pub fn monitor(home: PathBuf) -> Result<()> {
     let mut last_tick = Instant::now();
     let mut last_heartbeat = None;
     let mut maintenance: Option<Instant> = None;
+    let mut last_housekeeping: Option<Instant> = None;
     let mut scanned: Option<Instant> = None;
     let mut scan: Option<scan_worker::ScanWorker> = None;
     let mut last_autostart = None;
@@ -2741,7 +2767,6 @@ pub fn monitor(home: PathBuf) -> Result<()> {
                     Ok(_) => {
                         apps = store.apps()?;
                         scanned = Some(Instant::now());
-                        housekeeping_sessions(&store, &mut session_times)?;
                         // Apply manual reconciliation and automatic review only
                         // after the complete verified scan has been committed.
                         maintenance = None;
@@ -2903,6 +2928,9 @@ pub fn monitor(home: PathBuf) -> Result<()> {
             {
                 scan = Some(scan_worker::start(&store.home));
             }
+            // Retention must continue even if an ongoing scan has stalled
+            // on an unavailable shortcut source or a disconnected drive.
+            let _ = housekeeping_if_due(&store, &mut session_times, &mut last_housekeeping)?;
             if scan.is_none() {
                 let result = (|| -> Result<()> {
                     reconcile_manual(&store)?;
