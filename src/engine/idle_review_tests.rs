@@ -123,6 +123,88 @@ fn learning_completion_is_persisted_once_and_survives_repeated_reviews() {
 }
 
 #[test]
+fn reset_during_idle_completion_preflight_must_not_restore_old_learning_progress() {
+    with_store(|store| {
+        let config = Config {
+            collect: true,
+            automatic: false,
+            ..Config::default()
+        };
+        store.set("config", &config).unwrap();
+        store
+            .set(
+                "learning",
+                &Progress {
+                    started_at: now().saturating_sub(7200),
+                    sessions: config.learning_sessions,
+                    ..Progress::default()
+                },
+            )
+            .unwrap();
+        audit_writes(store);
+
+        // A second Settings connection resets learning after the review has
+        // read its qualifying progress, but before the completion write.
+        BEFORE_IDLE_LEARNING_WRITE.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(|store| {
+                let settings = Store::open(&store.home).unwrap();
+                settings.set("learning", &Progress::default()).unwrap();
+            }));
+        });
+        assert!(!automatic_review(store, false).unwrap());
+        let saved: Progress = store.get("learning").unwrap();
+        assert_eq!(saved.completed_at, 0, "explicit reset must win");
+        assert_eq!(saved.sessions, 0);
+        assert_eq!(saved.started_at, 0);
+        assert_eq!(
+            write_count(store),
+            1,
+            "only the user's explicit reset may update learning"
+        );
+    });
+}
+
+#[test]
+fn changed_learning_goal_during_idle_completion_preflight_must_be_rechecked() {
+    with_store(|store| {
+        let config = Config {
+            collect: true,
+            automatic: false,
+            ..Config::default()
+        };
+        store.set("config", &config).unwrap();
+        store
+            .set(
+                "learning",
+                &Progress {
+                    started_at: now().saturating_sub(7200),
+                    sessions: config.learning_sessions,
+                    ..Progress::default()
+                },
+            )
+            .unwrap();
+        audit_writes(store);
+        BEFORE_IDLE_LEARNING_WRITE.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(|store| {
+                let settings = Store::open(&store.home).unwrap();
+                let mut config: Config = settings.get("config").unwrap();
+                config.learning_sessions += 1;
+                settings.set("config", &config).unwrap();
+            }));
+        });
+        assert!(!automatic_review(store, false).unwrap());
+        let saved: Progress = store.get("learning").unwrap();
+        assert_eq!(saved.completed_at, 0);
+        assert_eq!(saved.sessions, config.learning_sessions);
+        assert_eq!(write_count(store), 0);
+        assert_eq!(
+            store.get::<Config>("config").unwrap().learning_sessions,
+            config.learning_sessions + 1
+        );
+    });
+}
+
+#[test]
 fn completed_auto_review_when_not_due_does_not_take_an_unneeded_writer() {
     with_store(|store| {
         let config = Config {
