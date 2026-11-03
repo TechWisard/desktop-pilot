@@ -2120,8 +2120,10 @@ fn automatic_review_with_precommit_boundary(
 // Test-only boundary recreates a concurrent Settings reset before an idle
 // reviewer commits a previously computed completion. Release builds omit it.
 #[cfg(test)]
+type IdleLearningCommitHook = Box<dyn FnOnce(&Store)>;
+#[cfg(test)]
 thread_local! {
-    static BEFORE_IDLE_LEARNING_WRITE: std::cell::RefCell<Option<Box<dyn FnOnce(&Store)>>> =
+    static BEFORE_IDLE_LEARNING_WRITE: std::cell::RefCell<Option<IdleLearningCommitHook>> =
         std::cell::RefCell::new(None);
 }
 
