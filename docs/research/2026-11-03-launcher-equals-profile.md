@@ -2,7 +2,7 @@
 
 ## Context and evidence
 
-Continue the earlier [profile continuity investigation](2026-10-26-profile-discovery-recovery.md) and the [first-use catalog investigation](../../../../../issues/22), without repeating the general adaptive-interface research. The existing source-level rule in `cli::parse` accepted `--home DIRECTORY` and `--out FILE`, but rejected the equally conventional single-token `--home=DIRECTORY` or `--out=FILE` with an "Unknown argument" error. Windows shortcut target fields and scripted profile launchers commonly pass an option and its value as one argument. The latter use is a scenario hypothesis; no user frequency or human time savings have been measured.
+Continue the earlier [profile continuity investigation](2026-10-26-profile-discovery-recovery.md) and the [first-use catalog investigation](https://github.com/TechWisard/desktop-pilot/issues/22), without repeating the general adaptive-interface research. The existing source-level rule in `cli::parse` accepted `--home DIRECTORY` and `--out FILE`, but rejected the equally conventional single-token `--home=DIRECTORY` or `--out=FILE` with an "Unknown argument" error. Windows shortcut target fields and scripted profile launchers commonly pass an option and its value as one argument. The latter use is a scenario hypothesis; no user frequency or human time savings have been measured.
 
 [Predictability and Accuracy in Adaptive User Interfaces (CHI 2008)](https://www.eecs.harvard.edu/~kgajos/papers/2008/gajos08predictability.shtml) motivates continuity of user choices; it is not evidence that this particular spelling is widespread. The technical defect is established from the actual invocation parser, not from a model of human behavior.
 
