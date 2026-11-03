@@ -85,9 +85,9 @@ fn manual_auto_anchor_and_new_always_rule_report_a_conflict_before_apply() {
         store.policy(&manual.id, Policy::Never).unwrap();
         assert_eq!(manual_slot_requirements(&store.apps().unwrap(), &state), 1);
         let preview = engine::preview(&store, false).unwrap();
-        assert_eq!(preview.selected, [chosen.id.clone()]);
-        assert_eq!(preview.removed, [manual.id.clone()]);
-        assert_eq!(preview.added, [chosen.id.clone()]);
+        assert_eq!(preview.selected.as_slice(), std::slice::from_ref(&chosen.id));
+        assert_eq!(preview.removed.as_slice(), std::slice::from_ref(&manual.id));
+        assert_eq!(preview.added.as_slice(), std::slice::from_ref(&chosen.id));
         assert_eq!(fs::read(&manual_path).unwrap(), original);
         assert_eq!(fs::read(&copy).unwrap(), original);
 
