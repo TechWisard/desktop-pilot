@@ -147,3 +147,91 @@ fn a_truly_unambiguous_plain_shortcut_still_learns_and_undoes_safely() {
         assert_eq!(std::fs::read(&plain.source).unwrap(), original);
     });
 }
+
+#[test]
+fn unavailable_competing_profile_with_the_same_process_root_blocks_attribution() {
+    with_browser_shortcut("--profile-directory=Work", |store, executable, work| {
+        let shared = store.home.join("Shared");
+        std::fs::create_dir_all(&shared).unwrap();
+        let foreground = shared.join("game.exe");
+        std::fs::write(&foreground, b"inert foreground fixture").unwrap();
+
+        let mut work = work.clone();
+        work.observed_roots = vec![shared.to_string_lossy().into_owned()];
+        store.put_app(&work).unwrap();
+
+        let shortcut = store.home.join("Personal.lnk");
+        native::make_link(
+            &shortcut,
+            executable,
+            "--profile-directory=Personal",
+            "",
+            0,
+            "personal",
+        )
+        .unwrap();
+        let mut personal = native::read_link(&shortcut).unwrap();
+        assert_ne!(personal.id, work.id);
+        personal.observed_roots = work.observed_roots.clone();
+        std::fs::remove_file(&shortcut).unwrap();
+        personal.valid = false;
+        personal.unavailable_since = now();
+        store.put_app(&personal).unwrap();
+
+        // A shared folder identifies neither launch profile. The missing
+        // Personal shortcut may still have launched the active process.
+        let observed = observe_match(&store.apps().unwrap(), &foreground.to_string_lossy());
+        assert_eq!(observed, None);
+        sample_and_store(store, observed);
+        assert!(store.days().unwrap().is_empty());
+        assert!(preview(store, true).unwrap().selected.is_empty());
+
+        // Restoring that shortcut must not suddenly change the answer.
+        personal.valid = true;
+        store.put_app(&personal).unwrap();
+        assert_eq!(
+            observe_match(&store.apps().unwrap(), &foreground.to_string_lossy()),
+            None
+        );
+    });
+}
+
+#[test]
+fn different_verified_process_roots_still_credit_the_right_profile() {
+    with_browser_shortcut("--profile-directory=Work", |store, executable, work| {
+        let work_root = store.home.join("WorkGame");
+        let private_root = store.home.join("PrivateGame");
+        std::fs::create_dir_all(&work_root).unwrap();
+        std::fs::create_dir_all(&private_root).unwrap();
+        let foreground = work_root.join("game.exe");
+        std::fs::write(&foreground, b"inert foreground fixture").unwrap();
+
+        let mut work = work.clone();
+        work.observed_roots = vec![work_root.to_string_lossy().into_owned()];
+        store.put_app(&work).unwrap();
+
+        let shortcut = store.home.join("Private.lnk");
+        native::make_link(
+            &shortcut,
+            executable,
+            "--profile-directory=Private",
+            "",
+            0,
+            "private",
+        )
+        .unwrap();
+        let mut private = native::read_link(&shortcut).unwrap();
+        private.observed_roots = vec![private_root.to_string_lossy().into_owned()];
+        private.valid = false;
+        private.unavailable_since = now();
+        store.put_app(&private).unwrap();
+
+        let observed = observe_match(&store.apps().unwrap(), &foreground.to_string_lossy());
+        assert_eq!(observed, Some(work.id.clone()));
+        sample_and_store(store, observed);
+        let days = store.days().unwrap();
+        assert_eq!(days.len(), 1);
+        assert_eq!(days[0].app, work.id);
+        assert_eq!(preview(store, true).unwrap().selected, vec![work.id]);
+    });
+}
