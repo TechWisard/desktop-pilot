@@ -468,5 +468,4 @@ mod tests {
         activity(&mut counted, 6_002, day, 300);
         assert_eq!(counted.sessions, 1);
     }
-
 }
