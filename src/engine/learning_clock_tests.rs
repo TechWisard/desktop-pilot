@@ -29,6 +29,24 @@ fn confirmed_learning_across_midnight_persists_one_consistent_clock_sample() {
         .unwrap();
     for tick in 0..150 {
         let observed = start + CalendarDuration::seconds(2 * tick);
+        if tick == 60 {
+            // The first sample of the new date must be discarded when
+            // Settings has paused collection, even at the midnight boundary.
+            store
+                .set(
+                    "config",
+                    &Config {
+                        collect: false,
+                        ..config.clone()
+                    },
+                )
+                .unwrap();
+            assert!(!record_learning_at(&store, 2, observed).unwrap());
+            let paused: Progress = store.get("learning").unwrap();
+            assert_eq!(paused.session_seconds, 120);
+            assert!(!paused.day_seconds.contains_key("2026-11-04"));
+            store.set("config", &config).unwrap();
+        }
         assert!(record_learning_at(&store, 2, observed).unwrap());
     }
     let progress: Progress = store.get("learning").unwrap();
@@ -41,21 +59,6 @@ fn confirmed_learning_across_midnight_persists_one_consistent_clock_sample() {
     assert_eq!(progress.day_seconds.get("2026-11-04"), Some(&180));
     assert!(progress.ready(&config));
     assert!(store.get::<State>("state").unwrap().owned.is_empty());
-
-    // Pausing collection cannot credit another sample or rewrite completion.
-    store
-        .set(
-            "config",
-            &Config {
-                collect: false,
-                ..config
-            },
-        )
-        .unwrap();
-    assert!(!record_learning_at(&store, 2, start + CalendarDuration::seconds(300)).unwrap());
-    let unchanged: Progress = store.get("learning").unwrap();
-    assert_eq!(unchanged.completed_at, progress.completed_at);
-    assert_eq!(unchanged.day_seconds, progress.day_seconds);
 
     drop(store);
     for attempt in 0..5 {
