@@ -1958,4 +1958,88 @@ mod tests {
         assert!(!is_running("test", &home).unwrap());
         assert!(try_exclusive("test", &home).unwrap().is_some());
     }
+
+    #[test]
+    fn percent_encoded_forbidden_http_host_bytes_cannot_take_a_quick_slot() {
+        // Real Internet Shortcut parsing, SQLite history and production preview.
+        // Percent-decoded host delimiters are not part of a valid HTTP hostname.
+        let root = std::env::temp_dir().join(format!(
+            "desktop-pilot-encoded-host-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let bad_path = root.join("Malformed.url");
+        let good_path = root.join("Working.url");
+        let bad_bytes = b"[InternetShortcut]\\r\\nURL=https://work%2Fproject.invalid/dashboard\\r\\n";
+        let good_bytes = b"[InternetShortcut]\\r\\nURL=https://work.example.invalid/dashboard\\r\\n";
+        std::fs::write(&bad_path, bad_bytes).unwrap();
+        std::fs::write(&good_path, good_bytes).unwrap();
+        let mut bad = read_link(&bad_path).unwrap();
+        let mut good = read_link(&good_path).unwrap();
+        assert!(!bad.valid, "percent-decoded slash in host is not launchable");
+        assert!(good.valid);
+        let at = crate::model::now();
+        bad.seed = 500.0;
+        bad.seed_at = at;
+        good.seed = 30.0;
+        good.seed_at = at;
+        let store = crate::store::Store::open(&root.join("profile")).unwrap();
+        store.put_app(&bad).unwrap();
+        store.put_app(&good).unwrap();
+        store
+            .set(
+                "config",
+                &crate::model::Config {
+                    slots: 1,
+                    collect: true,
+                    learning_enabled: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let choice = crate::engine::preview(&store, true).unwrap();
+        assert_eq!(choice.selected, vec![good.id.clone()]);
+        assert!(!choice.ranking.iter().find(|r| r.id == bad.id).unwrap().eligible);
+        assert_eq!(std::fs::read(&bad_path).unwrap(), bad_bytes);
+        assert_eq!(std::fs::read(&good_path).unwrap(), good_bytes);
+
+        for host in [
+            "bad%2fhost.invalid",
+            "bad%5Chost.invalid",
+            "bad%40host.invalid",
+            "bad%23host.invalid",
+            "bad%3Ahost.invalid",
+            "bad%00host.invalid",
+            "bad%20host.invalid",
+            "bad%7fhost.invalid",
+            "bad%GGhost.invalid",
+            "bad%host.invalid",
+        ] {
+            let url = format!("https://{host}/work");
+            assert!(!valid_target(&App { target: url.clone(), ..Default::default() }), "{url}");
+        }
+        for url in [
+            "https://ex%61mple.invalid/work",
+            "https://example.invalid/path%2Fpart?q=%3F",
+            "https://user%2Fname:secret@example.invalid/work",
+            "https://[::1]:443/work",
+        ] {
+            assert!(valid_target(&App { target: url.into(), ..Default::default() }), "{url}");
+        }
+
+        drop(store);
+        for attempt in 0..5 {
+            match std::fs::remove_dir_all(&root) {
+                Ok(()) => break,
+                Err(_) if attempt < 4 => {
+                    std::thread::sleep(std::time::Duration::from_millis(50))
+                }
+                Err(error) => panic!("Cannot remove test profile: {error}"),
+            }
+        }
+    }
 }
