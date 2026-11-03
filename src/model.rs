@@ -1406,3 +1406,6 @@ mod device_namespace_tests;
 
 #[cfg(test)]
 mod offline_explicit_choice_tests;
+
+#[cfg(test)]
+mod manual_slot_conflict_tests;
