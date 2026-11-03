@@ -477,7 +477,7 @@ fn clearing_usage_must_not_graduate_a_pending_learning_gate() {
                 &Progress {
                     started_at: now() - 7200,
                     sessions: config.learning_sessions,
-                    session_seconds: QUALIFY_SECONDS,
+                    session_seconds: crate::learning::QUALIFY_SECONDS,
                     completed_at: 0,
                     ..Progress::default()
                 },
