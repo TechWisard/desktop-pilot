@@ -2433,6 +2433,19 @@ fn persist_confirmed_usage(
 }
 
 fn record_learning_if_permitted(store: &Store, seconds: u32) -> Result<bool> {
+    // This is one confirmed sample. A slow SQLite writer or a local-midnight
+    // transition must not give its date, elapsed checkpoint and completion
+    // three different wall-clock instants across transaction retries.
+    record_learning_at(store, seconds, chrono::Local::now().fixed_offset())
+}
+
+fn record_learning_at(
+    store: &Store,
+    seconds: u32,
+    observed: chrono::DateTime<chrono::FixedOffset>,
+) -> Result<bool> {
+    let at = observed.timestamp();
+    let day = observed.date_naive().to_string();
     let result = retry_locked_usage(|| {
         store.transaction(|| {
             let Some(config) = collection_permission(store)? else {
@@ -2445,12 +2458,8 @@ fn record_learning_if_permitted(store: &Store, seconds: u32) -> Result<bool> {
             if progress.completed_at != 0 {
                 return Ok(false);
             }
-            progress.observe(
-                now(),
-                &chrono::Local::now().date_naive().to_string(),
-                seconds,
-            );
-            progress.finish_if_ready(&config, now());
+            progress.observe(at, &day, seconds);
+            progress.finish_if_ready(&config, at);
             store.set("learning", &progress)?;
             Ok(true)
         })
@@ -4586,3 +4595,6 @@ mod command_claim_contention_tests;
 
 #[cfg(test)]
 mod command_queue_order_tests;
+
+#[cfg(test)]
+mod learning_clock_tests;
