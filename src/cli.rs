@@ -20,25 +20,45 @@ pub fn parse(input: &[String]) -> Result<Vec<String>> {
             index += 1;
             continue;
         }
-        if argument == "--home" || argument == "--out" {
-            let value = input
-                .get(index + 1)
-                .with_context(|| format!("Missing value for {argument}"))?;
+        // Windows shortcut properties commonly use --home=PATH. Accept both
+        // spellings without allowing a second --home or --out to override a
+        // previously selected profile or report destination.
+        let inline = argument
+            .strip_prefix("--home=")
+            .map(|value| ("--home", value))
+            .or_else(|| {
+                argument
+                    .strip_prefix("--out=")
+                    .map(|value| ("--out", value))
+            });
+        if argument == "--home" || argument == "--out" || inline.is_some() {
+            let (option, value, consumed) = if let Some((option, value)) = inline {
+                (option, value.to_owned(), 1)
+            } else {
+                (
+                    argument.as_str(),
+                    input
+                        .get(index + 1)
+                        .with_context(|| format!("Missing value for {argument}"))?
+                        .clone(),
+                    2,
+                )
+            };
             ensure!(
-                !value.trim().is_empty() && !value.starts_with("--"),
-                "Missing value for {argument}"
+                !value.trim().is_empty() && !value.starts_with("--") && !value.contains('\0'),
+                "Missing or invalid value for {option}"
             );
-            let slot = if argument == "--home" {
+            let slot = if option == "--home" {
                 &mut home
             } else {
                 &mut out
             };
             ensure!(
                 slot.is_none(),
-                "Option {argument} was supplied more than once"
+                "Option {option} was supplied more than once"
             );
-            *slot = Some(value.clone());
-            index += 2;
+            *slot = Some(value);
+            index += consumed;
             continue;
         }
         let name = match argument.as_str() {
@@ -126,7 +146,7 @@ pub fn parse(input: &[String]) -> Result<Vec<String>> {
 
 pub const HELP: &str = "Desktop Pilot — adaptive desktop shortcuts for Windows
 
-Usage: desktop-pilot.exe [COMMAND] [--home DIRECTORY] [--out FILE] [--replace-out]
+Usage: desktop-pilot.exe [COMMAND] [--home DIRECTORY] [--out FILE] [--replace-out]\n\n--home=DIR and --out=FILE are also accepted (including paths with spaces).
 
   --settings                 Open settings (default)
   --background               Start the background process
@@ -260,6 +280,88 @@ mod tests {
             .unwrap(),
             expected
         );
+    }
+
+    #[test]
+    fn inline_options_keep_profile_and_report_paths_without_allowing_duplicates() {
+        assert_eq!(
+            parse(&args(&[
+                "--home=C:\\Projects\\My profile",
+                "--inspect",
+                "--out=C:\\Reports\\session report.JSON"
+            ]))
+            .unwrap(),
+            args(&[
+                "--inspect",
+                "--home",
+                "C:\\Projects\\My profile",
+                "--out",
+                "C:\\Reports\\session report.JSON"
+            ])
+        );
+        assert_eq!(
+            parse(&args(&["--out=report.json", "--home=profile", "--inspect"])).unwrap(),
+            args(&["--inspect", "--home", "profile", "--out", "report.json"])
+        );
+        for invocation in [
+            vec!["--home=one", "--home", "two"],
+            vec!["--home=one", "--home=two"],
+            vec!["--out=one.json", "--out", "two.json"],
+            vec!["--out=one.json", "--out=two.json"],
+            vec!["--inspect", "--out="],
+            vec!["--settings", "--home="],
+            vec!["--inspect", "--out=backup.zip"],
+            vec![
+                "--inspect",
+                "--out=report.json",
+                "--replace-out",
+                "--replace-out",
+            ],
+            vec!["--home=--disable", "--settings"],
+        ] {
+            assert!(parse(&args(&invocation)).is_err(), "{invocation:?}");
+        }
+    }
+
+    #[test]
+    fn inline_home_reopens_the_same_sqlite_profile_instead_of_a_default_profile() {
+        use crate::store::Store;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "desktop-pilot-inline-home-{}-{unique}",
+            std::process::id()
+        ));
+        let profile = root.join("Project Alpha");
+        let store = Store::open(&profile).unwrap();
+        store
+            .set("inline_home_probe", &"existing user settings")
+            .unwrap();
+        drop(store);
+
+        let arguments = vec![format!("--home={}", profile.display()), "--inspect".into()];
+        let normalized = parse(&arguments).unwrap();
+        let selected = crate::profile::home(&normalized).unwrap();
+        let expected = crate::profile::ordinary_path(std::fs::canonicalize(&profile).unwrap());
+        assert_eq!(selected, expected);
+        let reopened = Store::open(&selected).unwrap();
+        assert_eq!(
+            reopened.get::<String>("inline_home_probe").unwrap(),
+            "existing user settings"
+        );
+        assert!(!root.join("DesktopPilot").exists());
+        drop(reopened);
+        for attempt in 0..5 {
+            match std::fs::remove_dir_all(&root) {
+                Ok(()) => break,
+                Err(_) if attempt < 4 => std::thread::sleep(std::time::Duration::from_millis(50)),
+                Err(error) => panic!("could not remove isolated test profile: {error}"),
+            }
+        }
     }
 
     #[test]
