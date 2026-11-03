@@ -10,7 +10,7 @@ Continue the [named profile launch investigation](2026-11-03-launcher-equals-pro
 - [Microsoft: Run and RunOnce Registry Keys](https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys): an `HKCU\...\Run` value launches at each sign-in and multiple Run entries can coexist. This explains why an unrecognized old entry matters.
 - [Microsoft: CommandLineToArgvW](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-commandlinetoargvw): quoted command arguments are split according to Windows backslash/quote rules. The production matcher already uses this API.
 
-A [September 2024 WindowsHelp discussion](https://www.reddit.com/r/WindowsHelp/comments/1ff51lj) describes persistent startup entries after disabling them in another application. It is a user report, not verified Desktop Pilot incidence or proof of this defect.
+An [October 2023 WindowsHelp discussion](https://www.reddit.com/r/WindowsHelp/comments/179f6mc) reports two unexplained startup entries and a successful identification using Autoruns. This is an independently published user report about Windows startup visibility, **not** evidence that Desktop Pilot caused either entry or that this particular defect occurs frequently.
 
 ## Correction and reproducible regression
 
