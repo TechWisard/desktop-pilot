@@ -3523,8 +3523,7 @@ mod tests {
             )
             .unwrap_err();
             assert!(
-                format!("{error:#}").contains("shortcut")
-                    || format!("{error:#}").contains("URL"),
+                format!("{error:#}").contains("shortcut") || format!("{error:#}").contains("URL"),
                 "{error:#}"
             );
 
@@ -3544,19 +3543,22 @@ mod tests {
             assert_eq!(
                 store
                     .db
-                    .query_row("SELECT COUNT(*) FROM transactions", [], |row| row.get::<_, i64>(0))
+                    .query_row("SELECT COUNT(*) FROM transactions", [], |row| row
+                        .get::<_, i64>(0))
                     .unwrap(),
                 1,
                 "The aborted attempt must not claim a recoverable transaction"
             );
             assert!(
-                std::fs::read_dir(root(store).unwrap()).unwrap().all(|entry| {
-                    !entry
-                        .unwrap()
-                        .file_name()
-                        .to_string_lossy()
-                        .starts_with(".desktop-pilot-")
-                }),
+                std::fs::read_dir(root(store).unwrap())
+                    .unwrap()
+                    .all(|entry| {
+                        !entry
+                            .unwrap()
+                            .file_name()
+                            .to_string_lossy()
+                            .starts_with(".desktop-pilot-")
+                    }),
                 "An aborted attempt must not leave hidden desktop staging"
             );
 
@@ -3566,7 +3568,11 @@ mod tests {
             let completed: State = store.get("state").unwrap();
             assert_eq!(completed.owned.len(), 1);
             assert_eq!(completed.owned[0].app, newcomer.id);
-            assert!(std::fs::read(&newcomer.source).unwrap().starts_with(b"[InternetShortcut]"));
+            assert!(
+                std::fs::read(&newcomer.source)
+                    .unwrap()
+                    .starts_with(b"[InternetShortcut]")
+            );
             assert!(Path::new(&familiar.source).exists());
             rollback(store).unwrap();
             assert!(Path::new(&familiar.source).exists());
