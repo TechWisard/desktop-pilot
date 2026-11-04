@@ -54,8 +54,14 @@ impl CatalogCache {
         }) {
             return;
         }
-        let query_lower = query.to_lowercase();
-        let words: Vec<_> = query_lower.split_whitespace().collect();
+        // Explorer copies quoted paths; either separator should find the same
+        // shortcut without changing its stored Windows launch identity.
+        let query_lower = query.to_lowercase().replace('\\', "/");
+        let words: Vec<_> = query_lower
+            .split_whitespace()
+            .map(|word| word.trim_matches('"'))
+            .filter(|word| !word.is_empty())
+            .collect();
         let ranked = |app: &App| self.ranking.get(&app.id).and_then(|&i| ranking.get(i));
         self.indices = apps
             .iter()
@@ -621,6 +627,7 @@ fn search_text(app: &App) -> String {
         app.cwd,
         app.note,
     )
+    .replace('\\', "/")
     .to_lowercase()
 }
 fn page_controls(ui: &mut egui::Ui, page: &mut usize, count: usize) -> bool {
