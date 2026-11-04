@@ -96,14 +96,15 @@ impl CatalogCache {
                         |path| self.search[*index].contains(path),
                     )
                 };
-                matches && match filter {
-                    1 => ranked(app).is_some_and(|ranked| ranked.eligible),
-                    2 => app.policy == Policy::Always,
-                    3 => app.policy == Policy::Never,
-                    4 => !app.valid,
-                    5 => recent.contains(&app.id),
-                    _ => true,
-                }
+                matches
+                    && match filter {
+                        1 => ranked(app).is_some_and(|ranked| ranked.eligible),
+                        2 => app.policy == Policy::Always,
+                        3 => app.policy == Policy::Never,
+                        4 => !app.valid,
+                        5 => recent.contains(&app.id),
+                        _ => true,
+                    }
             })
             .map(|(index, _)| index)
             .collect();
