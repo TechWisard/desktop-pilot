@@ -1040,15 +1040,24 @@ mod tests {
             Err(std::sync::mpsc::RecvTimeoutError::Timeout)
         ));
         assert!(store.get::<bool>("shutdown").unwrap());
+        assert!(
+            native::is_running("background", &root).unwrap(),
+            "The simulated old worker must still own the background mutex"
+        );
         drop(worker);
+        // The starter may first finish the production 12-second shutdown
+        // handshake, then attempts to launch a replacement. Give the loaded
+        // runner a bounded deadline covering both that handshake and normal
+        // scheduling. Keep asserting the actual restart attempt below.
         let error = receiver
-            .recv_timeout(Duration::from_secs(5))
+            .recv_timeout(Duration::from_secs(20))
             .unwrap()
             .unwrap_err();
         // A missing executable distinguishes a real launch attempt from a
         // premature success based only on the old worker's mutex.
         assert!(format!("{error:#}").contains("Cannot start Desktop Pilot background work"));
         assert!(!native::is_running("background", &root).unwrap());
+        assert!(!store.get::<bool>("shutdown").unwrap());
         assert_eq!(store.get::<i64>("heartbeat").unwrap(), 0);
         starter.join().unwrap();
         drop(store);
