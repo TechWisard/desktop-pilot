@@ -208,6 +208,26 @@ fn copied_absolute_paths_with_spaces_do_not_match_unrelated_launch_profiles() {
                 valid: true,
                 ..Default::default()
             })?;
+            // A copied shortcut path must not also select a stale backup
+            // or a note containing that path. The old substring predicate did.
+            store.put_app(&App {
+                id: "backup".into(),
+                name: "Backup, not the selected shortcut".into(),
+                source: format!("{source}.old"),
+                note: format!(
+                    "Review {source}; target was C:/Tools/Team Alpha/editor.exe; \\\\server\\share\\Team Alpha\\Links\\network.lnk"
+                ),
+                valid: true,
+                ..Default::default()
+            })?;
+            store.put_app(&App {
+                id: "exe-shadow".into(),
+                name: "Different executable".into(),
+                source: r"C:\Other\debugger.lnk".into(),
+                target: r"C:\Tools\Team Alpha\editor.exe.debug".into(),
+                valid: true,
+                ..Default::default()
+            })?;
             store.put_app(&App {
                 id: "network".into(),
                 name: "Network profile".into(),
@@ -251,6 +271,17 @@ fn copied_absolute_paths_with_spaces_do_not_match_unrelated_launch_profiles() {
         &recent,
     );
     assert_eq!(names(&cache, &apps), ["Network profile"]);
+    // A partial absolute directory is still a useful broad search.
+    cache.update(
+        &apps,
+        &ranking,
+        r"C:/Users/Editor/Team Alpha/Shortcuts",
+        0,
+        0,
+        &recent,
+    );
+    assert!(names(&cache, &apps).contains(&"Alpha profile".to_owned()));
+    assert!(names(&cache, &apps).contains(&"Backup, not the selected shortcut".to_owned()));
     cache.update(
         &apps,
         &ranking,
