@@ -344,9 +344,7 @@ fn all_unchecked_suggestions_save_locally_without_a_folder_or_undo() {
     f.finish_job();
     assert!(f.app.notice.as_ref().unwrap().kind == NoticeKind::Success);
     let message = &f.app.notice.as_ref().unwrap().text;
-    assert!(
-        message.contains("Keep choices saved") || message.contains("Исключения сохранены")
-    );
+    assert!(message.contains("Keep choices saved") || message.contains("Исключения сохранены"));
     assert!(f.desktop.join("Alpha.url").is_file());
     assert!(f.desktop.join("Beta.url").is_file());
     assert!(!f.desktop.join("Sites").exists());
