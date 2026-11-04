@@ -186,3 +186,66 @@ fn relative_argument_spelling_is_conservatively_preserved_without_launching() {
     assert!(plan.skipped.iter().any(|item| item.name == "Report.TXT"));
     assert_eq!(disk::read(f.desktop.join("Report.TXT")).unwrap(), b"keep");
 }
+
+#[test]
+fn rejecting_all_suggestions_persists_a_choice_without_a_fake_organization() {
+    let f = Fixture::new();
+    f.site("Alpha");
+    f.site("Beta");
+    let before = f.store.apps().unwrap();
+    let alpha = disk::read(f.desktop.join("Alpha.url")).unwrap();
+    let beta = disk::read(f.desktop.join("Beta.url")).unwrap();
+    let mut preview = f.plan(false);
+    assert_eq!(preview.summary(), (2, 1, 1));
+    for item in &mut preview.items {
+        item.selected = false;
+    }
+    assert_eq!(preview.summary(), (0, 0, 0));
+
+    let outcome = apply(&f.store, &preview, &AtomicBool::new(false)).unwrap();
+    assert_eq!((outcome.moved, outcome.restored, outcome.folders_created, outcome.kept), (0, 0, 0, 2));
+    assert_eq!(f.store.apps().unwrap(), before);
+    assert_eq!(disk::read(f.desktop.join("Alpha.url")).unwrap(), alpha);
+    assert_eq!(disk::read(f.desktop.join("Beta.url")).unwrap(), beta);
+    assert!(!f.desktop.join("Sites").exists());
+    assert_eq!(f.store.get::<Vec<String>>(HISTORY).unwrap(), Vec::<String>::new());
+    assert!(status(&f.store).unwrap().undo.is_none());
+    assert!(!status(&f.store).unwrap().pending);
+
+    // The same user decision survives a fresh SQLite connection and scan.
+    let reopened = Store::open(&f.store.home).unwrap();
+    let next = analyze(
+        &reopened,
+        Options { include_files: false },
+        &Config::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert!(next.items.is_empty());
+    assert_eq!(reopened.get::<Vec<String>>(KEEP).unwrap().len(), 2);
+
+    clear_exclusions(&reopened).unwrap();
+    assert_eq!(f.plan(false).summary(), (2, 1, 1));
+}
+
+#[test]
+fn stale_rejected_file_cannot_create_a_persistent_exclusion() {
+    let f = Fixture::new();
+    f.site("Alpha");
+    f.site("Beta");
+    let mut preview = f.plan(false);
+    for item in &mut preview.items {
+        item.selected = false;
+    }
+    disk::write(f.desktop.join("Beta.url"), b"changed after preview").unwrap();
+    let before = f.store.apps().unwrap();
+    let error = apply(&f.store, &preview, &AtomicBool::new(false))
+        .expect_err("a stale identity must not be saved as a user exclusion");
+    assert!(format!("{error:#}").contains("changed after preview"));
+    assert!(f.store.get::<Vec<String>>(KEEP).unwrap().is_empty());
+    assert_eq!(f.store.apps().unwrap(), before);
+    assert!(f.desktop.join("Alpha.url").is_file());
+    assert!(!f.desktop.join("Sites").exists());
+    assert!(status(&f.store).unwrap().undo.is_none());
+    assert!(!status(&f.store).unwrap().pending);
+}

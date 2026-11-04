@@ -145,6 +145,7 @@ pub struct Outcome {
     pub moved: usize,
     pub restored: usize,
     pub folders_created: usize,
+    pub kept: usize,
     pub warnings: Vec<String>,
 }
 

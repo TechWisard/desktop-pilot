@@ -365,10 +365,15 @@ impl Settings {
                                     "A suitable quick-shortcut area is not confirmed yet. Refresh the layout after organizing; reduce the shortcut count if necessary.",
                                 ));
                             }
+                            let rejected = plan.items.iter().any(|item| !item.selected);
                             if primary(
                                 ui,
-                                available && moves > 0,
-                                t("Применить выбранное", "Apply selected moves"),
+                                available && (moves > 0 || rejected),
+                                if moves > 0 {
+                                    t("Применить выбранное", "Apply selected moves")
+                                } else {
+                                    t("Запомнить исключения", "Remember keep choices")
+                                },
                             )
                             .clicked()
                             {
@@ -391,8 +396,8 @@ impl Settings {
                                 });
                             }
                             ui.small(t(
-                                "Снимите галочку, чтобы оставить объект на столе. Выбор запоминается после успешного применения.",
-                                "Uncheck an object to leave it on the desktop. Choices are remembered after a successful Apply.",
+                                "Снимите галочку, чтобы оставить объект на столе. Можно запомнить исключения без перемещения других файлов.",
+                                "Uncheck an object to leave it on the desktop. You can remember exclusions without moving other files.",
                             ));
                             let query = self.organization_query.trim().to_lowercase();
                             let filtered: Vec<_> = plan

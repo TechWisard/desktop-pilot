@@ -330,3 +330,28 @@ fn completed_operation_with_warnings_is_not_presented_as_unqualified_success() {
     assert_eq!(color, WARNING);
     assert!(details.contains("occupied icon position"));
 }
+
+#[test]
+fn all_unchecked_suggestions_save_locally_without_a_folder_or_undo() {
+    let mut f = Fixture::new();
+    f.analyze();
+    let plan = f.app.organization_plan.as_mut().unwrap();
+    for item in &mut plan.items {
+        item.selected = false;
+    }
+    assert_eq!(plan.summary(), (0, 0, 0));
+    f.app.organization_apply();
+    f.finish_job();
+    assert_eq!(f.app.notice.as_ref().unwrap().kind, NoticeKind::Success);
+    assert!(f.app.notice.as_ref().unwrap().text.contains("Keep choices saved")
+        || f.app.notice.as_ref().unwrap().text.contains("Исключения сохранены"));
+    assert!(f.desktop.join("Alpha.url").is_file());
+    assert!(f.desktop.join("Beta.url").is_file());
+    assert!(!f.desktop.join("Sites").exists());
+    assert!(organize::status(&f.app.store).unwrap().undo.is_none());
+    assert!(!organize::status(&f.app.store).unwrap().pending);
+    assert!(f.app.store.get::<bool>("background_disabled").unwrap());
+    f.app.organization_analyze();
+    f.finish_job();
+    assert!(f.app.organization_plan.as_ref().unwrap().items.is_empty());
+}

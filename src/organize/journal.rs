@@ -160,10 +160,44 @@ pub(crate) fn apply_stopped(store: &Store, plan: &Plan, cancel: &AtomicBool) -> 
     ensure_ready(store)?;
     no_placement_in_progress(store)?;
     let movements = plan.movements();
-    ensure!(
-        !movements.is_empty(),
-        "No group of objects is selected for organization"
-    );
+    if movements.is_empty() {
+        // Rejecting every suggestion is still a useful user decision. Save it
+        // without creating a fake move, a recovery journal or any new folder.
+        let rejected: Vec<_> = plan.items.iter().filter(|item| !item.selected).collect();
+        ensure!(
+            !rejected.is_empty(),
+            "Select an object to organize or keep on the desktop"
+        );
+        let actual_root = root(store)?;
+        let directory = fs::directory(&actual_root)?;
+        ensure!(
+            fs::identity(&directory)? == plan.root_id
+                && norm(&actual_root.to_string_lossy()) == norm(&plan.root),
+            "The desktop changed after preview; refresh the plan"
+        );
+        // Do not remember a now-foreign file under a stale preview identity.
+        // A failed check must leave every existing exclusion unchanged.
+        for item in &rejected {
+            fs::leaf(&item.name)?;
+            ensure!(
+                fs::inspect(&actual_root.join(&item.name), item.stamp.digest.is_some())?
+                    == item.stamp,
+                "An excluded object changed after preview; refresh the plan"
+            );
+        }
+        store.transaction(|| {
+            ensure_ready(store)?;
+            let mut keep: HashSet<String> = store.get::<Vec<String>>(KEEP)?.into_iter().collect();
+            keep.extend(rejected.iter().map(|item| item.stamp.id.clone()));
+            let mut keep: Vec<_> = keep.into_iter().collect();
+            keep.sort();
+            store.set(KEEP, &keep)
+        })?;
+        return Ok(Outcome {
+            kept: rejected.len(),
+            ..Default::default()
+        });
+    }
     let mut journal = Journal {
         id: fs::operation_id()?,
         root: plan.root.clone(),
@@ -314,6 +348,7 @@ pub(crate) fn apply_stopped(store: &Store, plan: &Plan, cancel: &AtomicBool) -> 
         let mut outcome = Outcome {
             moved: journal.movements.len(),
             folders_created: journal.folders.iter().filter(|f| f.created).count(),
+            kept: plan.items.iter().filter(|item| !item.selected).count(),
             ..Default::default()
         };
         if let Err(error) = restore_layout(&journal, false) {

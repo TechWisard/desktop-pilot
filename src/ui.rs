@@ -1542,13 +1542,24 @@ impl Settings {
                             self.organization_plan = None;
                             self.organization_accept_confirm = false;
                             self.refresh_layout(self.onboarding);
-                            let mut message = format!(
-                                "{}: {} · {}: {}",
-                                t("Перемещено", "Moved"),
-                                outcome.moved,
-                                t("Восстановлено", "Restored"),
-                                outcome.restored
-                            );
+                            let mut message = if outcome.kept > 0
+                                && outcome.moved == 0
+                                && outcome.restored == 0
+                            {
+                                format!(
+                                    "{}: {}",
+                                    t("Исключения сохранены", "Keep choices saved"),
+                                    outcome.kept
+                                )
+                            } else {
+                                format!(
+                                    "{}: {} · {}: {}",
+                                    t("Перемещено", "Moved"),
+                                    outcome.moved,
+                                    t("Восстановлено", "Restored"),
+                                    outcome.restored
+                                )
+                            };
                             for warning in outcome.warnings {
                                 message.push_str(&format!("\n{warning}"));
                             }
