@@ -3326,15 +3326,15 @@ impl Settings {
                             "Normal replacement limit per review",
                         ),
                         &mut changes,
-                        1,
+                        0,
                         self.config.slots as i64,
                     ) {
                         self.config.max_changes = changes as usize;
                         self.refresh_dirty();
                     }
                     ui.small(t(
-                        "Ручные правила и уменьшение числа мест могут потребовать больше изменений.",
-                        "Manual rules and a reduction in slots may require more changes."
+                        "0 — не заменять привычные ярлыки автоматически; свободные места заполняются. Ручные правила и уменьшение числа мест действуют независимо от этого предела.",
+                        "0 keeps familiar shortcuts in place while still filling empty slots. Manual rules and a smaller capacity take priority over this limit."
                     ));
                     let mut days = self.config.min_days as i64;
                     if number(
@@ -4593,6 +4593,17 @@ mod tests {
         };
         assert!(merge_config(&base, &draft, &latest).is_err());
         assert!(merge_config(&base, &draft, &draft).is_ok());
+    }
+
+    #[test]
+    fn zero_replacements_is_a_valid_saved_setting() {
+        let base = Config::default();
+        let choice = Config {
+            max_changes: 0,
+            ..base.clone()
+        };
+        assert!(choice.validate().is_ok());
+        assert_eq!(merge_config(&base, &choice, &base).unwrap().max_changes, 0);
     }
 
     #[test]
