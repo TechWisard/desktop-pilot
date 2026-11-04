@@ -259,6 +259,39 @@ fn simulate_interruption(f: &Fixture, plan: &Plan) -> String {
 }
 
 #[test]
+fn interrupted_apply_can_be_explicitly_accepted_without_moving_any_other_files() {
+    let f = Fixture::new();
+    let (alpha, beta) = f.two_sites();
+    let original = f.store.apps().unwrap();
+    let operation = simulate_interruption(&f, &f.plan(false));
+    assert!(status(&f.store).unwrap().pending);
+    assert!(f.desktop.join("Sites/Alpha.url").is_file());
+    assert!(f.desktop.join("Beta.url").is_file());
+
+    // Explicitly accept the interrupted mixed state; only verified catalog
+    // paths change. No other desktop entry, preference or file is overwritten.
+    accept_current(&f.store, &operation).unwrap();
+    assert!(!status(&f.store).unwrap().pending);
+    assert_eq!(load(&f.store, &operation).unwrap().phase, Phase::Accepted);
+    assert_eq!(f.store.app(&beta.id).unwrap().source, beta.source);
+    let accepted_source = f.store.app(&alpha.id).unwrap().source;
+    let moved_id = fs::inspect(&f.desktop.join("Sites/Alpha.url"), true)
+        .unwrap()
+        .id;
+    assert!(
+        fs::matches_id(Path::new(&accepted_source), &moved_id).unwrap(),
+        "Catalog path must refer to the moved file even across Windows 8.3 aliases"
+    );
+    assert!(f.desktop.join("Sites/Alpha.url").is_file());
+    assert!(f.desktop.join("Beta.url").is_file());
+    assert!(!f.desktop.join("Alpha.url").exists());
+    assert_eq!(f.store.apps().unwrap().len(), original.len());
+    assert!(ensure_ready(&f.store).is_ok());
+    f.store.policy(&beta.id, Policy::Never).unwrap();
+    assert_eq!(f.store.app(&beta.id).unwrap().policy, Policy::Never);
+}
+
+#[test]
 fn reopened_profile_recovers_a_rename_and_blocks_stale_catalog_writers() {
     let f = Fixture::new();
     let (a, _) = f.two_sites();
@@ -321,10 +354,25 @@ fn replacement_with_identical_bytes_is_not_moved_by_undo() {
     let bytes = disk::read(&destination).unwrap();
     disk::rename(&destination, f.desktop.join("retained-original.url")).unwrap();
     disk::write(&destination, &bytes).unwrap();
-    assert!(undo(&f.store, &id).is_err());
+    let error = undo(&f.store, &id).unwrap_err();
+    assert!(
+        format!("{error:#}").contains("organized object is missing or has been replaced"),
+        "{error:#}"
+    );
     assert_eq!(disk::read(&destination).unwrap(), bytes);
     assert!(f.desktop.join("retained-original.url").is_file());
-    accept_current(&f.store, &id).unwrap();
+    // Identical bytes do not confer ownership. The new preflight leaves the
+    // original journal Committed, so ordinary Undo can be retried safely.
+    assert!(!status(&f.store).unwrap().pending);
+    assert_eq!(load(&f.store, &id).unwrap().phase, Phase::Committed);
+    disk::rename(&destination, f.desktop.join("user-replacement.url")).unwrap();
+    disk::rename(f.desktop.join("retained-original.url"), &destination).unwrap();
+    assert_eq!(undo(&f.store, &id).unwrap().restored, 2);
+    assert!(Path::new(&a.source).is_file());
+    assert_eq!(
+        disk::read(f.desktop.join("user-replacement.url")).unwrap(),
+        bytes
+    );
     assert!(!status(&f.store).unwrap().pending);
 }
 

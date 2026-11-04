@@ -262,3 +262,113 @@ fn foreign_name_collision_rejects_undo_before_partial_moves_and_allows_retry() {
     );
     assert!(!status(&f.store).unwrap().pending);
 }
+
+#[test]
+fn missing_or_replaced_organized_source_rejects_undo_before_any_restore() {
+    for replaced in [false, true] {
+        let f = Fixture::new();
+        let alpha = f.url("Alpha");
+        let beta = f.url("Beta");
+        let alpha_id = fs::inspect(Path::new(&alpha.source), true).unwrap().id;
+        let beta_id = fs::inspect(Path::new(&beta.source), true).unwrap().id;
+        apply(&f.store, &f.plan(false), &AtomicBool::new(false)).unwrap();
+        let operation = status(&f.store).unwrap().undo.unwrap();
+        let catalog = f.store.apps().unwrap();
+        let history: Vec<String> = f.store.get(HISTORY).unwrap();
+
+        // Undo runs in reverse: Beta would be restored before Alpha is checked.
+        // Temporarily move Alpha out; optionally replace it with a foreign file.
+        let organized = f.desktop.join("Sites/Alpha.url");
+        let saved = f.desktop.parent().unwrap().join("Saved Alpha.url");
+        disk::rename(&organized, &saved).unwrap();
+        if replaced {
+            disk::write(&organized, b"different user file").unwrap();
+        }
+        let error = undo(&f.store, &operation).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("organized object is missing or has been replaced"),
+            "{error:#}"
+        );
+        assert!(!Path::new(&alpha.source).exists());
+        assert!(!Path::new(&beta.source).exists(), "Beta must not be moved");
+        assert_eq!(
+            fs::inspect(&f.desktop.join("Sites/Beta.url"), true)
+                .unwrap()
+                .id,
+            beta_id
+        );
+        assert_eq!(fs::inspect(&saved, true).unwrap().id, alpha_id);
+        if replaced {
+            assert_eq!(disk::read(&organized).unwrap(), b"different user file");
+        }
+        assert_eq!(f.store.apps().unwrap(), catalog);
+        assert_eq!(f.store.get::<Vec<String>>(HISTORY).unwrap(), history);
+        assert_eq!(load(&f.store, &operation).unwrap().phase, Phase::Committed);
+        assert!(!status(&f.store).unwrap().pending);
+
+        // Resolve the conflict explicitly and retry the normal durable Undo.
+        if replaced {
+            disk::rename(&organized, f.desktop.join("Preserved new file")).unwrap();
+        }
+        disk::rename(&saved, &organized).unwrap();
+        let outcome = undo(&f.store, &operation).unwrap();
+        assert_eq!(outcome.restored, 2);
+        assert_eq!(
+            fs::inspect(Path::new(&alpha.source), true).unwrap().id,
+            alpha_id
+        );
+        assert_eq!(
+            fs::inspect(Path::new(&beta.source), true).unwrap().id,
+            beta_id
+        );
+        if replaced {
+            assert_eq!(
+                disk::read(f.desktop.join("Preserved new file")).unwrap(),
+                b"different user file"
+            );
+        }
+        assert!(!status(&f.store).unwrap().pending);
+    }
+}
+
+#[test]
+fn renamed_category_folder_rejects_undo_before_any_restore() {
+    let f = Fixture::new();
+    let alpha = f.url("Alpha");
+    let beta = f.url("Beta");
+    apply(&f.store, &f.plan(false), &AtomicBool::new(false)).unwrap();
+    let operation = status(&f.store).unwrap().undo.unwrap();
+    let catalog = f.store.apps().unwrap();
+    let original_folder = f.desktop.join("Sites");
+    let renamed_folder = f.desktop.join("Sites renamed by user");
+    disk::rename(&original_folder, &renamed_folder).unwrap();
+    disk::create_dir(&original_folder).unwrap();
+    disk::write(original_folder.join("notes.txt"), b"user-owned").unwrap();
+
+    let error = undo(&f.store, &operation).unwrap_err();
+    assert!(
+        format!("{error:#}").contains("category directory changed"),
+        "{error:#}"
+    );
+    assert!(!Path::new(&alpha.source).exists());
+    assert!(!Path::new(&beta.source).exists());
+    assert!(renamed_folder.join("Alpha.url").is_file());
+    assert!(renamed_folder.join("Beta.url").is_file());
+    assert_eq!(
+        disk::read(original_folder.join("notes.txt")).unwrap(),
+        b"user-owned"
+    );
+    assert_eq!(f.store.apps().unwrap(), catalog);
+    assert_eq!(load(&f.store, &operation).unwrap().phase, Phase::Committed);
+    assert!(!status(&f.store).unwrap().pending);
+
+    disk::rename(&original_folder, f.desktop.join("Preserved foreign folder")).unwrap();
+    disk::rename(&renamed_folder, &original_folder).unwrap();
+    assert_eq!(undo(&f.store, &operation).unwrap().restored, 2);
+    assert!(Path::new(&alpha.source).is_file());
+    assert!(Path::new(&beta.source).is_file());
+    assert_eq!(
+        disk::read(f.desktop.join("Preserved foreign folder/notes.txt")).unwrap(),
+        b"user-owned"
+    );
+}

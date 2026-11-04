@@ -378,6 +378,7 @@ fn undo_locked(store: &Store, journal: &mut Journal) -> Result<Outcome> {
     let root_path = PathBuf::from(&journal.root);
     let root = root_path.as_path();
     if journal.phase == Phase::Committed {
+        let mut verified_folders = HashSet::new();
         // Placement may legitimately reuse the vacated original filename. Do
         // not begin partial organization Undo or install its durable barrier:
         // that would also prevent the quick-placement Undo needed to free it.
@@ -411,6 +412,28 @@ fn undo_locked(store: &Store, journal: &mut Journal) -> Result<Outcome> {
                 }
                 bail!(
                     "An original desktop name is occupied by another object. Move or rename it, then retry organization Undo. No files were changed."
+                );
+            }
+            // Missing/replaced organized sources and folders are also detectable
+            // before any Undo move. Otherwise a later missing item leaves earlier
+            // items partly restored and keeps the recovery barrier active.
+            let folder = journal
+                .folders
+                .iter()
+                .find(|folder| folder.name == movement.folder)
+                .context("Missing folder reservation")?;
+            if verified_folders.insert(&movement.folder) {
+                checked_folder(root, folder)?;
+            }
+            let organized = root.join(&movement.folder).join(&movement.item.name);
+            if !fs::matches_id(&organized, &movement.item.stamp.id)? {
+                if store.get::<Config>("config")?.language == "ru" {
+                    bail!(
+                        "Перемещённый объект отсутствует или заменён. Верните оригинал в папку после уборки и повторите отмену. Файлы не изменены."
+                    );
+                }
+                bail!(
+                    "An organized object is missing or has been replaced. Restore the original to its organized folder, then retry Undo. No files were changed."
                 );
             }
         }
