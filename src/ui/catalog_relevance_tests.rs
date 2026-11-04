@@ -135,3 +135,45 @@ fn explicit_sort_and_manual_rule_filters_are_not_overridden_by_relevance() {
         assert!(cache.indices.is_empty());
     });
 }
+
+#[test]
+fn pasted_explorer_paths_find_the_correct_launch_profile_without_mutating_filters() {
+    with_saved_catalog(0, |apps, ranking| {
+        let mut cache = CatalogCache::default();
+        cache.rebuild(apps, ranking);
+        let recent = HashSet::new();
+        // Explorer's Copy as path includes quotes. Some tools use forward
+        // slashes, while Windows shortcuts keep backslashes in the catalog.
+        for query in [
+            r#""C:\Users\Editor\Work\Shortcuts\exact.lnk""#,
+            r#""C:/Users/Editor/Work/Shortcuts/exact.lnk""#,
+            r"C:\Users\Editor\Work\Shortcuts\exact.lnk",
+            r"C:/Tools/exact.exe",
+            r#"  "C:/Users/Editor/Work/Shortcuts/exact.lnk"  "#,
+        ] {
+            cache.update(apps, ranking, query, 0, 0, &recent);
+            assert_eq!(names(&cache, apps), ["Editor"], "query: {query}");
+        }
+        cache.update(
+            apps,
+            ranking,
+            r#""C:/Users/Editor/Work/Shortcuts/exact.lnk""#,
+            3,
+            0,
+            &recent,
+        );
+        assert_eq!(names(&cache, apps), ["Editor"]);
+        cache.update(
+            apps,
+            ranking,
+            r#""C:/Users/Editor/Work/Shortcuts/missing.lnk""#,
+            0,
+            0,
+            &recent,
+        );
+        assert!(cache.indices.is_empty());
+        // Existing multiword relevance and explicit sorting still apply.
+        cache.update(apps, ranking, "WORK Editor", 0, 0, &recent);
+        assert_eq!(names(&cache, apps)[0], "Work Editor");
+    });
+}
