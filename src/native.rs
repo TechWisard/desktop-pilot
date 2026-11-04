@@ -1033,29 +1033,20 @@ pub fn foreground() -> Result<Foreground> {
     }
 }
 // GetLastInputInfo reports when input last occurred, not whether a key remains
-// held down. A user can hold Ctrl/Shift/Alt/Win without producing a new input
-// event for fifteen seconds. Never start a desktop layout change in that state.
-// Keep mouse buttons covered as before, including an in-progress drag.
+// down. A long hold of Space (canvas pan), an arrow key, or a modifier can
+// outlast the fifteen-second quiet threshold with key repeat disabled.
+// Check the high bit of every standard virtual key, including mouse buttons,
+// instead of assuming that only modifier keys can stay pressed.
 fn interaction_key_held(mut down: impl FnMut(i32) -> bool) -> bool {
-    [
-        VK_LBUTTON,
-        VK_RBUTTON,
-        VK_MBUTTON,
-        VK_XBUTTON1,
-        VK_XBUTTON2,
-        VK_SHIFT,
-        VK_CONTROL,
-        VK_MENU,
-        VK_LWIN,
-        VK_RWIN,
-    ]
-    .iter()
-    .any(|key| down(key.0 as i32))
+    (0x01..=0xFE).any(&mut down)
 }
 
 pub fn quiet_for_changes() -> bool {
     unsafe {
-        if interaction_key_held(|key| GetAsyncKeyState(key) < 0) {
+        // Fast path: active input does not need the broader held-key scan.
+        if !idle_seconds().is_ok_and(|idle| idle >= 15)
+            || interaction_key_held(|key| GetAsyncKeyState(key) < 0)
+        {
             return false;
         }
         let h = GetForegroundWindow();
@@ -1392,29 +1383,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn held_keyboard_modifiers_block_idle_desktop_changes_like_mouse_drags() {
-        // Exercise the exact key-set predicate used by quiet_for_changes,
-        // without depending on a headless runner's real keyboard state.
+    fn any_held_keyboard_key_or_mouse_button_blocks_idle_desktop_changes() {
+        // Use the exact production predicate without a physical keyboard.
+        // Before this change Space, arrows, F1 and letters were missed.
         for key in [
-            VK_LBUTTON,
-            VK_RBUTTON,
-            VK_MBUTTON,
-            VK_XBUTTON1,
-            VK_XBUTTON2,
-            VK_SHIFT,
-            VK_CONTROL,
-            VK_MENU,
-            VK_LWIN,
-            VK_RWIN,
+            VK_LBUTTON.0 as i32,
+            VK_RBUTTON.0 as i32,
+            VK_MBUTTON.0 as i32,
+            VK_XBUTTON1.0 as i32,
+            VK_XBUTTON2.0 as i32,
+            VK_SHIFT.0 as i32,
+            VK_CONTROL.0 as i32,
+            VK_MENU.0 as i32,
+            VK_LWIN.0 as i32,
+            VK_RWIN.0 as i32,
+            VK_SPACE.0 as i32,
+            VK_LEFT.0 as i32,
+            VK_RIGHT.0 as i32,
+            VK_UP.0 as i32,
+            VK_DOWN.0 as i32,
+            VK_F1.0 as i32,
+            0x41, // A
         ] {
             assert!(
-                interaction_key_held(|sample| sample == key.0 as i32),
-                "a held input key must prevent automatic placement: {}",
-                key.0
+                interaction_key_held(|sample| sample == key),
+                "a held input key must prevent automatic placement: {key}"
             );
         }
+        // Neither the all-up state nor invalid virtual key endpoints vetoes.
         assert!(!interaction_key_held(|_| false));
-        assert!(!interaction_key_held(|key| key == VK_F1.0 as i32));
+        assert!(!interaction_key_held(|key| key == 0 || key == 0xFF));
     }
     #[test]
     fn desktop_namespace_children_keep_their_absolute_parsing_identity() {
