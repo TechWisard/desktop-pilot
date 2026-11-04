@@ -449,7 +449,7 @@ pub(crate) fn select_at(
     ranking: &[Ranked],
     state: &State,
     cfg: &Config,
-    initial: bool,
+    _initial: bool,
     at: i64,
 ) -> Vec<String> {
     let by_id: HashMap<_, _> = apps.iter().map(|a| (a.id.as_str(), a)).collect();
@@ -572,7 +572,10 @@ pub(crate) fn select_at(
             result.push(candidate.id.clone());
             continue;
         }
-        if !initial && replacements >= cfg.max_changes {
+        // An uninitialized review may still find managed copies from an
+        // interrupted setup or an older profile. They are familiar occupied
+        // slots, not vacancies, so the user's displacement limit still applies.
+        if replacements >= cfg.max_changes {
             break;
         }
         let worst = result
@@ -1003,6 +1006,50 @@ mod tests {
             ["familiar", "new-project"],
             "an explicit Always command must still take priority over the replacement budget"
         );
+    }
+
+    #[test]
+    fn first_review_respects_the_replacement_budget_for_existing_copies() {
+        let apps = vec![
+            app("familiar", 15.0),
+            app("older", 10.0),
+            app("new-project", 100.0),
+            app("newer-project", 120.0),
+        ];
+        let mut cfg = Config {
+            collect: true,
+            slots: 2,
+            max_changes: 0,
+            ..Default::default()
+        };
+        let ranking = rank(&apps, &[], &cfg, now());
+        // A restored or interrupted profile can have real owned files even
+        // when the initial review checkpoint was never completed.
+        let interrupted = State {
+            owned: vec![owned("familiar", false), owned("older", false)],
+            initialized: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            select(&apps, &ranking, &interrupted, &cfg, true),
+            ["familiar", "older"],
+            "initial review must not silently bypass the user's zero-replacement rule"
+        );
+        let vacancy = State {
+            owned: vec![owned("familiar", false)],
+            ..interrupted.clone()
+        };
+        assert_eq!(
+            select(&apps, &ranking, &vacancy, &cfg, true),
+            ["familiar", "newer-project"],
+            "an actual vacant slot remains useful at cold start"
+        );
+        cfg.max_changes = 1;
+        let with_one_replacement = select(&apps, &ranking, &interrupted, &cfg, true);
+        assert_eq!(with_one_replacement.len(), 2);
+        assert!(with_one_replacement.contains(&"familiar".to_owned()));
+        assert!(with_one_replacement.contains(&"newer-project".to_owned()));
+        assert!(!with_one_replacement.contains(&"older".to_owned()));
     }
 
     #[test]
