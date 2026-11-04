@@ -173,8 +173,7 @@ fn remember_keep_locked(store: &Store, plan: &Plan) -> Result<Outcome> {
     for item in &rejected {
         fs::leaf(&item.name)?;
         ensure!(
-            fs::inspect(&actual_root.join(&item.name), item.stamp.digest.is_some())?
-                == item.stamp,
+            fs::inspect(&actual_root.join(&item.name), item.stamp.digest.is_some())? == item.stamp,
             "An excluded object changed after preview; refresh the plan"
         );
     }
