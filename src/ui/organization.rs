@@ -240,7 +240,9 @@ impl Settings {
         let running = self.job.as_ref().map(|job| match job.label {
             "Analyzing the desktop…" => t("Анализируем рабочий стол…", "Analyzing the desktop…"),
             "Organizing desktop objects…" => t("Распределяем объекты…", "Organizing objects…"),
-            "Saving keep-on-desktop choices…" => t("Сохраняем исключения…", "Saving keep choices…"),
+            "Saving keep-on-desktop choices…" => {
+                t("Сохраняем исключения…", "Saving keep choices…")
+            }
             "Restoring desktop objects…" => t("Восстанавливаем объекты…", "Restoring objects…"),
             _ => t("Выполняем действие…", "Working…"),
         });

@@ -371,8 +371,11 @@ fn remembering_keep_choices_does_not_interrupt_a_running_background_mutex() {
     let background = native::exclusive("background", &f.app.store.home).unwrap();
     f.app.organization_apply();
     f.finish_job();
-    assert_eq!(f.app.notice.as_ref().unwrap().kind, NoticeKind::Success);
-    assert_eq!(fs::read(f.desktop.join("Alpha.url")).unwrap(), original_alpha);
+    assert!(f.app.notice.as_ref().unwrap().kind == NoticeKind::Success);
+    assert_eq!(
+        fs::read(f.desktop.join("Alpha.url")).unwrap(),
+        original_alpha
+    );
     assert_eq!(fs::read(f.desktop.join("Beta.url")).unwrap(), original_beta);
     assert!(!f.desktop.join("Sites").exists());
     assert!(!organize::status(&f.app.store).unwrap().pending);
