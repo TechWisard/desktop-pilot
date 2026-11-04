@@ -124,13 +124,28 @@ impl Settings {
             return;
         };
         let home = self.store.home.clone();
-        self.start_job("Organizing desktop objects…", move || {
-            let _com = native::Com::new()?;
-            let (outcome, warning) = setup::with_organization_paused(&home, |store| {
-                organize::apply_stopped(store, &plan, &AtomicBool::new(false))
-            })?;
-            Ok(JobResult::OrganizationChanged(outcome, warning))
-        });
+        let keep_only = plan.summary().0 == 0;
+        self.start_job(
+            if keep_only {
+                "Saving keep-on-desktop choices…"
+            } else {
+                "Organizing desktop objects…"
+            },
+            move || {
+                let _com = native::Com::new()?;
+                let (outcome, warning) = if keep_only {
+                    // Only an exclusion was requested: the filesystem is not
+                    // changed, so don't interrupt live usage observation.
+                    let store = Store::open(&home)?;
+                    (organize::remember_keep(&store, &plan)?, None)
+                } else {
+                    setup::with_organization_paused(&home, |store| {
+                        organize::apply_stopped(store, &plan, &AtomicBool::new(false))
+                    })?
+                };
+                Ok(JobResult::OrganizationChanged(outcome, warning))
+            },
+        );
     }
 
     fn organization_undo(&mut self, id: String) {
@@ -225,6 +240,7 @@ impl Settings {
         let running = self.job.as_ref().map(|job| match job.label {
             "Analyzing the desktop…" => t("Анализируем рабочий стол…", "Analyzing the desktop…"),
             "Organizing desktop objects…" => t("Распределяем объекты…", "Organizing objects…"),
+            "Saving keep-on-desktop choices…" => t("Сохраняем исключения…", "Saving keep choices…"),
             "Restoring desktop objects…" => t("Восстанавливаем объекты…", "Restoring objects…"),
             _ => t("Выполняем действие…", "Working…"),
         });

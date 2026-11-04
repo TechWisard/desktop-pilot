@@ -355,3 +355,44 @@ fn all_unchecked_suggestions_save_locally_without_a_folder_or_undo() {
     f.finish_job();
     assert!(f.app.organization_plan.as_ref().unwrap().items.is_empty());
 }
+
+#[test]
+fn remembering_keep_choices_does_not_interrupt_a_running_background_mutex() {
+    let mut f = Fixture::new();
+    f.analyze();
+    let original_alpha = fs::read(f.desktop.join("Alpha.url")).unwrap();
+    let original_beta = fs::read(f.desktop.join("Beta.url")).unwrap();
+    for item in &mut f.app.organization_plan.as_mut().unwrap().items {
+        item.selected = false;
+    }
+    // Simulate the real background process holding its singleton mutex. A
+    // keep-only Settings job must complete while this guard is still held,
+    // without requesting a shutdown or waiting for a worker restart.
+    let background = native::exclusive("background", &f.app.store.home).unwrap();
+    f.app.organization_apply();
+    f.finish_job();
+    assert_eq!(f.app.notice.as_ref().unwrap().kind, NoticeKind::Success);
+    assert_eq!(fs::read(f.desktop.join("Alpha.url")).unwrap(), original_alpha);
+    assert_eq!(fs::read(f.desktop.join("Beta.url")).unwrap(), original_beta);
+    assert!(!f.desktop.join("Sites").exists());
+    assert!(!organize::status(&f.app.store).unwrap().pending);
+    assert!(organize::status(&f.app.store).unwrap().undo.is_none());
+    assert!(!f.app.store.get::<bool>("shutdown").unwrap());
+    drop(background);
+    f.analyze();
+    assert!(f.app.organization_plan.as_ref().unwrap().items.is_empty());
+}
+
+#[test]
+fn keep_only_entry_point_rejects_a_plan_that_would_move_files() {
+    let mut f = Fixture::new();
+    f.analyze();
+    let before = fs::read(f.desktop.join("Alpha.url")).unwrap();
+    let plan = f.app.organization_plan.as_ref().unwrap();
+    assert_eq!(plan.summary(), (2, 1, 1));
+    let error = organize::remember_keep(&f.app.store, plan).unwrap_err();
+    assert!(format!("{error:#}").contains("cannot move"));
+    assert_eq!(fs::read(f.desktop.join("Alpha.url")).unwrap(), before);
+    assert!(!organize::status(&f.app.store).unwrap().pending);
+    assert!(organize::status(&f.app.store).unwrap().undo.is_none());
+}
