@@ -124,13 +124,28 @@ impl Settings {
             return;
         };
         let home = self.store.home.clone();
-        self.start_job("Organizing desktop objects…", move || {
-            let _com = native::Com::new()?;
-            let (outcome, warning) = setup::with_organization_paused(&home, |store| {
-                organize::apply_stopped(store, &plan, &AtomicBool::new(false))
-            })?;
-            Ok(JobResult::OrganizationChanged(outcome, warning))
-        });
+        let keep_only = plan.movements().is_empty();
+        self.start_job(
+            if keep_only {
+                "Saving keep-on-desktop choices…"
+            } else {
+                "Organizing desktop objects…"
+            },
+            move || {
+                let _com = native::Com::new()?;
+                let (outcome, warning) = if keep_only {
+                    // Rejecting suggestions does not move files. Do not stop
+                    // foreground tracking or the tray merely to save consent.
+                    let store = Store::open(&home)?;
+                    (organize::remember_kept(&store, &plan)?, None)
+                } else {
+                    setup::with_organization_paused(&home, |store| {
+                        organize::apply_stopped(store, &plan, &AtomicBool::new(false))
+                    })?
+                };
+                Ok(JobResult::OrganizationChanged(outcome, warning))
+            },
+        );
     }
 
     fn organization_undo(&mut self, id: String) {
