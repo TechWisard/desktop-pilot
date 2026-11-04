@@ -177,3 +177,103 @@ fn pasted_explorer_paths_find_the_correct_launch_profile_without_mutating_filter
         assert_eq!(names(&cache, apps)[0], "Work Editor");
     });
 }
+
+#[test]
+fn copied_absolute_paths_with_spaces_do_not_match_unrelated_launch_profiles() {
+    let root = std::env::temp_dir().join(format!(
+        "desktop-pilot-spaced-path-search-{}-{}",
+        std::process::id(),
+        now()
+    ));
+    let store = Store::open(&root).unwrap();
+    let source = r"C:\Users\Editor\Team Alpha\Shortcuts\editor.lnk";
+    store
+        .transaction(|| {
+            store.put_app(&App {
+                id: "alpha".into(),
+                name: "Alpha profile".into(),
+                source: source.into(),
+                target: r"C:\Tools\Team Alpha\editor.exe".into(),
+                policy: Policy::Never,
+                valid: true,
+                ..Default::default()
+            })?;
+            // The old token matcher could assemble one copied path from
+            // an unrelated directory prefix and a note on this entry.
+            store.put_app(&App {
+                id: "beta".into(),
+                name: "Beta profile".into(),
+                source: r"C:\Users\Editor\Team Beta\Shortcuts\editor.lnk".into(),
+                note: "Alpha/Shortcuts/editor.lnk".into(),
+                valid: true,
+                ..Default::default()
+            })?;
+            store.put_app(&App {
+                id: "network".into(),
+                name: "Network profile".into(),
+                source: r"\\server\share\Team Alpha\Links\network.lnk".into(),
+                valid: true,
+                ..Default::default()
+            })?;
+            Ok(())
+        })
+        .unwrap();
+    let apps = store.apps().unwrap();
+    let ranking = rank(&apps, &store.days().unwrap(), &Config::default(), now());
+    let mut cache = CatalogCache::default();
+    cache.rebuild(&apps, &ranking);
+    let recent = HashSet::new();
+
+    for query in [
+        r#""C:\Users\Editor\Team Alpha\Shortcuts\editor.lnk""#,
+        r"C:/Users/Editor/Team Alpha/Shortcuts/editor.lnk",
+        r#"   "C:/Users/Editor/Team Alpha/Shortcuts/editor.lnk"  "#,
+        r"C:/Tools/Team Alpha/editor.exe",
+    ] {
+        cache.update(&apps, &ranking, query, 0, 0, &recent);
+        assert_eq!(names(&cache, &apps), ["Alpha profile"], "query: {query}");
+    }
+    cache.update(
+        &apps,
+        &ranking,
+        r#""C:/Users/Editor/Team Alpha/Shortcuts/editor.lnk""#,
+        3,
+        0,
+        &recent,
+    );
+    assert_eq!(names(&cache, &apps), ["Alpha profile"]);
+    cache.update(
+        &apps,
+        &ranking,
+        r"\\server\share\Team Alpha\Links\network.lnk",
+        0,
+        0,
+        &recent,
+    );
+    assert_eq!(names(&cache, &apps), ["Network profile"]);
+    cache.update(
+        &apps,
+        &ranking,
+        r"C:/Users/Editor/Team Alpha/Shortcuts/missing.lnk",
+        0,
+        0,
+        &recent,
+    );
+    assert!(cache.indices.is_empty());
+
+    // Ordinary multiword search remains intentionally broad.
+    cache.update(&apps, &ranking, "team alpha", 0, 0, &recent);
+    assert!(names(&cache, &apps).contains(&"Beta profile".to_owned()));
+    assert_eq!(
+        store
+            .apps()
+            .unwrap()
+            .into_iter()
+            .find(|app| app.id == "alpha")
+            .unwrap()
+            .source,
+        source
+    );
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
