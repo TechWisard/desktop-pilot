@@ -284,6 +284,23 @@ impl Drop for StagedCopies {
         }
     }
 }
+
+// Until the prepared journal exists, backup files are not part of a recoverable
+// transaction. Remove only a directory this attempt created; never adopt an
+// existing history directory or discard a journaled Undo backup.
+struct UncommittedHistoryDir(Option<PathBuf>);
+impl UncommittedHistoryDir {
+    fn journaled(&mut self) {
+        self.0 = None;
+    }
+}
+impl Drop for UncommittedHistoryDir {
+    fn drop(&mut self) {
+        if let Some(directory) = self.0.take() {
+            let _ = std::fs::remove_dir_all(directory);
+        }
+    }
+}
 fn shortcut_path(
     desktop: &Path,
     name: &str,
@@ -1380,7 +1397,9 @@ fn apply_locked(
         std::process::id()
     );
     let directory = store.home.join("history").join(&id);
-    std::fs::create_dir_all(&directory)?;
+    std::fs::create_dir_all(store.home.join("history"))?;
+    std::fs::create_dir(&directory)?;
+    let mut uncommitted_history = UncommittedHistoryDir(Some(directory.clone()));
     let mut tx = Transaction {
         id: id.clone(),
         before: before.clone(),
@@ -1475,6 +1494,7 @@ fn apply_locked(
     if !still_quiet() {
         drop(staging);
         std::fs::remove_dir_all(&directory)?;
+        uncommitted_history.journaled();
         return Ok(None);
     }
     after.last_change = now();
@@ -1483,6 +1503,9 @@ fn apply_locked(
         "INSERT INTO transactions VALUES(?1,?2,'prepared',?3)",
         params![tx.id, now(), serde_json::to_string(&tx)?],
     )?;
+    // The prepared row is durable: future failures must use Undo and keep its
+    // backups, rather than cleaning them as an abandoned preparation.
+    uncommitted_history.journaled();
     let operation = (|| -> Result<()> {
         for c in &tx.changes {
             let file = Path::new(&c.file.path);
@@ -3472,6 +3495,90 @@ mod tests {
             );
         });
     }
+    #[test]
+    fn failed_preparation_cleans_unjournaled_backups_without_changing_the_desktop() {
+        with_store(|store| {
+            let familiar = add_test_app(store, "Familiar shortcut", "steam://rungameid/1701");
+            apply(store, true).unwrap();
+            let before: State = store.get("state").unwrap();
+            let owned_bytes = std::fs::read(&before.owned[0].path).unwrap();
+            let original_bytes = std::fs::read(&familiar.source).unwrap();
+            let history = store.home.join("history");
+            let saved_history: HashSet<_> = std::fs::read_dir(&history)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect();
+
+            // The next review has to back up a removed managed copy before
+            // preparing the replacement. Simulate the original being changed
+            // by an installer after the catalog snapshot but before copy.
+            store.policy(&familiar.id, Policy::Never).unwrap();
+            let newcomer = add_test_app(store, "New project", "steam://rungameid/1702");
+            let newcomer_bytes = std::fs::read(&newcomer.source).unwrap();
+            let error = apply_locked(
+                store,
+                false,
+                || std::fs::write(&newcomer.source, b"[InternetShortcut]\r\n").unwrap(),
+                || true,
+            )
+            .unwrap_err();
+            assert!(
+                format!("{error:#}").contains("shortcut") || format!("{error:#}").contains("URL"),
+                "{error:#}"
+            );
+
+            let after: State = store.get("state").unwrap();
+            assert_eq!(after.owned.len(), 1);
+            assert_eq!(after.owned[0].file_id, before.owned[0].file_id);
+            assert_eq!(std::fs::read(&before.owned[0].path).unwrap(), owned_bytes);
+            assert_eq!(std::fs::read(&familiar.source).unwrap(), original_bytes);
+            assert_eq!(
+                std::fs::read_dir(&history)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().file_name())
+                    .collect::<HashSet<_>>(),
+                saved_history,
+                "An aborted, unjournaled Apply must not accumulate backup directories"
+            );
+            assert_eq!(
+                store
+                    .db
+                    .query_row("SELECT COUNT(*) FROM transactions", [], |row| row
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                1,
+                "The aborted attempt must not claim a recoverable transaction"
+            );
+            assert!(
+                std::fs::read_dir(root(store).unwrap())
+                    .unwrap()
+                    .all(|entry| {
+                        !entry
+                            .unwrap()
+                            .file_name()
+                            .to_string_lossy()
+                            .starts_with(".desktop-pilot-")
+                    }),
+                "An aborted attempt must not leave hidden desktop staging"
+            );
+
+            // A retry after the external source becomes healthy is still safe.
+            std::fs::write(&newcomer.source, newcomer_bytes).unwrap();
+            apply(store, false).unwrap();
+            let completed: State = store.get("state").unwrap();
+            assert_eq!(completed.owned.len(), 1);
+            assert_eq!(completed.owned[0].app, newcomer.id);
+            assert!(
+                std::fs::read(&newcomer.source)
+                    .unwrap()
+                    .starts_with(b"[InternetShortcut]")
+            );
+            assert!(Path::new(&familiar.source).exists());
+            rollback(store).unwrap();
+            assert!(Path::new(&familiar.source).exists());
+        });
+    }
+
     #[test]
     fn paused_collection_rejects_in_flight_usage_and_learning_writes() {
         with_store(|store| {
