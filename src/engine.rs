@@ -3182,6 +3182,81 @@ mod tests {
         });
     }
     #[test]
+    fn zero_replacements_preserves_existing_files_but_recovers_a_free_slot() {
+        with_store(|store| {
+            let mut cfg: Config = store.get("config").unwrap();
+            cfg.collect = true;
+            cfg.slots = 2;
+            cfg.max_changes = 0;
+            cfg.validate().unwrap();
+            store.set("config", &cfg).unwrap();
+
+            let mut familiar = add_test_app(store, "Familiar editor", "steam://rungameid/701");
+            familiar.policy = Policy::Auto;
+            familiar.seed = 20.0;
+            familiar.seed_at = now();
+            store.put_app(&familiar).unwrap();
+            let mut older = add_test_app(store, "Older project", "steam://rungameid/702");
+            older.policy = Policy::Auto;
+            older.seed = 10.0;
+            older.seed_at = now();
+            store.put_app(&older).unwrap();
+
+            apply(store, true).unwrap();
+            let original: State = store.get("state").unwrap();
+            assert_eq!(original.owned.len(), 2);
+            let file_snapshots: Vec<_> = original
+                .owned
+                .iter()
+                .map(|owned| {
+                    (
+                        owned.app.clone(),
+                        owned.path.clone(),
+                        owned.position.clone(),
+                        owned.file_id.clone(),
+                        std::fs::read(&owned.path).unwrap(),
+                    )
+                })
+                .collect();
+
+            let mut emerging = add_test_app(store, "New hot project", "steam://rungameid/703");
+            emerging.policy = Policy::Auto;
+            emerging.seed = 500.0;
+            emerging.seed_at = now();
+            store.put_app(&emerging).unwrap();
+
+            let stable = preview(store, false).unwrap();
+            assert!(stable.added.is_empty());
+            assert!(stable.removed.is_empty());
+            apply(store, false).unwrap();
+            let unchanged: State = store.get("state").unwrap();
+            for (id, path, position, identity, bytes) in &file_snapshots {
+                let owned = unchanged.owned.iter().find(|o| &o.app == id).unwrap();
+                assert_eq!(&owned.path, path);
+                assert_eq!(&owned.position, position);
+                assert_eq!(&owned.file_id, identity);
+                assert_eq!(&std::fs::read(path).unwrap(), bytes);
+            }
+
+            // A deliberate Never rule is not a ranked automatic replacement.
+            // Once that slot is released, the newer useful app can fill it.
+            command(store, &format!("policy:{}:Never", older.id)).unwrap();
+            let freed = preview(store, false).unwrap();
+            assert!(freed.selected.contains(&familiar.id));
+            assert!(freed.selected.contains(&emerging.id));
+            assert!(!freed.selected.contains(&older.id));
+            apply(store, false).unwrap();
+            let final_state: State = store.get("state").unwrap();
+            assert_eq!(final_state.owned.len(), 2);
+            assert!(final_state.owned.iter().any(|o| o.app == familiar.id));
+            assert!(final_state.owned.iter().any(|o| o.app == emerging.id));
+            assert!(!final_state.owned.iter().any(|o| o.app == older.id));
+            assert!(Path::new(&older.source).exists());
+            assert!(Path::new(&familiar.source).exists());
+        });
+    }
+
+    #[test]
     fn filenames_handle_devices_empty_names_and_multiple_existing_copies() {
         with_store(|store| {
             let desktop = root(store).unwrap();
