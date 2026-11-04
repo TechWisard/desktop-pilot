@@ -382,7 +382,10 @@ fn remembering_keep_choices_does_not_interrupt_a_running_background_mutex() {
     assert!(organize::status(&f.app.store).unwrap().undo.is_none());
     assert!(!f.app.store.get::<bool>("shutdown").unwrap());
     drop(background);
-    f.analyze();
+    // A successful remembered choice intentionally removes all suggestions;
+    // Fixture::analyze requires two suggestions and is for first-run only.
+    f.app.organization_analyze();
+    f.finish_job();
     assert!(f.app.organization_plan.as_ref().unwrap().items.is_empty());
 }
 
