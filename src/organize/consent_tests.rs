@@ -72,6 +72,78 @@ impl Fixture {
 }
 
 #[test]
+fn keep_only_consent_preserves_a_running_background_and_never_creates_a_journal() {
+    let f = Fixture::new();
+    f.site("Alpha");
+    f.site("Beta");
+    let before = f.store.apps().unwrap();
+    let alpha = disk::read(f.desktop.join("Alpha.url")).unwrap();
+    let beta = disk::read(f.desktop.join("Beta.url")).unwrap();
+    let mut plan = f.plan(false);
+    for item in &mut plan.items {
+        item.selected = false;
+    }
+    assert_eq!(plan.summary(), (0, 0, 0));
+
+    // Hold the same singleton a real background process owns. A keep-only
+    // decision must not request its shutdown or depend on releasing this lock.
+    let worker = native::exclusive("background", &f.store.home).unwrap();
+    assert!(native::is_running("background", &f.store.home).unwrap());
+    assert!(!f.store.get::<bool>("shutdown").unwrap());
+    let outcome = remember_kept(&f.store, &plan).unwrap();
+    assert_eq!(outcome.kept, 2);
+    assert_eq!(outcome.moved, 0);
+    assert_eq!(outcome.folders_created, 0);
+    assert!(native::is_running("background", &f.store.home).unwrap());
+    assert!(!f.store.get::<bool>("shutdown").unwrap());
+    assert!(!f.store.get::<bool>("background_disabled").unwrap());
+    assert_eq!(f.store.apps().unwrap(), before);
+    assert_eq!(disk::read(f.desktop.join("Alpha.url")).unwrap(), alpha);
+    assert_eq!(disk::read(f.desktop.join("Beta.url")).unwrap(), beta);
+    assert!(!f.desktop.join("Sites").exists());
+    assert!(f.store.get::<Vec<String>>(HISTORY).unwrap().is_empty());
+    assert!(!status(&f.store).unwrap().pending);
+    assert!(status(&f.store).unwrap().undo.is_none());
+    assert_eq!(f.store.get::<Vec<String>>(KEEP).unwrap().len(), 2);
+    drop(worker);
+
+    // A new Settings process sees the same explicit choices.
+    let reopened = Store::open(&f.store.home).unwrap();
+    assert!(analyze(&reopened, Options::default(), &Config::default(), &AtomicBool::new(false))
+        .unwrap()
+        .items
+        .is_empty());
+}
+
+#[test]
+fn keep_only_preflight_is_atomic_under_a_live_background_lock() {
+    let f = Fixture::new();
+    f.site("Alpha");
+    f.site("Beta");
+    let mut plan = f.plan(false);
+    let wrong = plan.clone();
+    for item in &mut plan.items {
+        item.selected = false;
+    }
+    let worker = native::exclusive("background", &f.store.home).unwrap();
+    assert!(remember_kept(&f.store, &wrong).is_err());
+    assert!(f.store.get::<Vec<String>>(KEEP).unwrap().is_empty());
+
+    disk::write(f.desktop.join("Alpha.url"), b"[InternetShortcut]\r\nURL=https://example.invalid/changed\r\n").unwrap();
+    let error = remember_kept(&f.store, &plan).unwrap_err();
+    assert!(
+        format!("{error:#}").contains("changed after preview"),
+        "{error:#}"
+    );
+    assert!(native::is_running("background", &f.store.home).unwrap());
+    assert!(!f.store.get::<bool>("shutdown").unwrap());
+    assert!(f.store.get::<Vec<String>>(KEEP).unwrap().is_empty());
+    assert!(status(&f.store).unwrap().undo.is_none());
+    assert!(f.desktop.join("Beta.url").exists());
+    drop(worker);
+}
+
+#[test]
 fn old_preview_cannot_override_a_new_keep_choice_after_undo() {
     let f = Fixture::new();
     for name in ["Alpha", "Beta", "Gamma"] {
