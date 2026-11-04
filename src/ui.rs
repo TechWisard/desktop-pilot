@@ -57,6 +57,14 @@ impl CatalogCache {
         // Explorer copies quoted paths; either separator should find the same
         // shortcut without changing its stored Windows launch identity.
         let query_lower = query.to_lowercase().replace('\\', "/");
+        // A copied absolute path is one continuous location. Splitting a
+        // directory like "Team Alpha" into separate search words can also
+        // match a different profile using fragments from unrelated fields.
+        let path = query_lower.trim().trim_matches('"');
+        let absolute_path = (path.starts_with("//")
+            || (path.as_bytes().get(1) == Some(&b':')
+                && path.as_bytes().get(2) == Some(&b'/')))
+        .then_some(path);
         let words: Vec<_> = query_lower
             .split_whitespace()
             .map(|word| word.trim_matches('"'))
@@ -67,7 +75,10 @@ impl CatalogCache {
             .iter()
             .enumerate()
             .filter(|(index, app)| {
-                words.iter().all(|word| self.search[*index].contains(word))
+                absolute_path.map_or_else(
+                    || words.iter().all(|word| self.search[*index].contains(word)),
+                    |path| self.search[*index].contains(path),
+                )
                     && match filter {
                         1 => ranked(app).is_some_and(|ranked| ranked.eligible),
                         2 => app.policy == Policy::Always,
