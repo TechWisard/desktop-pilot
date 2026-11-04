@@ -178,7 +178,6 @@ fn pasted_explorer_paths_find_the_correct_launch_profile_without_mutating_filter
     });
 }
 
-
 #[test]
 fn copied_absolute_paths_with_spaces_do_not_match_unrelated_launch_profiles() {
     let root = std::env::temp_dir().join(format!(
