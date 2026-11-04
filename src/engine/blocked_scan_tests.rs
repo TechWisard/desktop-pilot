@@ -103,25 +103,37 @@ fn slow_catalog_read_cannot_delay_manual_policy_heartbeat_or_shutdown() {
     );
     // The scanner is still waiting on its real discovery gate. Prior builds
     // ran housekeeping only after scan completion and left these rows behind.
-    let old_rows: i64 = store
-        .db
-        .query_row(
-            "SELECT COUNT(*) FROM days WHERE date=?1",
-            [old_day],
-            |row| row.get(0),
-        )
-        .unwrap();
-    let recent_rows: i64 = store
-        .db
-        .query_row(
-            "SELECT COUNT(*) FROM days WHERE date=?1",
-            [recent_day],
-            |row| row.get(0),
-        )
-        .unwrap();
-    let retained_session_times: HashMap<String, i64> = store.get("app_session_times").unwrap();
-    let retention_during_scan =
-        old_rows == 0 && recent_rows == 1 && !retained_session_times.contains_key(&app.id);
+    // The scan gate opens before the monitor's first housekeeping pass.
+    // Poll the actual SQLite state while discovery remains blocked: reaching
+    // the scan boundary alone does not prove retention has run yet.
+    let retention_wait = Instant::now();
+    let retention_during_scan = loop {
+        let old_rows: i64 = store
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM days WHERE date=?1",
+                [old_day],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let recent_rows: i64 = store
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM days WHERE date=?1",
+                [recent_day],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let retained_session_times: HashMap<String, i64> =
+            store.get("app_session_times").unwrap();
+        if old_rows == 0 && recent_rows == 1 && !retained_session_times.contains_key(&app.id) {
+            break true;
+        }
+        if retention_wait.elapsed() >= Duration::from_secs(7) {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
     store.command(&format!("policy:{}:Never", app.id)).unwrap();
     let command_id = store.db.last_insert_rowid();
     let started = Instant::now();
