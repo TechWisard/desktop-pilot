@@ -64,6 +64,15 @@ impl CatalogCache {
         let absolute_path = (path.starts_with("//")
             || (path.as_bytes().get(1) == Some(&b':') && path.as_bytes().get(2) == Some(&b'/')))
         .then_some(path);
+        // A complete copied shortcut path identifies its exact source, not a
+        // backup name, an arbitrary note, or part of a different launch profile.
+        // Keep partial directory searches intentionally broad. Several launch
+        // profiles may legitimately share one executable target.
+        let full_file_path = absolute_path.filter(|path| {
+            path.rsplit('/').next().is_some_and(|leaf| {
+                leaf.ends_with(".lnk") || leaf.ends_with(".url") || leaf.ends_with(".exe")
+            })
+        });
         let words: Vec<_> = query_lower
             .split_whitespace()
             .map(|word| word.trim_matches('"'))
@@ -74,10 +83,20 @@ impl CatalogCache {
             .iter()
             .enumerate()
             .filter(|(index, app)| {
-                absolute_path.map_or_else(
-                    || words.iter().all(|word| self.search[*index].contains(word)),
-                    |path| self.search[*index].contains(path),
-                ) && match filter {
+                let matches = if let Some(path) = full_file_path {
+                    let source = app.source.to_lowercase().replace('\\', "/");
+                    if path.ends_with(".lnk") || path.ends_with(".url") {
+                        source == path
+                    } else {
+                        source == path || app.target.to_lowercase().replace('\\', "/") == path
+                    }
+                } else {
+                    absolute_path.map_or_else(
+                        || words.iter().all(|word| self.search[*index].contains(word)),
+                        |path| self.search[*index].contains(path),
+                    )
+                };
+                matches && match filter {
                     1 => ranked(app).is_some_and(|ranked| ranked.eligible),
                     2 => app.policy == Policy::Always,
                     3 => app.policy == Policy::Never,
