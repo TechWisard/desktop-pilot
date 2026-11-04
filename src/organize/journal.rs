@@ -147,7 +147,6 @@ fn restore_layout(journal: &Journal, undo: bool) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
 // Keep-only consent changes SQLite, not desktop paths. The normal worker
 // remains running; no file-move startup/background lock is required.
 fn remember_keep_locked(store: &Store, plan: &Plan) -> Result<Outcome> {
@@ -204,6 +203,7 @@ pub(crate) fn remember_keep(store: &Store, plan: &Plan) -> Result<Outcome> {
     remember_keep_locked(store, plan)
 }
 
+#[cfg(test)]
 pub fn apply(store: &Store, plan: &Plan, cancel: &AtomicBool) -> Result<Outcome> {
     let _stopped = native::exclusive("background", &store.home)?;
     apply_stopped(store, plan, cancel)
