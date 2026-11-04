@@ -1038,8 +1038,16 @@ pub fn foreground() -> Result<Foreground> {
 // Keep mouse buttons covered as before, including an in-progress drag.
 fn interaction_key_held(mut down: impl FnMut(i32) -> bool) -> bool {
     [
-        VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2,
-        VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN,
+        VK_LBUTTON,
+        VK_RBUTTON,
+        VK_MBUTTON,
+        VK_XBUTTON1,
+        VK_XBUTTON2,
+        VK_SHIFT,
+        VK_CONTROL,
+        VK_MENU,
+        VK_LWIN,
+        VK_RWIN,
     ]
     .iter()
     .any(|key| down(key.0 as i32))
@@ -1388,8 +1396,16 @@ mod tests {
         // Exercise the exact key-set predicate used by quiet_for_changes,
         // without depending on a headless runner's real keyboard state.
         for key in [
-            VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2,
-            VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN,
+            VK_LBUTTON,
+            VK_RBUTTON,
+            VK_MBUTTON,
+            VK_XBUTTON1,
+            VK_XBUTTON2,
+            VK_SHIFT,
+            VK_CONTROL,
+            VK_MENU,
+            VK_LWIN,
+            VK_RWIN,
         ] {
             assert!(
                 interaction_key_held(|sample| sample == key.0 as i32),
