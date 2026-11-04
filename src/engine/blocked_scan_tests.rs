@@ -124,8 +124,7 @@ fn slow_catalog_read_cannot_delay_manual_policy_heartbeat_or_shutdown() {
                 |row| row.get(0),
             )
             .unwrap();
-        let retained_session_times: HashMap<String, i64> =
-            store.get("app_session_times").unwrap();
+        let retained_session_times: HashMap<String, i64> = store.get("app_session_times").unwrap();
         if old_rows == 0 && recent_rows == 1 && !retained_session_times.contains_key(&app.id) {
             break true;
         }
