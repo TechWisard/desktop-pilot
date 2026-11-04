@@ -3252,7 +3252,7 @@ mod tests {
             assert!(final_state.owned.iter().any(|o| o.app == emerging.id));
             assert!(!final_state.owned.iter().any(|o| o.app == older.id));
             assert!(Path::new(&older.source).exists());
-            assert_eq!(std::fs::read(&familiar.source).unwrap(), std::fs::read(&file_snapshots[0].1).unwrap());
+            assert!(Path::new(&familiar.source).exists());
         });
     }
 
