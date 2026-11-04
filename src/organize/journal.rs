@@ -147,6 +147,61 @@ fn restore_layout(journal: &Journal, undo: bool) -> Result<()> {
     Ok(())
 }
 
+// Keep-only consent changes SQLite, not desktop paths. The normal worker
+// remains running; no file-move startup/background lock is required.
+fn remember_keep_locked(store: &Store, plan: &Plan) -> Result<Outcome> {
+    ensure!(
+        plan.movements().is_empty(),
+        "Keep-only consent cannot move desktop objects"
+    );
+    // Rejecting every suggestion is still a useful user decision. Save it
+    // without creating a fake move, a recovery journal or any new folder.
+    let rejected: Vec<_> = plan.items.iter().filter(|item| !item.selected).collect();
+    ensure!(
+        !rejected.is_empty(),
+        "Select an object to organize or keep on the desktop"
+    );
+    let actual_root = root(store)?;
+    let directory = fs::directory(&actual_root)?;
+    ensure!(
+        fs::identity(&directory)? == plan.root_id
+            && norm(&actual_root.to_string_lossy()) == norm(&plan.root),
+        "The desktop changed after preview; refresh the plan"
+    );
+    // Do not remember a now-foreign file under a stale preview identity.
+    // A failed check must leave every existing exclusion unchanged.
+    for item in &rejected {
+        fs::leaf(&item.name)?;
+        ensure!(
+            fs::inspect(&actual_root.join(&item.name), item.stamp.digest.is_some())? == item.stamp,
+            "An excluded object changed after preview; refresh the plan"
+        );
+    }
+    store.transaction(|| {
+        ensure_ready(store)?;
+        let mut keep: HashSet<String> = store.get::<Vec<String>>(KEEP)?.into_iter().collect();
+        keep.extend(rejected.iter().map(|item| item.stamp.id.clone()));
+        let mut keep: Vec<_> = keep.into_iter().collect();
+        keep.sort();
+        store.set(KEEP, &keep)
+    })?;
+    Ok(Outcome {
+        kept: rejected.len(),
+        ..Default::default()
+    })
+}
+
+/// Persist explicit leave-on-desktop choices without stopping foreground
+/// collection or restarting the background worker. All competing organizers
+/// and shortcut writers still share the normal changes lock.
+pub(crate) fn remember_keep(store: &Store, plan: &Plan) -> Result<Outcome> {
+    let _changes = native::exclusive("changes", &store.home)?;
+    let _desktop = native::exclusive("organization", Path::new(&plan.root))?;
+    ensure_ready(store)?;
+    no_placement_in_progress(store)?;
+    remember_keep_locked(store, plan)
+}
+
 #[cfg(test)]
 pub fn apply(store: &Store, plan: &Plan, cancel: &AtomicBool) -> Result<Outcome> {
     let _stopped = native::exclusive("background", &store.home)?;
@@ -161,42 +216,7 @@ pub(crate) fn apply_stopped(store: &Store, plan: &Plan, cancel: &AtomicBool) -> 
     no_placement_in_progress(store)?;
     let movements = plan.movements();
     if movements.is_empty() {
-        // Rejecting every suggestion is still a useful user decision. Save it
-        // without creating a fake move, a recovery journal or any new folder.
-        let rejected: Vec<_> = plan.items.iter().filter(|item| !item.selected).collect();
-        ensure!(
-            !rejected.is_empty(),
-            "Select an object to organize or keep on the desktop"
-        );
-        let actual_root = root(store)?;
-        let directory = fs::directory(&actual_root)?;
-        ensure!(
-            fs::identity(&directory)? == plan.root_id
-                && norm(&actual_root.to_string_lossy()) == norm(&plan.root),
-            "The desktop changed after preview; refresh the plan"
-        );
-        // Do not remember a now-foreign file under a stale preview identity.
-        // A failed check must leave every existing exclusion unchanged.
-        for item in &rejected {
-            fs::leaf(&item.name)?;
-            ensure!(
-                fs::inspect(&actual_root.join(&item.name), item.stamp.digest.is_some())?
-                    == item.stamp,
-                "An excluded object changed after preview; refresh the plan"
-            );
-        }
-        store.transaction(|| {
-            ensure_ready(store)?;
-            let mut keep: HashSet<String> = store.get::<Vec<String>>(KEEP)?.into_iter().collect();
-            keep.extend(rejected.iter().map(|item| item.stamp.id.clone()));
-            let mut keep: Vec<_> = keep.into_iter().collect();
-            keep.sort();
-            store.set(KEEP, &keep)
-        })?;
-        return Ok(Outcome {
-            kept: rejected.len(),
-            ..Default::default()
-        });
+        return remember_keep_locked(store, plan);
     }
     let mut journal = Journal {
         id: fs::operation_id()?,

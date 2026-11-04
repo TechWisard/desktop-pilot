@@ -5,6 +5,7 @@ mod acceptance_tests;
 mod consent_tests;
 mod fs;
 mod journal;
+pub(crate) use journal::remember_keep;
 mod metadata;
 mod plan;
 #[cfg(test)]
