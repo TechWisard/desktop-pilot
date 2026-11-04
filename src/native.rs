@@ -1032,12 +1032,22 @@ pub fn foreground() -> Result<Foreground> {
         })
     }
 }
+// GetLastInputInfo reports when input last occurred, not whether a key remains
+// held down. A user can hold Ctrl/Shift/Alt/Win without producing a new input
+// event for fifteen seconds. Never start a desktop layout change in that state.
+// Keep mouse buttons covered as before, including an in-progress drag.
+fn interaction_key_held(mut down: impl FnMut(i32) -> bool) -> bool {
+    [
+        VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2,
+        VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN,
+    ]
+    .iter()
+    .any(|key| down(key.0 as i32))
+}
+
 pub fn quiet_for_changes() -> bool {
     unsafe {
-        if [VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2]
-            .iter()
-            .any(|key| GetAsyncKeyState(key.0 as i32) < 0)
-        {
+        if interaction_key_held(|key| GetAsyncKeyState(key) < 0) {
             return false;
         }
         let h = GetForegroundWindow();
@@ -1064,7 +1074,13 @@ pub fn quiet_for_changes() -> bool {
             && r.top <= mi.rcMonitor.top
             && r.right >= mi.rcMonitor.right
             && r.bottom >= mi.rcMonitor.bottom;
-        !full && idle_seconds().is_ok_and(|idle| idle >= 15)
+        // A different foreground window can replace the measured one while
+        // Windows resolves its bounds. Recheck both identity and held inputs
+        // immediately before granting permission to alter the desktop.
+        !full
+            && GetForegroundWindow() == h
+            && !interaction_key_held(|key| GetAsyncKeyState(key) < 0)
+            && idle_seconds().is_ok_and(|idle| idle >= 15)
     }
 }
 
@@ -1366,6 +1382,24 @@ pub fn activate_process_window(pid: u32) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn held_keyboard_modifiers_block_idle_desktop_changes_like_mouse_drags() {
+        // Exercise the exact key-set predicate used by quiet_for_changes,
+        // without depending on a headless runner's real keyboard state.
+        for key in [
+            VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2,
+            VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN,
+        ] {
+            assert!(
+                interaction_key_held(|sample| sample == key.0 as i32),
+                "a held input key must prevent automatic placement: {}",
+                key.0
+            );
+        }
+        assert!(!interaction_key_held(|_| false));
+        assert!(!interaction_key_held(|key| key == VK_F1.0 as i32));
+    }
     #[test]
     fn desktop_namespace_children_keep_their_absolute_parsing_identity() {
         let _com = Com::new().unwrap();
