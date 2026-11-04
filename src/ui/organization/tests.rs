@@ -81,6 +81,40 @@ impl Fixture {
     }
 }
 
+#[test]
+fn keep_only_settings_action_does_not_stop_an_active_background_session() {
+    let mut f = Fixture::new();
+    f.analyze();
+    let alpha = fs::read(f.desktop.join("Alpha.url")).unwrap();
+    for item in &mut f.app.organization_plan.as_mut().unwrap().items {
+        item.selected = false;
+    }
+    f.app
+        .store
+        .set("background_disabled", &false)
+        .unwrap();
+    let worker = native::exclusive("background", &f.app.store.home).unwrap();
+    f.app.organization_apply();
+    f.finish_job();
+
+    assert!(
+        f.app.notice.as_ref().is_some_and(|notice| {
+            notice.kind == NoticeKind::Success
+                && notice.text.contains("Keep choices saved")
+        }),
+        "The Settings action must complete without waiting for the worker to exit"
+    );
+    assert!(native::is_running("background", &f.app.store.home).unwrap());
+    assert!(!f.app.store.get::<bool>("shutdown").unwrap());
+    assert_eq!(
+        f.app.store.get::<Vec<String>>("organization.keep.v1").unwrap().len(),
+        2
+    );
+    assert!(f.app.store.get::<Vec<String>>("organization.history.v1").unwrap().is_empty());
+    assert_eq!(fs::read(f.desktop.join("Alpha.url")).unwrap(), alpha);
+    drop(worker);
+}
+
 fn rendered_text(output: &egui::FullOutput) -> Vec<(String, egui::Rect)> {
     fn collect_visible(
         shape: &egui::epaint::Shape,
