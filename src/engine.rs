@@ -3225,6 +3225,20 @@ mod tests {
             emerging.seed_at = now();
             store.put_app(&emerging).unwrap();
 
+            // A restored profile can keep managed copies but lose its
+            // initial-review checkpoint. Treat those copies as occupied even
+            // on the first review. Exercise the real Store, scan and Apply.
+            let mut interrupted = original.clone();
+            interrupted.initialized = false;
+            store.set("state", &interrupted).unwrap();
+            let cold = preview(store, true).unwrap();
+            assert!(cold.added.is_empty());
+            assert!(cold.removed.is_empty());
+            apply(store, true).unwrap();
+            let resumed: State = store.get("state").unwrap();
+            assert!(resumed.initialized);
+            assert_eq!(resumed.owned.len(), 2);
+
             let stable = preview(store, false).unwrap();
             assert!(stable.added.is_empty());
             assert!(stable.removed.is_empty());
