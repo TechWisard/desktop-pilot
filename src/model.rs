@@ -168,7 +168,7 @@ impl Config {
             "Порог преимущества: 1,1–3"
         );
         ensure!(
-            (1..=self.slots).contains(&self.max_changes),
+            (0..=self.slots).contains(&self.max_changes),
             "Число замен превышает число мест"
         );
         ensure!(
@@ -957,6 +957,52 @@ mod tests {
         assert_eq!(selected, ["fixed", "replace", "new-a", "new-b"]);
         assert!(!selected.contains(&"weak".to_owned()));
         assert!(!selected.contains(&"extra".to_owned()));
+    }
+
+    #[test]
+    fn zero_replacement_limit_still_fills_vacancies_and_honors_explicit_choices() {
+        let cfg = Config {
+            collect: true,
+            slots: 2,
+            max_changes: 0,
+            ..Default::default()
+        };
+        cfg.validate().unwrap();
+        let apps = vec![
+            app("familiar", 15.0),
+            app("older", 10.0),
+            app("new-project", 100.0),
+        ];
+        let ranking = rank(&apps, &[], &cfg, now());
+        let state = State {
+            owned: vec![owned("familiar", false), owned("older", false)],
+            initialized: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            select(&apps, &ranking, &state, &cfg, false),
+            ["familiar", "older"],
+            "automatic review must not replace familiar shortcuts when the user set zero"
+        );
+
+        let vacancy = State {
+            owned: vec![owned("familiar", false)],
+            ..state.clone()
+        };
+        assert_eq!(
+            select(&apps, &ranking, &vacancy, &cfg, false),
+            ["familiar", "new-project"],
+            "an empty slot should still become useful without displacing an existing one"
+        );
+
+        let mut chosen = apps.clone();
+        chosen[2].policy = Policy::Always;
+        let ranking = rank(&chosen, &[], &cfg, now());
+        assert_eq!(
+            select(&chosen, &ranking, &state, &cfg, false),
+            ["familiar", "new-project"],
+            "an explicit Always command must still take priority over the replacement budget"
+        );
     }
 
     #[test]
