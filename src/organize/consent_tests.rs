@@ -203,12 +203,23 @@ fn rejecting_all_suggestions_persists_a_choice_without_a_fake_organization() {
     assert_eq!(preview.summary(), (0, 0, 0));
 
     let outcome = apply(&f.store, &preview, &AtomicBool::new(false)).unwrap();
-    assert_eq!((outcome.moved, outcome.restored, outcome.folders_created, outcome.kept), (0, 0, 0, 2));
+    assert_eq!(
+        (
+            outcome.moved,
+            outcome.restored,
+            outcome.folders_created,
+            outcome.kept
+        ),
+        (0, 0, 0, 2)
+    );
     assert_eq!(f.store.apps().unwrap(), before);
     assert_eq!(disk::read(f.desktop.join("Alpha.url")).unwrap(), alpha);
     assert_eq!(disk::read(f.desktop.join("Beta.url")).unwrap(), beta);
     assert!(!f.desktop.join("Sites").exists());
-    assert_eq!(f.store.get::<Vec<String>>(HISTORY).unwrap(), Vec::<String>::new());
+    assert_eq!(
+        f.store.get::<Vec<String>>(HISTORY).unwrap(),
+        Vec::<String>::new()
+    );
     assert!(status(&f.store).unwrap().undo.is_none());
     assert!(!status(&f.store).unwrap().pending);
 
@@ -216,7 +227,9 @@ fn rejecting_all_suggestions_persists_a_choice_without_a_fake_organization() {
     let reopened = Store::open(&f.store.home).unwrap();
     let next = analyze(
         &reopened,
-        Options { include_files: false },
+        Options {
+            include_files: false,
+        },
         &Config::default(),
         &AtomicBool::new(false),
     )

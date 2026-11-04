@@ -342,9 +342,11 @@ fn all_unchecked_suggestions_save_locally_without_a_folder_or_undo() {
     assert_eq!(plan.summary(), (0, 0, 0));
     f.app.organization_apply();
     f.finish_job();
-    assert_eq!(f.app.notice.as_ref().unwrap().kind, NoticeKind::Success);
-    assert!(f.app.notice.as_ref().unwrap().text.contains("Keep choices saved")
-        || f.app.notice.as_ref().unwrap().text.contains("Исключения сохранены"));
+    assert!(f.app.notice.as_ref().unwrap().kind == NoticeKind::Success);
+    let message = &f.app.notice.as_ref().unwrap().text;
+    assert!(
+        message.contains("Keep choices saved") || message.contains("Исключения сохранены")
+    );
     assert!(f.desktop.join("Alpha.url").is_file());
     assert!(f.desktop.join("Beta.url").is_file());
     assert!(!f.desktop.join("Sites").exists());
