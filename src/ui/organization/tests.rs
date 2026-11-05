@@ -429,3 +429,64 @@ fn new_analysis_reveals_all_candidates_after_a_stale_filtered_preview() {
     assert!(!f.desktop.join("Sites").exists());
     assert!(organize::status(&f.app.store).unwrap().undo.is_none());
 }
+
+#[test]
+fn unchanged_organizer_frames_reuse_production_projection_but_edits_invalidate_it() {
+    let mut fixture = Fixture::new();
+    fixture.analyze();
+    let mut plan = fixture.app.organization_plan.as_ref().unwrap().clone();
+    let mut config = fixture.app.config.clone();
+    let mut cache = None;
+    let mut calculations = 0;
+
+    let expected = plan.projected_zone(&config).is_some();
+    // egui repaints even when nothing is clicked. Each calculation below
+    // executes the real projection, including filesystem identity checks;
+    // 40 unchanged frames should not re-open those paths 40 times.
+    for _ in 0..40 {
+        assert_eq!(
+            cached_organization_projection(&plan, &config, &mut cache, |plan, config| {
+                calculations += 1;
+                plan.projected_zone(config).is_some()
+            }),
+            expected
+        );
+    }
+    assert_eq!(calculations, 1);
+
+    // A changed selection must refresh the estimated free zone immediately,
+    // not reuse the earlier proposal.
+    plan.items[0].selected = false;
+    let after_selection = plan.projected_zone(&config).is_some();
+    assert_eq!(
+        cached_organization_projection(&plan, &config, &mut cache, |plan, config| {
+            calculations += 1;
+            plan.projected_zone(config).is_some()
+        }),
+        after_selection
+    );
+    assert_eq!(calculations, 2);
+
+    config.zone_row = (config.zone_row + 1).min(40);
+    let after_configuration = plan.projected_zone(&config).is_some();
+    assert_eq!(
+        cached_organization_projection(&plan, &config, &mut cache, |plan, config| {
+            calculations += 1;
+            plan.projected_zone(config).is_some()
+        }),
+        after_configuration
+    );
+    assert_eq!(calculations, 3);
+
+    // A fresh analysis invalidates the cache even when the next plan has
+    // exactly the same selected flags and display configuration.
+    fixture.app.organization_projection = cache;
+    fixture.app.organization_analyze();
+    assert!(fixture.app.organization_projection.is_none());
+    fixture.finish_job();
+    assert!(fixture.app.organization_projection.is_none());
+    assert!(fixture.desktop.join("Alpha.url").is_file());
+    assert!(fixture.desktop.join("Beta.url").is_file());
+    assert!(!fixture.desktop.join("Sites").exists());
+    assert!(!organize::status(&fixture.app.store).unwrap().pending);
+}

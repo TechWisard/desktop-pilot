@@ -4,6 +4,48 @@ use std::sync::atomic::AtomicBool;
 
 const ORGANIZATION_PAGE_SIZE: usize = 40;
 
+// Projection may verify filesystem identities and search many candidate grid
+// positions. egui paints this modal on every frame: repeat the projection
+// only when its read-only inputs change, never on a normal repaint.
+// Apply separately rechecks live desktop files and positions under the lock.
+pub(super) struct OrganizationProjectionCache {
+    config: Config,
+    selected: Vec<bool>,
+    available: bool,
+}
+
+fn cached_organization_projection(
+    plan: &organize::Plan,
+    config: &Config,
+    cache: &mut Option<OrganizationProjectionCache>,
+    compute: impl FnOnce(&organize::Plan, &Config) -> bool,
+) -> bool {
+    let selected: Vec<_> = plan.items.iter().map(|item| item.selected).collect();
+    if let Some(previous) = cache
+        && previous.config == *config
+        && previous.selected == selected
+    {
+        return previous.available;
+    }
+    let available = compute(plan, config);
+    *cache = Some(OrganizationProjectionCache {
+        config: config.clone(),
+        selected,
+        available,
+    });
+    available
+}
+
+fn organization_projection_available(
+    plan: &organize::Plan,
+    config: &Config,
+    cache: &mut Option<OrganizationProjectionCache>,
+) -> bool {
+    cached_organization_projection(plan, config, cache, |plan, config| {
+        plan.projected_zone(config).is_some()
+    })
+}
+
 fn organization_page_bounds(total: usize, requested: usize) -> (usize, usize, usize, usize) {
     let pages = total.div_ceil(ORGANIZATION_PAGE_SIZE).max(1);
     let page = requested.min(pages - 1);
@@ -100,6 +142,7 @@ impl Settings {
             return;
         }
         self.organization_plan = None;
+        self.organization_projection = None;
         // Every successful request starts a fresh complete preview. A search
         // left over from the previous plan must not hide newly selected moves.
         self.organization_query.clear();
@@ -357,6 +400,7 @@ impl Settings {
                             .is_some_and(|p| p.options.include_files != self.organization_files)
                         {
                             self.organization_plan = None;
+                            self.organization_projection = None;
                             self.organization_page = 0;
                         }
                         if primary(
@@ -381,7 +425,11 @@ impl Settings {
                                 "В оценке учтены новые папки. Перед переносом расположение и состав проверяются повторно.",
                                 "New folders count towards the space estimate. Locations and selections are checked again before moving.",
                             ));
-                            if plan.projected_zone(&self.config).is_none() {
+                            if !organization_projection_available(
+                                plan,
+                                &self.config,
+                                &mut self.organization_projection,
+                            ) {
                                 ui.colored_label(WARNING, t(
                                     "Подходящая область для быстрых ярлыков пока не подтверждена. После уборки обновите схему; при необходимости выберите меньше ярлыков.",
                                     "A suitable quick-shortcut area is not confirmed yet. Refresh the layout after organizing; reduce the shortcut count if necessary.",
