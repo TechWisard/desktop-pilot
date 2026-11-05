@@ -402,3 +402,31 @@ fn keep_only_entry_point_rejects_a_plan_that_would_move_files() {
     assert!(!organize::status(&f.app.store).unwrap().pending);
     assert!(organize::status(&f.app.store).unwrap().undo.is_none());
 }
+
+#[test]
+fn new_analysis_reveals_all_candidates_after_a_stale_filtered_preview() {
+    let mut f = Fixture::new();
+    f.analyze();
+    let before = f.app.organization_plan.as_ref().unwrap().summary();
+    assert_eq!(before, (2, 1, 1));
+
+    // After viewing one project, the user returns later to re-analyze.
+    // A stale search can hide every new selected move while Apply still acts
+    // on the unfiltered plan. Starting a fresh preview must reveal it all.
+    f.app.organization_query = "unrelated previous project".into();
+    f.app.organization_page = usize::MAX;
+    f.app.organization_analyze();
+    f.finish_job();
+
+    assert!(f.app.organization_query.is_empty());
+    assert_eq!(f.app.organization_page, 0);
+    let plan = f.app.organization_plan.as_ref().unwrap();
+    assert_eq!(plan.summary(), before);
+    assert_eq!(plan.items.len(), 2);
+    assert!(plan.items.iter().all(|item| item.selected));
+    assert!(f.desktop.join("Alpha.url").is_file());
+    assert!(f.desktop.join("Beta.url").is_file());
+    assert!(!f.desktop.join("Sites").exists());
+    assert!(organize::status(&f.app.store).unwrap().undo.is_none());
+}
+

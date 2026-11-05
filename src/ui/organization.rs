@@ -100,6 +100,10 @@ impl Settings {
             return;
         }
         self.organization_plan = None;
+        // Every successful request starts a fresh complete preview. A search
+        // left over from the previous plan must not hide newly selected moves.
+        self.organization_query.clear();
+        self.organization_page = 0;
         let home = self.store.home.clone();
         let config = self.config.clone();
         let include_files = self.organization_files;
@@ -418,6 +422,12 @@ impl Settings {
                                 "Uncheck an object to leave it on the desktop. You can remember exclusions without moving other files.",
                             ));
                             let query = self.organization_query.trim().to_lowercase();
+                            if !query.is_empty() {
+                                ui.small(t(
+                                    "Поиск скрывает только строки списка. При применении будут обработаны все отмеченные объекты, включая скрытые фильтром и находящиеся на других страницах.",
+                                    "Search only hides rows. Apply processes every checked item, including those hidden by this filter or on other pages.",
+                                ));
+                            }
                             let filtered: Vec<_> = plan
                                 .items
                                 .iter()
