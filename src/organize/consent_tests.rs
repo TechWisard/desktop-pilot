@@ -350,6 +350,11 @@ fn mixed_apply_rechecks_every_rejected_object_before_moving() {
         if change == "replaced" {
             assert_eq!(disk::read(&backup).unwrap(), gamma);
         }
-        assert!(!f.plan(false).items.iter().any(|item| item.name == "Gamma.url"));
+        assert!(
+            !f.plan(false)
+                .items
+                .iter()
+                .any(|item| item.name == "Gamma.url")
+        );
     }
 }
