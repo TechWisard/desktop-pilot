@@ -2,6 +2,16 @@ use super::*;
 use anyhow::bail;
 use std::collections::{HashMap, HashSet};
 
+// Hard links can expose one original at both recorded paths. Finding its file
+// ID back on the desktop does not prove that the organized path was undone.
+fn ensure_single_original_location(organized: &Path, original_id: &str) -> Result<()> {
+    ensure!(
+        !fs::matches_id(organized, original_id)?,
+        "The same original exists at both desktop and organized locations. Remove the extra hard link and retry; no files were changed."
+    );
+    Ok(())
+}
+
 fn checked_root(journal: &Journal, store: &Store) -> Result<std::fs::File> {
     ensure!(
         norm(&root(store)?.to_string_lossy()) == norm(&journal.root),
@@ -573,6 +583,10 @@ fn undo_locked(store: &Store, journal: &mut Journal) -> Result<Outcome> {
             // restored original from a foreign collision. The Undo loop below
             // already treats that verified source as an idempotent no-op.
             if fs::matches_id(&original, &movement.item.stamp.id)? {
+                // A second hard link is not a manual move. Do not claim that
+                // an organized original was restored while it remains there.
+                let organized = root.join(&movement.folder).join(&movement.item.name);
+                ensure_single_original_location(&organized, &movement.item.stamp.id)?;
                 continue;
             }
             let original_path = norm(&original.to_string_lossy());
@@ -643,6 +657,7 @@ fn undo_locked(store: &Store, journal: &mut Journal) -> Result<Outcome> {
             let original = root.join(&movement.item.name);
             let organized = root.join(&movement.folder).join(&movement.item.name);
             if fs::matches_id(&original, &movement.item.stamp.id)? {
+                ensure_single_original_location(&organized, &movement.item.stamp.id)?;
                 return Ok(false);
             }
             ensure!(
@@ -787,6 +802,7 @@ pub(crate) fn accept_current_stopped(store: &Store, id: &str) -> Result<()> {
             let mut single = journal.clone();
             single.movements = vec![movement.clone()];
             if fs::matches_id(&original, &movement.item.stamp.id)? {
+                ensure_single_original_location(&organized, &movement.item.stamp.id)?;
                 update_catalog(store, &single, true)?;
             } else if fs::matches_id(&organized, &movement.item.stamp.id)? {
                 let folder = journal
