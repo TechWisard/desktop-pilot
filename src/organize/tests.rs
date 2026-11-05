@@ -785,13 +785,22 @@ fn double_location_hardlink_blocks_undo_before_moving_other_originals() {
     // It must not be mistaken for a manual move out of the category folder.
     let organized_alpha = f.desktop.join("Sites/Alpha.url");
     disk::hard_link(&organized_alpha, &alpha.source).unwrap();
-    assert_eq!(fs::inspect(Path::new(&alpha.source), true).unwrap().id, alpha_before.id);
-    assert_eq!(fs::inspect(&organized_alpha, true).unwrap().id, alpha_before.id);
+    assert_eq!(
+        fs::inspect(Path::new(&alpha.source), true).unwrap().id,
+        alpha_before.id
+    );
+    assert_eq!(
+        fs::inspect(&organized_alpha, true).unwrap().id,
+        alpha_before.id
+    );
     let error = undo(&f.store, &operation).unwrap_err();
     assert!(format!("{error:#}").contains("both desktop and organized locations"));
     assert_eq!(load(&f.store, &operation).unwrap().phase, Phase::Committed);
     assert!(!status(&f.store).unwrap().pending);
-    assert_eq!(status(&f.store).unwrap().undo.as_deref(), Some(operation.as_str()));
+    assert_eq!(
+        status(&f.store).unwrap().undo.as_deref(),
+        Some(operation.as_str())
+    );
     assert_eq!(f.store.apps().unwrap(), catalog_before);
     assert!(f.desktop.join("Sites/Beta.url").is_file());
     assert!(!Path::new(&beta.source).exists());
@@ -799,8 +808,14 @@ fn double_location_hardlink_blocks_undo_before_moving_other_originals() {
     // Removing only our test link restores the unambiguous original location.
     disk::remove_file(&alpha.source).unwrap();
     assert_eq!(undo(&f.store, &operation).unwrap().restored, 2);
-    assert_eq!(fs::inspect(Path::new(&alpha.source), true).unwrap(), alpha_before);
-    assert_eq!(fs::inspect(Path::new(&beta.source), true).unwrap(), beta_before);
+    assert_eq!(
+        fs::inspect(Path::new(&alpha.source), true).unwrap(),
+        alpha_before
+    );
+    assert_eq!(
+        fs::inspect(Path::new(&beta.source), true).unwrap(),
+        beta_before
+    );
     assert!(!organized_alpha.exists());
     assert!(!f.desktop.join("Sites/Beta.url").exists());
     assert!(!status(&f.store).unwrap().pending);
@@ -829,9 +844,14 @@ fn double_location_hardlink_keeps_interrupted_recovery_open_until_resolved() {
     accept_current(&f.store, &operation).unwrap();
     assert!(!status(&f.store).unwrap().pending);
     assert_eq!(load(&f.store, &operation).unwrap().phase, Phase::Accepted);
-    assert_eq!(
-        norm(&f.store.app(&alpha.id).unwrap().source),
-        norm(&organized_alpha.to_string_lossy())
+    // NTFS/Explorer may spell the same parent as a short 8.3 alias.
+    // Verify the actual moved original rather than comparing path spelling.
+    assert!(
+        fs::matches_id(
+            Path::new(&f.store.app(&alpha.id).unwrap().source),
+            &alpha_before.id
+        )
+        .unwrap()
     );
     assert_eq!(f.store.app(&beta.id).unwrap().source, beta.source);
     assert_eq!(fs::inspect(&organized_alpha, true).unwrap(), alpha_before);
