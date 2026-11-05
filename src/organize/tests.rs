@@ -700,6 +700,76 @@ fn projected_space_counts_folders_and_respects_deselection() {
 }
 
 #[test]
+fn projected_space_retains_public_desktop_hardlinks_and_recognizes_local_aliases() {
+    let f = Fixture::new();
+    f.two_sites();
+    f.url("Gamma.url", "https://example.invalid/Gamma");
+    let mut plan = f.plan(false);
+    plan.items[0].selected = false;
+    for (index, item) in plan.items.iter_mut().enumerate() {
+        item.position = Some(Point {
+            x: 16 + 100 * index as i32,
+            y: 2,
+        });
+    }
+    plan.layout = Some(native::Layout {
+        items: plan
+            .items
+            .iter()
+            .map(|item| native::Item {
+                path: f.desktop.join(&item.name).to_string_lossy().into_owned(),
+                name: item.name.clone(),
+                position: item.position.clone().unwrap(),
+            })
+            .collect(),
+        spacing: Point { x: 100, y: 100 },
+        origin: Point::default(),
+        work: [0, 0, 300, 100],
+        flags: 0,
+        topology: "synthetic-hardlink-grid".into(),
+        icon_size: 32,
+    });
+    let config = Config {
+        slots: 1,
+        zone_col: 0,
+        zone_row: 0,
+        zone_columns: 1,
+        ..Default::default()
+    };
+    // A different lexical spelling of the same desktop directory is still
+    // removable from the projected layout, subject to verified identity.
+    let alias = f.desktop.join(".").join("Gamma.url");
+    let current_gamma = f.desktop.join("Gamma.url");
+    assert_ne!(norm(&alias.to_string_lossy()), norm(&current_gamma.to_string_lossy()));
+    let layout = plan.layout.as_mut().unwrap();
+    layout
+        .items
+        .iter_mut()
+        .find(|item| item.name == "Gamma.url")
+        .unwrap()
+        .path = alias.to_string_lossy().into_owned();
+    assert_eq!(plan.projected_zone(&config).unwrap().zone_col, 2);
+
+    // The user can expose a second Explorer icon in Public Desktop through an
+    // NTFS hard link. It has the same file ID but a different parent directory.
+    // The proposed free cell is therefore occupied and must remain blocked.
+    let public = f.home.join("Public");
+    disk::create_dir(&public).unwrap();
+    let public_gamma = public.join("Gamma.url");
+    disk::hard_link(&current_gamma, &public_gamma).unwrap();
+    assert_eq!(
+        fs::inspect(&current_gamma, false).unwrap().id,
+        fs::inspect(&public_gamma, false).unwrap().id
+    );
+    plan.layout.as_mut().unwrap().items.push(native::Item {
+        path: public_gamma.to_string_lossy().into_owned(),
+        name: "Gamma.url".into(),
+        position: Point { x: 216, y: 2 },
+    });
+    assert!(plan.projected_zone(&config).is_none());
+}
+
+#[test]
 fn free_zone_search_matches_placement_for_dense_offset_and_negative_layouts() {
     let f = Fixture::new();
     for left in [-500, 0, 100] {
