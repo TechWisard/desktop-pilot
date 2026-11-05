@@ -292,6 +292,60 @@ fn interrupted_apply_can_be_explicitly_accepted_without_moving_any_other_files()
 }
 
 #[test]
+fn accept_current_keeps_recovery_pending_for_missing_or_replaced_originals() {
+    // Recovery must not silently release the catalog barrier when a file
+    // disappeared or a foreign object took its place after an interruption.
+    for replaced_moved_file in [false, true] {
+        let f = Fixture::new();
+        let (alpha, beta) = f.two_sites();
+        let operation = simulate_interruption(&f, &f.plan(false));
+        let affected = if replaced_moved_file {
+            f.desktop.join("Sites/Alpha.url")
+        } else {
+            PathBuf::from(&beta.source)
+        };
+        let saved = f.home.join("Saved original.url");
+        let original_id = fs::inspect(&affected, true).unwrap().id;
+        disk::rename(&affected, &saved).unwrap();
+        if replaced_moved_file {
+            disk::write(&affected, b"unrelated replacement").unwrap();
+        }
+        let catalog = f.store.apps().unwrap();
+        let error = accept_current(&f.store, &operation).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("missing from both recorded locations"),
+            "{error:#}"
+        );
+        assert!(status(&f.store).unwrap().pending);
+        assert_eq!(load(&f.store, &operation).unwrap().phase, Phase::Prepared);
+        assert!(ensure_ready(&f.store).is_err());
+        assert_eq!(f.store.apps().unwrap(), catalog);
+        assert_eq!(fs::inspect(&saved, true).unwrap().id, original_id);
+        if replaced_moved_file {
+            assert_eq!(disk::read(&affected).unwrap(), b"unrelated replacement");
+            disk::rename(&affected, f.home.join("Preserved replacement.url")).unwrap();
+        }
+        disk::rename(&saved, &affected).unwrap();
+        accept_current(&f.store, &operation).unwrap();
+        assert!(!status(&f.store).unwrap().pending);
+        assert_eq!(load(&f.store, &operation).unwrap().phase, Phase::Accepted);
+        assert!(ensure_ready(&f.store).is_ok());
+        assert_eq!(fs::inspect(&affected, true).unwrap().id, original_id);
+        assert_eq!(f.store.app(&beta.id).unwrap().source, beta.source);
+        let actual_alpha = f.store.app(&alpha.id).unwrap().source;
+        assert!(
+            fs::matches_id(
+                Path::new(&actual_alpha),
+                &fs::inspect(&f.desktop.join("Sites/Alpha.url"), true)
+                    .unwrap()
+                    .id
+            )
+            .unwrap()
+        );
+    }
+}
+
+#[test]
 fn reopened_profile_recovers_a_rename_and_blocks_stale_catalog_writers() {
     let f = Fixture::new();
     let (a, _) = f.two_sites();
