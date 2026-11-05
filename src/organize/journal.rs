@@ -946,8 +946,11 @@ mod layout_target_tests {
         std::fs::create_dir_all(&public).unwrap();
         let original = personal.join("Alpha.url");
         let foreign = public.join("Alpha.url");
-        std::fs::write(&original, b"[InternetShortcut]\\r\\nURL=https://example.invalid/\\r\\n")
-            .unwrap();
+        std::fs::write(
+            &original,
+            b"[InternetShortcut]\\r\\nURL=https://example.invalid/\\r\\n",
+        )
+        .unwrap();
         std::fs::hard_link(&original, &foreign).unwrap();
         let requested_path = original.to_string_lossy().into_owned();
         let desired = Point { x: 0, y: 0 };
@@ -979,10 +982,8 @@ mod layout_target_tests {
             position: Point { x: 100, y: 0 },
         };
         let layout = current(vec![foreign_icon, alias_icon.clone()]);
-        let (moves, skipped) = restore_position_plan(
-            &layout,
-            vec![(requested_path.clone(), desired.clone())],
-        );
+        let (moves, skipped) =
+            restore_position_plan(&layout, vec![(requested_path.clone(), desired.clone())]);
         assert_eq!(moves, vec![(alias_path.clone(), desired.clone())]);
         assert_eq!(skipped, 0);
         // Already-correct positions must not generate a needless movement.
