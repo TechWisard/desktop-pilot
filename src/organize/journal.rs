@@ -693,6 +693,14 @@ pub(crate) fn accept_current_stopped(store: &Store, id: &str) -> Result<()> {
                     .context("Missing folder identity")?;
                 checked_folder(Path::new(&journal.root), folder)?;
                 update_catalog(store, &single, false)?;
+            } else {
+                // Do not dismiss crash recovery when an original is absent
+                // from both recorded locations (or replaced by another file).
+                // The transaction must retain its barrier and journal so the
+                // user can put that original back and retry safely.
+                bail!(
+                    "An original desktop object is missing from both recorded locations. Restore the original file to its desktop name or organized folder before accepting the current locations."
+                );
             }
         }
         journal.phase = Phase::Accepted;
