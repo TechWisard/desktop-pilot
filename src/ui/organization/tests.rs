@@ -429,4 +429,3 @@ fn new_analysis_reveals_all_candidates_after_a_stale_filtered_preview() {
     assert!(!f.desktop.join("Sites").exists());
     assert!(organize::status(&f.app.store).unwrap().undo.is_none());
 }
-
