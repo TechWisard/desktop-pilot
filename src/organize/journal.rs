@@ -71,22 +71,19 @@ fn layout_equal(a: &native::Layout, b: &native::Layout) -> bool {
     entries(a) == entries(b)
 }
 
-fn restore_layout(journal: &Journal, undo: bool) -> Result<()> {
-    let Some(before) = &journal.layout else {
-        return Ok(());
-    };
-    native::refresh(Path::new(&journal.root));
-    let current = native::layout()?;
-    ensure!(
-        current.topology == before.topology && current.flags & 1 == 0,
-        "Files are safe, but the display layout changed. Icon positions were not restored."
-    );
-    // Never revert a later manual movement of an unrelated icon. Position only
-    // newly created folders (Apply) or the original objects being restored (Undo).
-    let requested: Vec<(String, Point)> = if undo {
+// Only restore the icon positions of files this Undo actually moved. A user
+// may have dragged an original back before Undo and chosen a new position;
+// treating that already-restored file as an Undo target would override it.
+fn layout_targets(
+    journal: &Journal,
+    undo: bool,
+    restored: &HashSet<String>,
+) -> Vec<(String, Point)> {
+    if undo {
         journal
             .movements
             .iter()
+            .filter(|m| restored.contains(&m.item.name))
             .filter_map(|m| {
                 m.item.position.clone().map(|point| {
                     (
@@ -116,7 +113,22 @@ fn restore_layout(journal: &Journal, undo: bool) -> Result<()> {
                 })
             })
             .collect()
+    }
+}
+
+fn restore_layout(journal: &Journal, undo: bool, restored: &HashSet<String>) -> Result<()> {
+    let Some(before) = &journal.layout else {
+        return Ok(());
     };
+    native::refresh(Path::new(&journal.root));
+    let current = native::layout()?;
+    ensure!(
+        current.topology == before.topology && current.flags & 1 == 0,
+        "Files are safe, but the display layout changed. Icon positions were not restored."
+    );
+    // Never revert a later manual movement of an unrelated icon. Position only
+    // newly created folders (Apply) or the original objects being restored (Undo).
+    let requested = layout_targets(journal, undo, restored);
     let mut positions = Vec::new();
     let mut skipped = 0;
     for (path, point) in requested {
@@ -382,7 +394,7 @@ pub(crate) fn apply_stopped(store: &Store, plan: &Plan, cancel: &AtomicBool) -> 
             kept: plan.items.iter().filter(|item| !item.selected).count(),
             ..Default::default()
         };
-        if let Err(error) = restore_layout(&journal, false) {
+        if let Err(error) = restore_layout(&journal, false, &HashSet::new()) {
             outcome.warnings.push(format!("{error:#}"));
         }
         store.transaction(|| {
@@ -520,6 +532,7 @@ fn undo_locked(store: &Store, journal: &mut Journal) -> Result<Outcome> {
     })?;
     let mut outcome = Outcome::default();
     let mut conflicts = Vec::new();
+    let mut restored_names = HashSet::new();
     for movement in journal.movements.iter().rev() {
         let result = (|| -> Result<bool> {
             fs::leaf(&movement.item.name)?;
@@ -554,7 +567,10 @@ fn undo_locked(store: &Store, journal: &mut Journal) -> Result<Outcome> {
             Ok(true)
         })();
         match result {
-            Ok(true) => outcome.restored += 1,
+            Ok(true) => {
+                outcome.restored += 1;
+                restored_names.insert(movement.item.name.clone());
+            },
             Ok(false) => {}
             Err(error) => conflicts.push(format!("{}: {error:#}", movement.item.name)),
         }
@@ -596,7 +612,7 @@ fn undo_locked(store: &Store, journal: &mut Journal) -> Result<Outcome> {
                 .push(format!("Folder was preserved: {} ({error})", folder.name)),
         }
     }
-    if let Err(error) = restore_layout(journal, true) {
+    if let Err(error) = restore_layout(journal, true, &restored_names) {
         outcome.warnings.push(format!("{error:#}"));
     }
     store.transaction(|| {
@@ -687,4 +703,51 @@ pub(crate) fn accept_current_stopped(store: &Store, id: &str) -> Result<()> {
         )?;
         store.set(ACTIVE, &Option::<String>::None)
     })
+}
+
+#[cfg(test)]
+mod layout_target_tests {
+    use super::*;
+
+    #[test]
+    fn undo_preserves_the_position_of_an_original_manually_restored_first() {
+        let moved = |name: &str, x: i32| Movement {
+            item: Item {
+                name: name.into(),
+                group: Group::Sites,
+                selected: true,
+                position: Some(Point { x, y: 30 }),
+                stamp: fs::Stamp {
+                    id: format!("id-{name}"),
+                    size: 100,
+                    modified: 42,
+                    digest: None,
+                },
+                launch: None,
+            },
+            folder: "Sites".into(),
+        };
+        let journal = Journal {
+            id: "synthetic".into(),
+            root: r"C:\Example\Desktop".into(),
+            root_id: "desktop".into(),
+            phase: Phase::Committed,
+            movements: vec![moved("Alpha.url", 10), moved("Beta.url", 20)],
+            folders: Vec::new(),
+            layout: None,
+        };
+        // Alpha was returned by hand to an intentionally different grid cell.
+        // Only Beta was actually moved by Undo.
+        let restored = HashSet::from(["Beta.url".to_owned()]);
+        assert_eq!(
+            layout_targets(&journal, true, &restored),
+            vec![(
+                r"C:\Example\Desktop\Beta.url".into(),
+                Point { x: 20, y: 30 }
+            )]
+        );
+        // Replaying Undo after interruption cannot relocate already returned
+        // originals merely because the old journal includes them.
+        assert!(layout_targets(&journal, true, &HashSet::new()).is_empty());
+    }
 }
