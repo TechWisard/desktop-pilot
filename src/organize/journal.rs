@@ -912,5 +912,4 @@ mod layout_target_tests {
         assert!(moves.is_empty());
         assert_eq!(skipped, 2);
     }
-
 }
