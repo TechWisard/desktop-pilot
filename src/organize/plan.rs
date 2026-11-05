@@ -436,7 +436,18 @@ impl Plan {
             };
             alias_ids
                 .get(&name.to_string_lossy().to_lowercase())
-                .is_none_or(|id| !fs::matches_id(Path::new(&item.path), id).unwrap_or(false))
+                .is_none_or(|id| {
+                    let candidate = Path::new(&item.path);
+                    // NTFS hard links can share a file ID across Personal and
+                    // Public Desktop. Only a view entry in this desktop root
+                    // can disappear when we move the original.
+                    let same_parent = candidate
+                        .parent()
+                        .and_then(|parent| fs::directory(parent).ok())
+                        .and_then(|parent| fs::identity(&parent).ok())
+                        .is_some_and(|identity| identity == self.root_id);
+                    !(same_parent && fs::matches_id(candidate, id).unwrap_or(false))
+                })
         });
         for folder in self.folders.iter().filter(|f| f.created) {
             if let Some(movement) = movements.iter().find(|m| m.folder == folder.name)
