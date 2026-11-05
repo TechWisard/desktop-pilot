@@ -192,6 +192,55 @@ fn a_sidecar_created_after_preview_prevents_every_move_without_partial_folders()
 }
 
 #[test]
+fn manually_restored_original_is_accepted_during_batch_undo() {
+    let f = Fixture::new();
+    let alpha = f.url("Alpha");
+    let beta = f.url("Beta");
+    let alpha_before = fs::inspect(Path::new(&alpha.source), true).unwrap();
+    let beta_before = fs::inspect(Path::new(&beta.source), true).unwrap();
+    let history_before = serde_json::to_value(f.store.days().unwrap()).unwrap();
+
+    let result = apply(&f.store, &f.plan(false), &AtomicBool::new(false)).unwrap();
+    assert_eq!(result.moved, 2);
+    let operation = status(&f.store).unwrap().undo.unwrap();
+
+    // A person drags one original back out of the category folder before
+    // clicking Undo. This is the same file, not a conflicting replacement.
+    disk::rename(f.desktop.join("Sites/Alpha.url"), &alpha.source).unwrap();
+    assert_eq!(
+        fs::inspect(Path::new(&alpha.source), true).unwrap(),
+        alpha_before
+    );
+    assert!(!f.desktop.join("Sites/Alpha.url").exists());
+    assert!(!Path::new(&beta.source).exists());
+
+    // Before the fix the committed Undo preflight rejected Alpha's occupied
+    // original name even though the per-file Undo already treats it as done.
+    let outcome = undo(&f.store, &operation).unwrap();
+    assert_eq!(outcome.restored, 1);
+    assert_eq!(
+        fs::inspect(Path::new(&alpha.source), true).unwrap(),
+        alpha_before
+    );
+    assert_eq!(
+        fs::inspect(Path::new(&beta.source), true).unwrap(),
+        beta_before
+    );
+    assert!(!f.desktop.join("Sites/Alpha.url").exists());
+    assert!(!f.desktop.join("Sites/Beta.url").exists());
+    assert_eq!(f.store.app(&alpha.id).unwrap().source, alpha.source);
+    assert_eq!(f.store.app(&beta.id).unwrap().source, beta.source);
+    assert_eq!(load(&f.store, &operation).unwrap().phase, Phase::Undone);
+    assert!(!status(&f.store).unwrap().pending);
+    assert!(status(&f.store).unwrap().undo.is_none());
+    assert_eq!(
+        serde_json::to_value(f.store.days().unwrap()).unwrap(),
+        history_before
+    );
+    assert!(f.store.get::<bool>("background_disabled").unwrap());
+}
+
+#[test]
 fn foreign_name_collision_rejects_undo_before_partial_moves_and_allows_retry() {
     let f = Fixture::new();
     let alpha = f.url("Alpha");
