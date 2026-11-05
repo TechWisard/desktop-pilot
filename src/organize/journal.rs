@@ -829,4 +829,88 @@ mod layout_target_tests {
         // originals merely because the old journal includes them.
         assert!(layout_targets(&journal, true, &HashSet::new()).is_empty());
     }
+    fn path(name: &str) -> String {
+        format!(r"C:\Example\Desktop\{name}")
+    }
+
+    fn icon(name: &str, x: i32) -> native::Item {
+        native::Item {
+            path: path(name),
+            name: name.into(),
+            position: Point { x, y: 0 },
+        }
+    }
+
+    fn current(items: Vec<native::Item>) -> native::Layout {
+        native::Layout {
+            items,
+            spacing: Point { x: 100, y: 100 },
+            origin: Point { x: 0, y: 0 },
+            work: [0, 0, 1000, 1000],
+            flags: 0,
+            topology: "test".into(),
+            icon_size: 32,
+        }
+    }
+
+    #[test]
+    fn undo_swapped_cells_positions_both_returned_icons_in_one_batch() {
+        // Explorer reused each other icon's original grid cell after files
+        // reappeared. Both icons are moving, so neither is a foreign blocker.
+        let layout = current(vec![icon("Alpha.url", 100), icon("Beta.url", 0)]);
+        let requested = vec![
+            (path("Alpha.url"), Point { x: 0, y: 0 }),
+            (path("Beta.url"), Point { x: 100, y: 0 }),
+        ];
+        let (moves, skipped) = restore_position_plan(&layout, requested.clone());
+        assert_eq!(moves, requested);
+        assert_eq!(skipped, 0);
+    }
+
+    #[test]
+    fn undo_never_displaces_a_stationary_icon_or_a_blocked_dependency_chain() {
+        // The first target is occupied by an unrelated icon; the other
+        // requested icons depend on that move and must also stay put.
+        let layout = current(vec![
+            icon("Alpha.url", 0),
+            icon("Beta.url", 100),
+            icon("Gamma.url", 200),
+            icon("Unrelated.url", 300),
+        ]);
+        let requested = vec![
+            (path("Alpha.url"), Point { x: 100, y: 0 }),
+            (path("Beta.url"), Point { x: 200, y: 0 }),
+            (path("Gamma.url"), Point { x: 300, y: 0 }),
+        ];
+        let (moves, skipped) = restore_position_plan(&layout, requested);
+        assert!(moves.is_empty());
+        assert_eq!(skipped, 3);
+
+        // A free independent destination can still be restored without
+        // moving the unrelated icon or any blocked dependency.
+        let (moves, skipped) = restore_position_plan(
+            &layout,
+            vec![
+                (path("Alpha.url"), Point { x: 100, y: 0 }),
+                (path("Beta.url"), Point { x: 500, y: 0 }),
+            ],
+        );
+        assert_eq!(moves, vec![(path("Beta.url"), Point { x: 500, y: 0 })]);
+        assert_eq!(skipped, 1);
+    }
+
+    #[test]
+    fn overlapping_restoration_destinations_are_never_requested_together() {
+        let layout = current(vec![icon("Alpha.url", 0), icon("Beta.url", 100)]);
+        let (moves, skipped) = restore_position_plan(
+            &layout,
+            vec![
+                (path("Alpha.url"), Point { x: 300, y: 0 }),
+                (path("Beta.url"), Point { x: 300, y: 0 }),
+            ],
+        );
+        assert!(moves.is_empty());
+        assert_eq!(skipped, 2);
+    }
+
 }
