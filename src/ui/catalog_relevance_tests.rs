@@ -413,3 +413,81 @@ fn copied_paths_resolve_extended_drive_and_unc_forms_without_matching_backups() 
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn powershell_quoted_and_environment_root_paths_find_only_the_saved_original() {
+    let system_root = std::env::var("SystemRoot").expect("Windows must expose SystemRoot");
+    let source = format!(
+        r"{}\DesktopPilot Example\Rare Tool.lnk",
+        system_root.trim_end_matches(['\\', '/'])
+    );
+    let root = std::env::temp_dir().join(format!(
+        "desktop-pilot-pasted-env-paths-{}-{}",
+        std::process::id(),
+        now()
+    ));
+    let store = Store::open(&root).unwrap();
+    store
+        .transaction(|| {
+            store.put_app(&App {
+                id: "wanted".into(),
+                name: "Rare application".into(),
+                source: source.clone(),
+                target: r"C:\Tools\Rare Tool.exe".into(),
+                policy: Policy::Never,
+                valid: true,
+                ..Default::default()
+            })?;
+            store.put_app(&App {
+                id: "decoy".into(),
+                name: "Backup mentioning rare application".into(),
+                source: format!("{source}.backup"),
+                note: source.clone(),
+                valid: true,
+                ..Default::default()
+            })?;
+            Ok(())
+        })
+        .unwrap();
+    let apps = store.apps().unwrap();
+    let ranking = rank(&apps, &store.days().unwrap(), &Config::default(), now());
+    let mut cache = CatalogCache::default();
+    cache.rebuild(&apps, &ranking);
+    let recent = HashSet::new();
+    for query in [
+        format!("'{source}'"),
+        format!(r#""{source}""#),
+        r"'%SystemRoot%\DesktopPilot Example\Rare Tool.lnk'".into(),
+        r#""%SystemRoot%\DesktopPilot Example\Rare Tool.lnk""#.into(),
+    ] {
+        cache.update(&apps, &ranking, &query, 0, 0, &recent);
+        assert_eq!(names(&cache, &apps), ["Rare application"], "query: {query}");
+        cache.update(&apps, &ranking, &query, 3, 0, &recent);
+        assert_eq!(names(&cache, &apps), ["Rare application"], "Never: {query}");
+        cache.update(&apps, &ranking, &query, 2, 0, &recent);
+        assert!(
+            cache.indices.is_empty(),
+            "Always must stay distinct: {query}"
+        );
+    }
+    let pasted =
+        format!("'{source}'\n'%SystemRoot%\\DesktopPilot Example\\Rare Tool.lnk'\n\"{source}\"");
+    let paths = shortcut_paths(&pasted).unwrap();
+    assert_eq!(paths.len(), 1, "identical paths should not import twice");
+    assert_eq!(norm(&paths[0].to_string_lossy()), norm(&source));
+    validate_shortcut_path(&paths[0]).unwrap();
+
+    // A relative path remains invalid; quotes or unrelated text cannot
+    // silently turn it into a different saved source.
+    let relative = shortcut_paths("'Rare Tool.lnk'").unwrap();
+    assert!(validate_shortcut_path(&relative[0]).is_err());
+    cache.update(&apps, &ranking, "rare", 0, 0, &recent);
+    assert!(names(&cache, &apps).contains(&"Rare application".to_owned()));
+    assert_eq!(
+        store.apps().unwrap(),
+        apps,
+        "search and parsing must not alter rules"
+    );
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
