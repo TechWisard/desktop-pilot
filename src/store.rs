@@ -140,8 +140,7 @@ fn ensure_wal_mode(db: &Connection) -> Result<()> {
                 return Ok(());
             }
             Err(rusqlite::Error::SqliteFailure(error, _))
-                if error.code == rusqlite::ErrorCode::DatabaseBusy
-                    && attempt + 1 < ATTEMPTS =>
+                if error.code == rusqlite::ErrorCode::DatabaseBusy && attempt + 1 < ATTEMPTS =>
             {
                 std::thread::sleep(Duration::from_millis(150));
             }
