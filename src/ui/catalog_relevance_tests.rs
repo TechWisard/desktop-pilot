@@ -319,58 +319,97 @@ fn copied_paths_resolve_extended_drive_and_unc_forms_without_matching_backups() 
     let store = Store::open(&root).unwrap();
     let drive_source = r"\\?\C:\Users\Editor\Team Alpha\editor.lnk";
     let network_source = r"\\?\UNC\server\share\Team Alpha\network.url";
-    store.transaction(|| {
-        store.put_app(&App {
-            id: "drive".into(),
-            name: "Drive profile".into(),
-            source: drive_source.into(),
-            target: r"\\?\C:\Program Files\Tools\editor.exe".into(),
-            policy: Policy::Never,
-            valid: true,
-            ..Default::default()
-        })?;
-        store.put_app(&App {
-            id: "network".into(),
-            name: "Network profile".into(),
-            source: network_source.into(),
-            valid: true,
-            ..Default::default()
-        })?;
-        store.put_app(&App {
-            id: "backup".into(),
-            name: "Backup profile".into(),
-            source: r"C:\Users\Editor\Team Alpha\editor.lnk.old".into(),
-            target: r"C:\Program Files\Tools\editor.exe.debug".into(),
-            note: format!("Previously copied {drive_source} and {network_source}"),
-            valid: true,
-            ..Default::default()
-        })?;
-        Ok(())
-    }).unwrap();
+    store
+        .transaction(|| {
+            store.put_app(&App {
+                id: "drive".into(),
+                name: "Drive profile".into(),
+                source: drive_source.into(),
+                target: r"\\?\C:\Program Files\Tools\editor.exe".into(),
+                policy: Policy::Never,
+                valid: true,
+                ..Default::default()
+            })?;
+            store.put_app(&App {
+                id: "network".into(),
+                name: "Network profile".into(),
+                source: network_source.into(),
+                valid: true,
+                ..Default::default()
+            })?;
+            store.put_app(&App {
+                id: "backup".into(),
+                name: "Backup profile".into(),
+                source: r"C:\Users\Editor\Team Alpha\editor.lnk.old".into(),
+                target: r"C:\Program Files\Tools\editor.exe.debug".into(),
+                note: format!("Previously copied {drive_source} and {network_source}"),
+                valid: true,
+                ..Default::default()
+            })?;
+            Ok(())
+        })
+        .unwrap();
     let apps = store.apps().unwrap();
     let ranking = rank(&apps, &store.days().unwrap(), &Config::default(), now());
     let mut cache = CatalogCache::default();
     cache.rebuild(&apps, &ranking);
     let recent = HashSet::new();
     for (query, expected) in [
-        (r#""C:\Users\Editor\Team Alpha\editor.lnk""#, "Drive profile"),
+        (
+            r#""C:\Users\Editor\Team Alpha\editor.lnk""#,
+            "Drive profile",
+        ),
         (r"C:/Program Files/Tools/editor.exe", "Drive profile"),
         (r"\\server\share\Team Alpha\network.url", "Network profile"),
-        (r#"  "\\?\UNC\server\share\Team Alpha\network.url"  "#, "Network profile"),
-        (r"C:\Users\Editor\Team Alpha\editor.lnk.old", "Backup profile"),
+        (
+            r#"  "\\?\UNC\server\share\Team Alpha\network.url"  "#,
+            "Network profile",
+        ),
+        (
+            r"C:\Users\Editor\Team Alpha\editor.lnk.old",
+            "Backup profile",
+        ),
     ] {
         cache.update(&apps, &ranking, query, 0, 0, &recent);
         assert_eq!(names(&cache, &apps), [expected], "query: {query}");
     }
-    cache.update(&apps, &ranking, r"C:/Users/Editor/Team Alpha/editor.lnk", 3, 0, &recent);
+    cache.update(
+        &apps,
+        &ranking,
+        r"C:/Users/Editor/Team Alpha/editor.lnk",
+        3,
+        0,
+        &recent,
+    );
     assert_eq!(names(&cache, &apps), ["Drive profile"]);
-    cache.update(&apps, &ranking, r"C:/Users/Editor/Team Alpha/editor.lnk", 2, 0, &recent);
-    assert!(cache.indices.is_empty(), "Always filter cannot override Never");
-    cache.update(&apps, &ranking, r"C:/Users/Editor/Team Alpha/missing.lnk", 0, 0, &recent);
+    cache.update(
+        &apps,
+        &ranking,
+        r"C:/Users/Editor/Team Alpha/editor.lnk",
+        2,
+        0,
+        &recent,
+    );
+    assert!(
+        cache.indices.is_empty(),
+        "Always filter cannot override Never"
+    );
+    cache.update(
+        &apps,
+        &ranking,
+        r"C:/Users/Editor/Team Alpha/missing.lnk",
+        0,
+        0,
+        &recent,
+    );
     assert!(cache.indices.is_empty());
     cache.update(&apps, &ranking, "team alpha", 0, 0, &recent);
     assert!(names(&cache, &apps).contains(&"Backup profile".to_owned()));
-    assert_eq!(store.apps().unwrap(), apps, "search must not rewrite saved catalog data");
+    assert_eq!(
+        store.apps().unwrap(),
+        apps,
+        "search must not rewrite saved catalog data"
+    );
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
