@@ -124,6 +124,32 @@ fn begin_immediate_with_retry(db: &Connection) -> rusqlite::Result<Transaction<'
     unreachable!("the last attempt always returns")
 }
 
+// Concurrent first launches can race while SQLite switches the initial
+// rollback journal to WAL. The journal-mode request is idempotent and runs
+// before any profile write on this connection; unlike arbitrary user writes,
+// this metadata-only step is safe to retry after SQLITE_BUSY.
+fn ensure_wal_mode(db: &Connection) -> Result<()> {
+    const ATTEMPTS: usize = 4;
+    for attempt in 0..ATTEMPTS {
+        match db.query_row("PRAGMA journal_mode=WAL", [], |row| row.get::<_, String>(0)) {
+            Ok(mode) => {
+                ensure!(
+                    mode.eq_ignore_ascii_case("wal"),
+                    "SQLite did not enable WAL mode: {mode}"
+                );
+                return Ok(());
+            }
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if error.code == rusqlite::ErrorCode::DatabaseBusy && attempt + 1 < ATTEMPTS =>
+            {
+                std::thread::sleep(Duration::from_millis(150));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    unreachable!("the final WAL attempt always returns")
+}
+
 #[cfg(test)]
 thread_local! {
     // Observe the exact read boundary in the concurrent policy regression.
@@ -161,7 +187,8 @@ impl Store {
             // for concurrent first opens and interrupted initialization.
             initialize_schema(&db)?;
         }
-        db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        ensure_wal_mode(&db).context("Cannot enable SQLite WAL during profile opening")?;
+        db.pragma_update(None, "foreign_keys", "ON")?;
         Ok(Self {
             db,
             home: home.into(),
@@ -552,28 +579,30 @@ mod tests {
     #[test]
     fn concurrent_first_open_preserves_a_complete_profile() {
         with_store(|store| {
-            let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
-            let home = store.home.join("concurrent-creation");
-            let workers: Vec<_> = (0..4)
-                .map(|index| {
-                    let home = home.clone();
-                    let barrier = barrier.clone();
-                    std::thread::spawn(move || {
-                        barrier.wait();
-                        let store = Store::open(&home).unwrap();
-                        store.set(&format!("writer-{index}"), &index).unwrap();
+            for round in 0..5 {
+                let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+                let home = store.home.join(format!("concurrent-creation-{round}"));
+                let workers: Vec<_> = (0..4)
+                    .map(|index| {
+                        let home = home.clone();
+                        let barrier = barrier.clone();
+                        std::thread::spawn(move || {
+                            barrier.wait();
+                            let store = Store::open(&home).unwrap();
+                            store.set(&format!("writer-{index}"), &index).unwrap();
+                        })
                     })
-                })
-                .collect();
-            for worker in workers {
-                worker.join().unwrap();
-            }
-            let reopened = Store::open(&home).unwrap();
-            for index in 0..4 {
-                assert_eq!(
-                    reopened.get::<i32>(&format!("writer-{index}")).unwrap(),
-                    index
-                );
+                    .collect();
+                for worker in workers {
+                    worker.join().unwrap();
+                }
+                let reopened = Store::open(&home).unwrap();
+                for index in 0..4 {
+                    assert_eq!(
+                        reopened.get::<i32>(&format!("writer-{index}")).unwrap(),
+                        index
+                    );
+                }
             }
         });
     }
