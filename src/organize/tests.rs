@@ -333,11 +333,15 @@ fn accept_current_keeps_recovery_pending_for_missing_or_replaced_originals() {
         assert_eq!(fs::inspect(&affected, true).unwrap().id, original_id);
         assert_eq!(f.store.app(&beta.id).unwrap().source, beta.source);
         let actual_alpha = f.store.app(&alpha.id).unwrap().source;
-        assert!(fs::matches_id(
-            Path::new(&actual_alpha),
-            &fs::inspect(&f.desktop.join("Sites/Alpha.url"), true).unwrap().id
-        )
-        .unwrap());
+        assert!(
+            fs::matches_id(
+                Path::new(&actual_alpha),
+                &fs::inspect(&f.desktop.join("Sites/Alpha.url"), true)
+                    .unwrap()
+                    .id
+            )
+            .unwrap()
+        );
     }
 }
 
