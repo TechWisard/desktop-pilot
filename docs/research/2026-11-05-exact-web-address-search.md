@@ -19,7 +19,7 @@ The search cache now treats a complete non-whitespace `http://` or `https://` ad
 
 The regression `pasted_web_address_selects_its_real_shortcut_not_notes_or_longer_links` runs the **production** `CatalogCache` against four apps persisted in a real `Store::open` SQLite catalog, using `rank`. It checks exact address identification (including copied quotes and host case), a note decoy, a longer URL, a distinct case-sensitive path, Never/Always filters, broad domain search and read-only persistence.
 
-**Before:** a full address can return the desired app plus the decoy and the longer address. **After (expected):** only the actual matching target; partial domain searches still find three relevant targets. These are synthetic matching counts, not observed time savings for people.
+**Before:** a full address can return the desired app plus the decoy and the longer address. **After (expected):** only the actual matching target; partial domain searches remain broad, including the three targets and the note reference. These are synthetic matching counts, not observed time savings for people.
 
 ## Acceptance boundaries
 
