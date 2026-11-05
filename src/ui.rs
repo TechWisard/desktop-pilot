@@ -247,6 +247,7 @@ pub struct Settings {
     import_open: bool,
     organization_open: bool,
     organization_plan: Option<crate::organize::Plan>,
+    organization_projection: Option<organization::OrganizationProjectionCache>,
     organization_files: bool,
     organization_query: String,
     organization_page: usize,
@@ -891,6 +892,7 @@ impl Settings {
             import_open: false,
             organization_open: false,
             organization_plan: None,
+            organization_projection: None,
             organization_files: false,
             organization_query: String::new(),
             organization_page: 0,
@@ -1528,6 +1530,7 @@ impl Settings {
                             }
                         }
                         Ok(JobResult::OrganizationPlan(plan)) => {
+                            self.organization_projection = None;
                             self.organization_page = 0;
                             self.organization_plan = Some(plan);
                             self.inform(
@@ -1540,6 +1543,7 @@ impl Settings {
                         }
                         Ok(JobResult::OrganizationChanged(outcome, warning)) => {
                             self.organization_plan = None;
+                            self.organization_projection = None;
                             self.organization_accept_confirm = false;
                             self.refresh_layout(self.onboarding);
                             let mut message = if outcome.kept > 0
@@ -1570,6 +1574,7 @@ impl Settings {
                         }
                         Ok(JobResult::OrganizationReset) => {
                             self.organization_plan = None;
+                            self.organization_projection = None;
                             self.organization_reset_confirm = false;
                             self.inform(
                                 t(
@@ -1581,6 +1586,7 @@ impl Settings {
                         }
                         Ok(JobResult::OrganizationAccepted(warning)) => {
                             self.organization_plan = None;
+                            self.organization_projection = None;
                             self.organization_accept_confirm = false;
                             self.refresh_layout(self.onboarding);
                             self.inform(
