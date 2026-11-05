@@ -26,6 +26,10 @@ fn translate(value: &str, russian: bool) -> String {
     };
     let translations = [
         (
+            "Оригинальный объект отсутствует в обоих сохранённых расположениях. Верните исходный файл на рабочий стол или в созданную при уборке папку и повторите подтверждение.",
+            "An original desktop object is missing from both recorded locations. Restore the original file to its desktop name or organized folder before accepting the current locations.",
+        ),
+        (
             "Состав быстрых ярлыков изменился во время проверки. Обновите список ещё раз; ручные изменения сохранены.",
             "Quick shortcuts changed during the scan. Refresh the list again; manual changes were preserved.",
         ),
@@ -914,6 +918,14 @@ mod tests {
             "Slots must be between 1 and 8"
         );
         assert_eq!(translate("Sample app", false), "Sample app");
+    }
+
+    #[test]
+    fn organizer_unverified_original_recovery_message_translates_both_ways() {
+        let english = "An original desktop object is missing from both recorded locations. Restore the original file to its desktop name or organized folder before accepting the current locations.";
+        let russian = "Оригинальный объект отсутствует в обоих сохранённых расположениях. Верните исходный файл на рабочий стол или в созданную при уборке папку и повторите подтверждение.";
+        assert_eq!(translate(english, true), russian);
+        assert_eq!(translate(russian, false), english);
     }
 
     #[test]
