@@ -296,7 +296,7 @@ fn mixed_apply_rechecks_every_rejected_object_before_moving() {
                 if change == "replaced" {
                     disk::write(
                         &original,
-                        b"[InternetShortcut]\\r\\nURL=https://example.invalid/replacement\\r\\n",
+                        b"[InternetShortcut]\r\nURL=https://example.invalid/replacement\r\n",
                     )
                     .unwrap();
                 }
@@ -304,7 +304,7 @@ fn mixed_apply_rechecks_every_rejected_object_before_moving() {
             "edited" => {
                 disk::write(
                     &original,
-                    b"[InternetShortcut]\\r\\nURL=https://example.invalid/edited\\r\\n",
+                    b"[InternetShortcut]\r\nURL=https://example.invalid/edited\r\n",
                 )
                 .unwrap();
             }
