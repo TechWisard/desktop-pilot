@@ -596,7 +596,8 @@ fn pasted_web_address_selects_its_real_shortcut_not_notes_or_longer_links() {
     assert_eq!(names(&cache, &apps), ["Export copy"]);
     // A domain fragment is still useful for broad discovery.
     cache.update(&apps, &ranking, "portal.example.com", 0, 0, &recent);
-    assert_eq!(cache.indices.len(), 3);
+    assert_eq!(cache.indices.len(), 4, "domain-only search includes notes");
+    assert!(names(&cache, &apps).contains(&"Different application".to_owned()));
     assert_eq!(store.apps().unwrap(), apps, "search must be read-only");
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
