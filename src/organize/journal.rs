@@ -442,6 +442,13 @@ fn undo_locked(store: &Store, journal: &mut Journal) -> Result<Outcome> {
         for movement in &journal.movements {
             fs::leaf(&movement.item.name)?;
             let original = root.join(&movement.item.name);
+            // A person may have dragged the original file back after Apply.
+            // Identity, not mere name occupancy, distinguishes an already
+            // restored original from a foreign collision. The Undo loop below
+            // already treats that verified source as an idempotent no-op.
+            if fs::matches_id(&original, &movement.item.stamp.id)? {
+                continue;
+            }
             let original_path = norm(&original.to_string_lossy());
             if let Some(copy) = state.owned.iter().find(|o| norm(&o.path) == original_path)
                 && let Some(id) = &copy.file_id
