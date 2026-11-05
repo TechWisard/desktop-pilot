@@ -73,6 +73,8 @@ impl CatalogCache {
                 leaf.ends_with(".lnk") || leaf.ends_with(".url") || leaf.ends_with(".exe")
             })
         });
+        // Ordinary and extended Win32 drive/UNC names share one file identity.
+        let normalized_file_path = full_file_path.map(norm);
         let words: Vec<_> = query_lower
             .split_whitespace()
             .map(|word| word.trim_matches('"'))
@@ -83,12 +85,12 @@ impl CatalogCache {
             .iter()
             .enumerate()
             .filter(|(index, app)| {
-                let matches = if let Some(path) = full_file_path {
-                    let source = app.source.to_lowercase().replace('\\', "/");
+                let matches = if let Some(path) = normalized_file_path.as_deref() {
+                    let source = norm(&app.source);
                     if path.ends_with(".lnk") || path.ends_with(".url") {
                         source == path
                     } else {
-                        source == path || app.target.to_lowercase().replace('\\', "/") == path
+                        source == path || norm(&app.target) == path
                     }
                 } else {
                     absolute_path.map_or_else(
