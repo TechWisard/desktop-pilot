@@ -57,13 +57,17 @@ impl CatalogCache {
         // Explorer copies quoted paths; either separator should find the same
         // shortcut without changing its stored Windows launch identity.
         let query_lower = query.to_lowercase().replace('\\', "/");
+        // PowerShell also uses single quotes around paths; Windows paths can
+        // start with environment variables rather than explicit drive names.
+        let path = pasted_path(&query_lower);
+        let normalized_query = norm(path).replace('\\', "/");
         // A copied absolute path is one continuous location. Splitting a
         // directory like "Team Alpha" into separate search words can also
         // match a different profile using fragments from unrelated fields.
-        let path = query_lower.trim().trim_matches('"');
-        let absolute_path = (path.starts_with("//")
-            || (path.as_bytes().get(1) == Some(&b':') && path.as_bytes().get(2) == Some(&b'/')))
-        .then_some(path);
+        let absolute_path = (normalized_query.starts_with("//")
+            || (normalized_query.as_bytes().get(1) == Some(&b':')
+                && normalized_query.as_bytes().get(2) == Some(&b'/')))
+        .then_some(normalized_query.as_str());
         // A complete copied shortcut path identifies its exact source, not a
         // backup name, an arbitrary note, or part of a different launch profile.
         // Keep partial directory searches intentionally broad. Several launch
@@ -302,19 +306,37 @@ pub struct Settings {
     capture_pending: bool,
 }
 
+// Strip only matching enclosing quotes, preserving apostrophes in names.
+fn pasted_path(value: &str) -> &str {
+    let trimmed = value.trim();
+    trimmed
+        .strip_prefix('"')
+        .and_then(|body| body.strip_suffix('"'))
+        .or_else(|| trimmed.strip_prefix('\'').and_then(|body| body.strip_suffix('\'')))
+        .unwrap_or(trimmed)
+}
+
 fn shortcut_paths(value: &str) -> Result<Vec<PathBuf>> {
     // A pasted UTF-8 text list can begin with a signature, not a filename.
     // Preserve U+FEFF inside paths or later lines; report those as entered.
     let value = value.strip_prefix('\u{feff}').unwrap_or(value);
     let mut paths = Vec::new();
     let mut seen = HashSet::new();
-    for line in value.lines().map(str::trim).filter(|line| !line.is_empty()) {
-        let line = line
-            .strip_prefix('"')
-            .and_then(|line| line.strip_suffix('"'))
-            .unwrap_or(line);
-        let path = PathBuf::from(line);
-        if seen.insert(norm(line)) {
+    for line in value.lines().map(pasted_path).filter(|line| !line.is_empty()) {
+        let entered = PathBuf::from(line);
+        // Resolve %SystemRoot% and similar leading variables, but never
+        // reinterpret %NAME% inside an already absolute literal filename.
+        let path = if entered.is_absolute() {
+            entered
+        } else {
+            let expanded = PathBuf::from(expand_env(line));
+            if expanded.is_absolute() {
+                expanded
+            } else {
+                entered
+            }
+        };
+        if seen.insert(norm(&path.to_string_lossy())) {
             paths.push(path);
         }
     }
