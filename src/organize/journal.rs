@@ -130,11 +130,43 @@ fn restore_position_plan(
         .iter()
         .map(|item| (norm(&item.path), item))
         .collect();
+    // Explorer can report the same personal-desktop file through an 8.3
+    // parent alias. Match the real file *and parent directory* by identity
+    // when textual paths differ; a same-name Public Desktop icon is not it.
+    let mut by_name = HashMap::<String, Vec<&native::Item>>::new();
+    for item in &current.items {
+        if let Some(name) = Path::new(&item.path).file_name() {
+            by_name
+                .entry(name.to_string_lossy().to_lowercase())
+                .or_default()
+                .push(item);
+        }
+    }
     let mut proposals = Vec::new();
     for (path, point) in requested {
-        match by_path.get(&norm(&path)) {
+        let resolved = by_path.get(&norm(&path)).copied().or_else(|| {
+            let target = Path::new(&path);
+            let filename = target.file_name()?.to_string_lossy().to_lowercase();
+            let parent = fs::directory(target.parent()?).ok()?;
+            let parent_id = fs::identity(&parent).ok()?;
+            let file_id = fs::inspect(target, false).ok()?.id;
+            let mut matches = by_name.get(&filename)?.iter().copied().filter(|item| {
+                let candidate = Path::new(&item.path);
+                fs::matches_id(candidate, &file_id).unwrap_or(false)
+                    && candidate
+                        .parent()
+                        .and_then(|dir| fs::directory(dir).ok())
+                        .and_then(|dir| fs::identity(&dir).ok())
+                        .is_some_and(|id| id == parent_id)
+            });
+            let unique = matches.next()?;
+            matches.next().is_none().then_some(unique)
+        });
+        match resolved {
             Some(item) if item.position == point => {}
-            Some(_) => proposals.push((path, point)),
+            // Use Explorer's own path when asking it to position the PIDL;
+            // position_many looks up the current view by this exact name.
+            Some(item) => proposals.push((item.path.clone(), point)),
             None => skipped += 1,
         }
     }
@@ -897,6 +929,93 @@ mod layout_target_tests {
         );
         assert_eq!(moves, vec![(path("Beta.url"), Point { x: 500, y: 0 })]);
         assert_eq!(skipped, 1);
+    }
+
+    #[test]
+    fn undo_resolves_short_parent_alias_but_never_a_public_desktop_hardlink() {
+        // Two paths can identify the same file. Only another spelling of the
+        // SAME desktop directory is a valid Explorer alias. A Public Desktop
+        // hardlink with an identical filename/file ID must remain untouched.
+        let root = std::env::temp_dir().join(format!(
+            "desktop-pilot-layout-alias-{}",
+            fs::operation_id().unwrap()
+        ));
+        let personal = root.join("Personal");
+        let public = root.join("Public");
+        std::fs::create_dir_all(&personal).unwrap();
+        std::fs::create_dir_all(&public).unwrap();
+        let original = personal.join("Alpha.url");
+        let foreign = public.join("Alpha.url");
+        std::fs::write(
+            &original,
+            b"[InternetShortcut]\\r\\nURL=https://example.invalid/\\r\\n",
+        )
+        .unwrap();
+        std::fs::hard_link(&original, &foreign).unwrap();
+        let requested_path = original.to_string_lossy().into_owned();
+        let desired = Point { x: 0, y: 0 };
+        let foreign_path = foreign.to_string_lossy().into_owned();
+        let foreign_icon = native::Item {
+            path: foreign_path.clone(),
+            name: "Alpha.url".into(),
+            position: Point { x: 600, y: 0 },
+        };
+        let (moves, skipped) = restore_position_plan(
+            &current(vec![foreign_icon.clone()]),
+            vec![(requested_path.clone(), desired.clone())],
+        );
+        assert!(moves.is_empty());
+        assert_eq!(skipped, 1);
+
+        // The dot-segment spelling models a short/long parent-directory alias
+        // without requiring 8.3 name generation on the CI volume.
+        let alias_path = personal
+            .join("..")
+            .join("Personal")
+            .join("Alpha.url")
+            .to_string_lossy()
+            .into_owned();
+        assert_ne!(norm(&alias_path), norm(&requested_path));
+        let alias_icon = native::Item {
+            path: alias_path.clone(),
+            name: "Alpha.url".into(),
+            position: Point { x: 100, y: 0 },
+        };
+        let layout = current(vec![foreign_icon, alias_icon.clone()]);
+        let (moves, skipped) =
+            restore_position_plan(&layout, vec![(requested_path.clone(), desired.clone())]);
+        assert_eq!(moves, vec![(alias_path.clone(), desired.clone())]);
+        assert_eq!(skipped, 0);
+        // Already-correct positions must not generate a needless movement.
+        let mut settled = alias_icon.clone();
+        settled.position = desired.clone();
+        let (moves, skipped) = restore_position_plan(
+            &current(vec![settled]),
+            vec![(requested_path.clone(), desired.clone())],
+        );
+        assert!(moves.is_empty());
+        assert_eq!(skipped, 0);
+        // Two aliases for the same file in the view are ambiguous: neither
+        // is arbitrarily selected for a position change.
+        let second_alias = personal
+            .join(".")
+            .join("Alpha.url")
+            .to_string_lossy()
+            .into_owned();
+        let (moves, skipped) = restore_position_plan(
+            &current(vec![
+                alias_icon,
+                native::Item {
+                    path: second_alias,
+                    name: "Alpha.url".into(),
+                    position: Point { x: 200, y: 0 },
+                },
+            ]),
+            vec![(requested_path, desired)],
+        );
+        assert!(moves.is_empty());
+        assert_eq!(skipped, 1);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
