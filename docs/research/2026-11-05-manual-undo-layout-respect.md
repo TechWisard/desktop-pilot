@@ -8,6 +8,10 @@ The published CHI 2008 experiment on predictability and accuracy in adaptive UIs
 https://www.eecs.harvard.edu/~kgajos/papers/2008/gajos08predictability.shtml
 Existing organizer evidence and acceptance boundaries: [desktop organization](2026-10-31-desktop-organization.md).
 
+## Independent user reports and related tools
+
+The publicly available [PowerToys desktop-position request #3143](https://github.com/microsoft/PowerToys/issues/3143) (2020) describes users losing hand-arranged icon positions when display geometry changes. [Request #38682](https://github.com/microsoft/PowerToys/issues/38682) (2025) similarly asks for layout restoration on Windows 11. These are **real user reports of the value of manual icon positions**, not evidence that Desktop Pilot was used or that this particular Undo defect occurred in the wild. The separate [PersistentDesktopIcons](https://github.com/Fabi019/PersistentDesktopIcons) tool deliberately leaves icons without saved positions untouched. Together they support avoiding unintended repositioning; they do not prove a measured time saving.
+
 ## Reproduction and change
 
 Sequence: organize Alpha.url and Beta.url; user manually returns Alpha.url to the desktop and places it elsewhere; user requests Undo; the true Undo file-move path restores only Beta.url, but the old layout projection also targets Alpha.url. The replacement passes **only successful renames made by this Undo invocation** to the real layout restore routine. It leaves an already returned Alpha.url at the user's position. Apply still positions newly created folders; missing/occupied cells still return warnings; neither history nor user data is rewritten.

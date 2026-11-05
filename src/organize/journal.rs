@@ -570,7 +570,7 @@ fn undo_locked(store: &Store, journal: &mut Journal) -> Result<Outcome> {
             Ok(true) => {
                 outcome.restored += 1;
                 restored_names.insert(movement.item.name.clone());
-            },
+            }
             Ok(false) => {}
             Err(error) => conflicts.push(format!("{}: {error:#}", movement.item.name)),
         }
