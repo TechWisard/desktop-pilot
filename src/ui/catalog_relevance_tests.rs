@@ -465,11 +465,13 @@ fn powershell_quoted_and_environment_root_paths_find_only_the_saved_original() {
         cache.update(&apps, &ranking, &query, 3, 0, &recent);
         assert_eq!(names(&cache, &apps), ["Rare application"], "Never: {query}");
         cache.update(&apps, &ranking, &query, 2, 0, &recent);
-        assert!(cache.indices.is_empty(), "Always must stay distinct: {query}");
+        assert!(
+            cache.indices.is_empty(),
+            "Always must stay distinct: {query}"
+        );
     }
-    let pasted = format!(
-        "'{source}'\n'%SystemRoot%\\DesktopPilot Example\\Rare Tool.lnk'\n\"{source}\""
-    );
+    let pasted =
+        format!("'{source}'\n'%SystemRoot%\\DesktopPilot Example\\Rare Tool.lnk'\n\"{source}\"");
     let paths = shortcut_paths(&pasted).unwrap();
     assert_eq!(paths.len(), 1, "identical paths should not import twice");
     assert_eq!(norm(&paths[0].to_string_lossy()), norm(&source));
@@ -481,7 +483,11 @@ fn powershell_quoted_and_environment_root_paths_find_only_the_saved_original() {
     assert!(validate_shortcut_path(&relative[0]).is_err());
     cache.update(&apps, &ranking, "rare", 0, 0, &recent);
     assert!(names(&cache, &apps).contains(&"Rare application".to_owned()));
-    assert_eq!(store.apps().unwrap(), apps, "search and parsing must not alter rules");
+    assert_eq!(
+        store.apps().unwrap(),
+        apps,
+        "search and parsing must not alter rules"
+    );
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }

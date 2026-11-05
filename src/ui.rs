@@ -312,7 +312,11 @@ fn pasted_path(value: &str) -> &str {
     trimmed
         .strip_prefix('"')
         .and_then(|body| body.strip_suffix('"'))
-        .or_else(|| trimmed.strip_prefix('\'').and_then(|body| body.strip_suffix('\'')))
+        .or_else(|| {
+            trimmed
+                .strip_prefix('\'')
+                .and_then(|body| body.strip_suffix('\''))
+        })
         .unwrap_or(trimmed)
 }
 
@@ -322,7 +326,11 @@ fn shortcut_paths(value: &str) -> Result<Vec<PathBuf>> {
     let value = value.strip_prefix('\u{feff}').unwrap_or(value);
     let mut paths = Vec::new();
     let mut seen = HashSet::new();
-    for line in value.lines().map(pasted_path).filter(|line| !line.is_empty()) {
+    for line in value
+        .lines()
+        .map(pasted_path)
+        .filter(|line| !line.is_empty())
+    {
         let entered = PathBuf::from(line);
         // Resolve %SystemRoot% and similar leading variables, but never
         // reinterpret %NAME% inside an already absolute literal filename.
