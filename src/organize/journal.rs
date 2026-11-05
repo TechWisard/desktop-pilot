@@ -147,6 +147,21 @@ fn restore_layout(journal: &Journal, undo: bool) -> Result<()> {
     Ok(())
 }
 
+// An unchecked proposal is also user consent. Never persist its stale
+// filesystem identity while applying unrelated selected moves.
+fn recheck_rejected(root: &Path, plan: &Plan) -> Result<()> {
+    for item in plan.items.iter().filter(|item| !item.selected) {
+        fs::leaf(&item.name)?;
+        let actual = fs::inspect(&root.join(&item.name), item.stamp.digest.is_some())
+            .context("An excluded object changed after preview; refresh the plan")?;
+        ensure!(
+            actual == item.stamp,
+            "An excluded object changed after preview; refresh the plan"
+        );
+    }
+    Ok(())
+}
+
 // Keep-only consent changes SQLite, not desktop paths. The normal worker
 // remains running; no file-move startup/background lock is required.
 fn remember_keep_locked(store: &Store, plan: &Plan) -> Result<Outcome> {
@@ -168,15 +183,8 @@ fn remember_keep_locked(store: &Store, plan: &Plan) -> Result<Outcome> {
             && norm(&actual_root.to_string_lossy()) == norm(&plan.root),
         "The desktop changed after preview; refresh the plan"
     );
-    // Do not remember a now-foreign file under a stale preview identity.
     // A failed check must leave every existing exclusion unchanged.
-    for item in &rejected {
-        fs::leaf(&item.name)?;
-        ensure!(
-            fs::inspect(&actual_root.join(&item.name), item.stamp.digest.is_some())? == item.stamp,
-            "An excluded object changed after preview; refresh the plan"
-        );
-    }
+    recheck_rejected(&actual_root, plan)?;
     store.transaction(|| {
         ensure_ready(store)?;
         let mut keep: HashSet<String> = store.get::<Vec<String>>(KEEP)?.into_iter().collect();
@@ -303,6 +311,9 @@ pub(crate) fn apply_stopped(store: &Store, plan: &Plan, cancel: &AtomicBool) -> 
             "A destination already exists. Nothing will be overwritten."
         );
     }
+    // Moving selected items must not silently store Keep for a deleted,
+    // replaced or edited unchecked object from the old preview.
+    recheck_rejected(root, plan)?;
     for folder in &journal.folders {
         fs::leaf(&folder.name)?;
         if folder.created {

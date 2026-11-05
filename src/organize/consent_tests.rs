@@ -262,3 +262,99 @@ fn stale_rejected_file_cannot_create_a_persistent_exclusion() {
     assert!(status(&f.store).unwrap().undo.is_none());
     assert!(!status(&f.store).unwrap().pending);
 }
+
+#[test]
+fn mixed_apply_rechecks_every_rejected_object_before_moving() {
+    // A chosen Keep is meaningful even when other objects are moving.
+    // A stale selection must not be persisted under the previous file ID,
+    // nor allow unrelated files to move on the strength of an old preview.
+    for change in ["missing", "replaced", "edited"] {
+        let f = Fixture::new();
+        for name in ["Alpha", "Beta", "Gamma"] {
+            f.site(name);
+        }
+        let mut preview = f.plan(false);
+        assert_eq!(preview.summary(), (3, 1, 2));
+        preview
+            .items
+            .iter_mut()
+            .find(|item| item.name == "Gamma.url")
+            .unwrap()
+            .selected = false;
+        assert_eq!(preview.summary(), (2, 1, 1));
+
+        let alpha = disk::read(f.desktop.join("Alpha.url")).unwrap();
+        let beta = disk::read(f.desktop.join("Beta.url")).unwrap();
+        let original = f.desktop.join("Gamma.url");
+        let backup = f.store.home.join("Original Gamma.url");
+        let gamma = disk::read(&original).unwrap();
+        let before_apps = f.store.apps().unwrap();
+
+        match change {
+            "missing" | "replaced" => {
+                disk::rename(&original, &backup).unwrap();
+                if change == "replaced" {
+                    disk::write(
+                        &original,
+                        b"[InternetShortcut]\r\nURL=https://example.invalid/replacement\r\n",
+                    )
+                    .unwrap();
+                }
+            }
+            "edited" => {
+                disk::write(
+                    &original,
+                    b"[InternetShortcut]\r\nURL=https://example.invalid/edited\r\n",
+                )
+                .unwrap();
+            }
+            _ => unreachable!(),
+        }
+
+        let error = apply(&f.store, &preview, &AtomicBool::new(false))
+            .expect_err("mixed Apply must recheck every rejected object");
+        assert!(
+            format!("{error:#}").contains("An excluded object changed after preview"),
+            "unexpected error for {change}: {error:#}"
+        );
+        assert_eq!(disk::read(f.desktop.join("Alpha.url")).unwrap(), alpha);
+        assert_eq!(disk::read(f.desktop.join("Beta.url")).unwrap(), beta);
+        assert!(!f.desktop.join("Sites").exists());
+        assert_eq!(f.store.apps().unwrap(), before_apps);
+        assert!(f.store.get::<Vec<String>>(KEEP).unwrap().is_empty());
+        assert!(f.store.get::<Vec<String>>(HISTORY).unwrap().is_empty());
+        assert!(status(&f.store).unwrap().undo.is_none());
+        assert!(!status(&f.store).unwrap().pending);
+
+        // A fresh preview may be explicitly accepted. It then remembers
+        // the actual current file, and Undo retains that choice.
+        if change == "missing" {
+            disk::rename(&backup, &original).unwrap();
+        }
+        let current_gamma = disk::read(&original).unwrap();
+        let mut fresh = f.plan(false);
+        fresh
+            .items
+            .iter_mut()
+            .find(|item| item.name == "Gamma.url")
+            .unwrap()
+            .selected = false;
+        let outcome = apply(&f.store, &fresh, &AtomicBool::new(false)).unwrap();
+        assert_eq!((outcome.moved, outcome.kept), (2, 1));
+        assert_eq!(f.store.get::<Vec<String>>(KEEP).unwrap().len(), 1);
+        let operation = status(&f.store).unwrap().undo.unwrap();
+        assert_eq!(undo(&f.store, &operation).unwrap().restored, 2);
+        assert_eq!(disk::read(f.desktop.join("Alpha.url")).unwrap(), alpha);
+        assert_eq!(disk::read(f.desktop.join("Beta.url")).unwrap(), beta);
+        assert_eq!(disk::read(&original).unwrap(), current_gamma);
+        if change == "replaced" {
+            assert_eq!(disk::read(&backup).unwrap(), gamma);
+        }
+        assert!(
+            !f.plan(false)
+                .items
+                .iter()
+                .any(|item| item.name == "Gamma.url")
+        );
+    }
+}
