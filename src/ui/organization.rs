@@ -21,10 +21,11 @@ fn cached_organization_projection(
     compute: impl FnOnce(&organize::Plan, &Config) -> bool,
 ) -> bool {
     let selected: Vec<_> = plan.items.iter().map(|item| item.selected).collect();
-    if let Some(previous) = cache {
-        if previous.config == *config && previous.selected == selected {
-            return previous.available;
-        }
+    if let Some(previous) = cache
+        && previous.config == *config
+        && previous.selected == selected
+    {
+        return previous.available;
     }
     let available = compute(plan, config);
     *cache = Some(OrganizationProjectionCache {
