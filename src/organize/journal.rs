@@ -891,7 +891,7 @@ mod layout_target_tests {
         let (moves, skipped) = restore_position_plan(
             &layout,
             vec![
-                (path("Alpha.url"), Point { x: 100, y: 0 }),
+                (path("Alpha.url"), Point { x: 200, y: 0 }),
                 (path("Beta.url"), Point { x: 500, y: 0 }),
             ],
         );
