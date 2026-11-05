@@ -79,6 +79,20 @@ impl CatalogCache {
         });
         // Ordinary and extended Win32 drive/UNC names share one file identity.
         let normalized_file_path = full_file_path.map(norm);
+        // A copied web address identifies a shortcut's launch destination,
+        // not a note mentioning that address or a longer, unrelated URL.
+        // Keep the entered path/query case: only the HTTP(S) host is
+        // case-insensitive, as handled by target_identity.
+        let entered_url = pasted_path(query);
+        let exact_web_url = ["http://", "https://"].iter().find_map(|scheme| {
+            let rest = entered_url
+                .get(..scheme.len())
+                .filter(|prefix| prefix.eq_ignore_ascii_case(scheme))
+                .and_then(|_| entered_url.get(scheme.len()..))?;
+            let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+            (!authority.is_empty() && !entered_url.chars().any(char::is_whitespace))
+                .then(|| target_identity(entered_url))
+        });
         let words: Vec<_> = query_lower
             .split_whitespace()
             .map(|word| word.trim_matches('"'))
@@ -96,6 +110,8 @@ impl CatalogCache {
                     } else {
                         source == path || norm(&app.target) == path
                     }
+                } else if let Some(url) = exact_web_url.as_deref() {
+                    target_identity(&app.target) == url
                 } else {
                     absolute_path.map_or_else(
                         || words.iter().all(|word| self.search[*index].contains(word)),

@@ -491,3 +491,113 @@ fn powershell_quoted_and_environment_root_paths_find_only_the_saved_original() {
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn pasted_web_address_selects_its_real_shortcut_not_notes_or_longer_links() {
+    let root = std::env::temp_dir().join(format!(
+        "desktop-pilot-exact-web-search-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let store = Store::open(&root).unwrap();
+    let address = "https://Portal.EXAMPLE.com/CaseSensitive?view=Weekly%2FReport";
+    store
+        .transaction(|| {
+            for (id, name, target, note, policy) in [
+                ("wanted", "Report link", address, "", Policy::Never),
+                (
+                    "note",
+                    "Different application",
+                    "https://elsewhere.example.com/",
+                    address,
+                    Policy::Auto,
+                ),
+                (
+                    "longer",
+                    "Export copy",
+                    "https://portal.example.com/CaseSensitive?view=Weekly%2FReport&copy=1",
+                    "",
+                    Policy::Auto,
+                ),
+                (
+                    "case",
+                    "Case variant",
+                    "https://portal.example.com/casesensitive?view=Weekly%2FReport",
+                    "",
+                    Policy::Auto,
+                ),
+            ] {
+                store.put_app(&App {
+                    id: id.into(),
+                    name: name.into(),
+                    source: format!(r"C:\Shortcuts\{id}.url"),
+                    target: target.into(),
+                    note: note.into(),
+                    policy,
+                    valid: true,
+                    ..Default::default()
+                })?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let apps = store.apps().unwrap();
+    let ranking = rank(&apps, &store.days().unwrap(), &Config::default(), now());
+    let mut cache = CatalogCache::default();
+    cache.rebuild(&apps, &ranking);
+    let recent = HashSet::new();
+
+    for query in [
+        "https://portal.example.com/CaseSensitive?view=Weekly%2FReport",
+        "'HTTPS://PORTAL.EXAMPLE.COM/CaseSensitive?view=Weekly%2FReport'",
+        "  \"https://portal.example.com/CaseSensitive?view=Weekly%2FReport\"  ",
+    ] {
+        cache.update(&apps, &ranking, query, 0, 0, &recent);
+        assert_eq!(names(&cache, &apps), ["Report link"], "query: {query}");
+    }
+    cache.update(
+        &apps,
+        &ranking,
+        "https://portal.example.com/CaseSensitive?view=Weekly%2FReport",
+        3,
+        0,
+        &recent,
+    );
+    assert_eq!(names(&cache, &apps), ["Report link"]);
+    cache.update(
+        &apps,
+        &ranking,
+        "https://portal.example.com/CaseSensitive?view=Weekly%2FReport",
+        2,
+        0,
+        &recent,
+    );
+    assert!(cache.indices.is_empty(), "Always filter must respect Never");
+    cache.update(
+        &apps,
+        &ranking,
+        "https://portal.example.com/casesensitive?view=Weekly%2FReport",
+        0,
+        0,
+        &recent,
+    );
+    assert_eq!(names(&cache, &apps), ["Case variant"]);
+    cache.update(
+        &apps,
+        &ranking,
+        "https://portal.example.com/CaseSensitive?view=Weekly%2FReport&copy=1",
+        0,
+        0,
+        &recent,
+    );
+    assert_eq!(names(&cache, &apps), ["Export copy"]);
+    // A domain fragment is still useful for broad discovery.
+    cache.update(&apps, &ranking, "portal.example.com", 0, 0, &recent);
+    assert_eq!(cache.indices.len(), 3);
+    assert_eq!(store.apps().unwrap(), apps, "search must be read-only");
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
