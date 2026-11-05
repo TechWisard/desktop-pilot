@@ -740,7 +740,10 @@ fn projected_space_retains_public_desktop_hardlinks_and_recognizes_local_aliases
     // removable from the projected layout, subject to verified identity.
     let alias = f.desktop.join(".").join("Gamma.url");
     let current_gamma = f.desktop.join("Gamma.url");
-    assert_ne!(norm(&alias.to_string_lossy()), norm(&current_gamma.to_string_lossy()));
+    assert_ne!(
+        norm(&alias.to_string_lossy()),
+        norm(&current_gamma.to_string_lossy())
+    );
     let layout = plan.layout.as_mut().unwrap();
     layout
         .items
