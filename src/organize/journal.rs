@@ -116,6 +116,98 @@ fn layout_targets(
     }
 }
 
+// Plan positions using the current Explorer layout. A returned icon may occupy
+// another returned icon's old cell: both can be moved together. An unrelated or
+// non-moving icon always wins. Dependencies propagate so a failed move never
+// leaves another restore targeting the stationary icon's cell.
+fn restore_position_plan(
+    current: &native::Layout,
+    requested: Vec<(String, Point)>,
+) -> (Vec<(String, Point)>, usize) {
+    let mut skipped = 0;
+    let by_path: HashMap<String, &native::Item> = current
+        .items
+        .iter()
+        .map(|item| (norm(&item.path), item))
+        .collect();
+    let mut proposals = Vec::new();
+    for (path, point) in requested {
+        match by_path.get(&norm(&path)) {
+            Some(item) if item.position == point => {}
+            Some(_) => proposals.push((path, point)),
+            None => skipped += 1,
+        }
+    }
+    let proposed_ids: HashSet<String> = proposals.iter().map(|(p, _)| norm(p)).collect();
+    let sx = i64::from(current.spacing.x.max(3));
+    let sy = i64::from(current.spacing.y.max(3));
+    let cell = |point: &Point| {
+        (
+            i64::from(point.x).div_euclid(sx),
+            i64::from(point.y).div_euclid(sy),
+        )
+    };
+    let overlaps = |a: &Point, b: &Point| {
+        (i64::from(a.x) - i64::from(b.x)).abs() < sx - 2
+            && (i64::from(a.y) - i64::from(b.y)).abs() < sy - 2
+    };
+    let mut occupied: HashMap<(i64, i64), Vec<&native::Item>> = HashMap::new();
+    for item in &current.items {
+        occupied.entry(cell(&item.position)).or_default().push(item);
+    }
+    let mut targets: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+    for (index, (_, target)) in proposals.iter().enumerate() {
+        targets.entry(cell(target)).or_default().push(index);
+    }
+
+    let mut blocked = HashSet::<String>::new();
+    let mut dependents: HashMap<String, Vec<String>> = HashMap::new();
+    for (index, (path, target)) in proposals.iter().enumerate() {
+        let id = norm(path);
+        let (x, y) = cell(target);
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                let neighbor = (x + dx, y + dy);
+                for other in targets.get(&neighbor).into_iter().flatten() {
+                    if *other != index && overlaps(target, &proposals[*other].1) {
+                        // Never request two icons in the same destination cell.
+                        blocked.insert(id.clone());
+                    }
+                }
+                for item in occupied.get(&neighbor).into_iter().flatten() {
+                    let occupant = norm(&item.path);
+                    if occupant == id || !overlaps(target, &item.position) {
+                        continue;
+                    }
+                    if proposed_ids.contains(&occupant) {
+                        dependents.entry(occupant).or_default().push(id.clone());
+                    } else {
+                        blocked.insert(id.clone());
+                    }
+                }
+            }
+        }
+    }
+    let mut queue: Vec<String> = blocked.iter().cloned().collect();
+    while let Some(id) = queue.pop() {
+        if let Some(waiting) = dependents.get(&id) {
+            for other in waiting {
+                if blocked.insert(other.clone()) {
+                    queue.push(other.clone());
+                }
+            }
+        }
+    }
+    skipped += blocked.len();
+    (
+        proposals
+            .into_iter()
+            .filter(|(path, _)| !blocked.contains(&norm(path)))
+            .collect(),
+        skipped,
+    )
+}
+
 fn restore_layout(journal: &Journal, undo: bool, restored: &HashSet<String>) -> Result<()> {
     let Some(before) = &journal.layout else {
         return Ok(());
@@ -127,30 +219,9 @@ fn restore_layout(journal: &Journal, undo: bool, restored: &HashSet<String>) -> 
         "Files are safe, but the display layout changed. Icon positions were not restored."
     );
     // Never revert a later manual movement of an unrelated icon. Position only
-    // newly created folders (Apply) or the original objects being restored (Undo).
-    let requested = layout_targets(journal, undo, restored);
-    let mut positions = Vec::new();
-    let mut skipped = 0;
-    for (path, point) in requested {
-        let Some(actual) = current.items.iter().find(|i| norm(&i.path) == norm(&path)) else {
-            skipped += 1;
-            continue;
-        };
-        if actual.position == point {
-            continue;
-        }
-        if current.items.iter().any(|i| {
-            norm(&i.path) != norm(&path)
-                && (i64::from(i.position.x) - i64::from(point.x)).abs()
-                    < i64::from(current.spacing.x) - 2
-                && (i64::from(i.position.y) - i64::from(point.y)).abs()
-                    < i64::from(current.spacing.y) - 2
-        }) {
-            skipped += 1;
-            continue;
-        }
-        positions.push((path, point));
-    }
+    // newly created folders (Apply) or originals actually moved by this Undo.
+    let (positions, skipped) =
+        restore_position_plan(&current, layout_targets(journal, undo, restored));
     native::position_many(&positions)?;
     ensure!(
         skipped == 0,
@@ -757,5 +828,88 @@ mod layout_target_tests {
         // Replaying Undo after interruption cannot relocate already returned
         // originals merely because the old journal includes them.
         assert!(layout_targets(&journal, true, &HashSet::new()).is_empty());
+    }
+    fn path(name: &str) -> String {
+        format!(r"C:\Example\Desktop\{name}")
+    }
+
+    fn icon(name: &str, x: i32) -> native::Item {
+        native::Item {
+            path: path(name),
+            name: name.into(),
+            position: Point { x, y: 0 },
+        }
+    }
+
+    fn current(items: Vec<native::Item>) -> native::Layout {
+        native::Layout {
+            items,
+            spacing: Point { x: 100, y: 100 },
+            origin: Point { x: 0, y: 0 },
+            work: [0, 0, 1000, 1000],
+            flags: 0,
+            topology: "test".into(),
+            icon_size: 32,
+        }
+    }
+
+    #[test]
+    fn undo_swapped_cells_positions_both_returned_icons_in_one_batch() {
+        // Explorer reused each other icon's original grid cell after files
+        // reappeared. Both icons are moving, so neither is a foreign blocker.
+        let layout = current(vec![icon("Alpha.url", 100), icon("Beta.url", 0)]);
+        let requested = vec![
+            (path("Alpha.url"), Point { x: 0, y: 0 }),
+            (path("Beta.url"), Point { x: 100, y: 0 }),
+        ];
+        let (moves, skipped) = restore_position_plan(&layout, requested.clone());
+        assert_eq!(moves, requested);
+        assert_eq!(skipped, 0);
+    }
+
+    #[test]
+    fn undo_never_displaces_a_stationary_icon_or_a_blocked_dependency_chain() {
+        // The first target is occupied by an unrelated icon; the other
+        // requested icons depend on that move and must also stay put.
+        let layout = current(vec![
+            icon("Alpha.url", 0),
+            icon("Beta.url", 100),
+            icon("Gamma.url", 200),
+            icon("Unrelated.url", 300),
+        ]);
+        let requested = vec![
+            (path("Alpha.url"), Point { x: 100, y: 0 }),
+            (path("Beta.url"), Point { x: 200, y: 0 }),
+            (path("Gamma.url"), Point { x: 300, y: 0 }),
+        ];
+        let (moves, skipped) = restore_position_plan(&layout, requested);
+        assert!(moves.is_empty());
+        assert_eq!(skipped, 3);
+
+        // A free independent destination can still be restored without
+        // moving the unrelated icon or any blocked dependency.
+        let (moves, skipped) = restore_position_plan(
+            &layout,
+            vec![
+                (path("Alpha.url"), Point { x: 200, y: 0 }),
+                (path("Beta.url"), Point { x: 500, y: 0 }),
+            ],
+        );
+        assert_eq!(moves, vec![(path("Beta.url"), Point { x: 500, y: 0 })]);
+        assert_eq!(skipped, 1);
+    }
+
+    #[test]
+    fn overlapping_restoration_destinations_are_never_requested_together() {
+        let layout = current(vec![icon("Alpha.url", 0), icon("Beta.url", 100)]);
+        let (moves, skipped) = restore_position_plan(
+            &layout,
+            vec![
+                (path("Alpha.url"), Point { x: 300, y: 0 }),
+                (path("Beta.url"), Point { x: 300, y: 0 }),
+            ],
+        );
+        assert!(moves.is_empty());
+        assert_eq!(skipped, 2);
     }
 }
