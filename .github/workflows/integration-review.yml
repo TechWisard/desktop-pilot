@@ -20,7 +20,7 @@ jobs:
         with:
           toolchain: '1.93.1'
           components: rustfmt
-      - name: Integrate exact reviewed inputs without rewriting history
+      - name: Integrate code while preserving workflow permissions
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -35,6 +35,7 @@ jobs:
           cargo fmt --all
           git add -A
           git diff --cached --check
+          test -z "$(git diff --cached --name-only -- .github/workflows)"
           git commit -m 'Integrate desktop organization and native interface acceptance'
           test "$(git ls-remote origin refs/heads/integration/desktop-pilot-completion-20261106 | cut -f1)" = "$GITHUB_SHA"
           auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)

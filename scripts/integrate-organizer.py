@@ -1,7 +1,8 @@
 from pathlib import Path
-import shutil
 import subprocess
 
+# Workflow files are updated by the authorized repository connector, not the runner token.
+workflow = Path('.github/workflows/checks.yml').read_bytes()
 organizer = '9424d6f3eed20df8707c15e2858b340b6f46041f'
 result = subprocess.run(['git', 'merge', '--no-commit', '--no-ff', organizer])
 if result.returncode not in (0, 1):
@@ -9,7 +10,7 @@ if result.returncode not in (0, 1):
 conflicts = subprocess.check_output(['git', 'diff', '--name-only', '--diff-filter=U'], text=True).splitlines()
 if any(path != '.github/workflows/checks.yml' for path in conflicts):
     raise SystemExit('Unreviewed merge conflict: ' + repr(conflicts))
-shutil.copyfile('scripts/review-checks.yml', '.github/workflows/checks.yml')
+Path('.github/workflows/checks.yml').write_bytes(workflow)
 ui = Path('src/ui.rs')
 text = ui.read_text()
 assert text.startswith('mod organization;\n')
@@ -23,5 +24,3 @@ text = module.read_text()
 needle = '#[cfg(test)]\nmod acceptance_tests;'
 assert text.count(needle) == 1
 module.write_text(text.replace(needle, needle + '\n#[cfg(test)]\nmod live_tests;', 1))
-for path in ['.github/workflows/integration-review.yml', 'scripts/review-checks.yml', 'scripts/integrate-organizer.py']:
-    Path(path).unlink()
