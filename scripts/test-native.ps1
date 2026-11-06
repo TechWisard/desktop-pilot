@@ -9,13 +9,13 @@ $reports = [System.IO.Path]::GetFullPath($ReportDirectory)
 $profile = Join-Path ([System.IO.Path]::GetTempPath()) ('test-desktop-pilot-' + [guid]::NewGuid().ToString('N'))
 $report = Join-Path $reports 'native-integration.json'
 # Automatic-review fixtures deliberately retain the production idle/fullscreen
-# checks. A hosted Windows image can start without any foreground window.
-# Give only that disposable session a real, non-fullscreen fixture window;
-# never bypass the guard or activate a window on an ordinary user's desktop.
+# checks. Give only a disposable hosted session a real fixture window; never
+# bypass the guard or activate a window on an ordinary user's desktop.
 $desktopHost = $null
 $hostRoot = Join-Path ([IO.Path]::GetTempPath()) ('test-pilot-idle-host-' + [guid]::NewGuid().ToString('N'))
 try {
     if ($env:GITHUB_ACTIONS -eq 'true' -and $env:RUNNER_ENVIRONMENT -eq 'github-hosted') {
+        & (Join-Path $PSScriptRoot 'prepare-hosted-desktop.ps1')
         [IO.Directory]::CreateDirectory($hostRoot) | Out-Null
         $ready = Join-Path $hostRoot 'ready.json'
         $stop = Join-Path $hostRoot 'stop'
@@ -60,6 +60,8 @@ try {
     Write-Host ("Native integration: {0} checks passed" -f $result.checks.Count)
     $result.checks | ForEach-Object { Write-Host "  $_" }
 } finally {
+    $status = Join-Path $hostRoot 'ready.json.status.json'
+    if (Test-Path -LiteralPath $status) { Copy-Item -LiteralPath $status -Destination (Join-Path $reports 'last-idle-state.json') }
     if ($desktopHost) {
         [IO.File]::WriteAllText((Join-Path $hostRoot 'stop'), 'stop')
         if (-not $desktopHost.WaitForExit(5000)) { $desktopHost.Kill($true) }
