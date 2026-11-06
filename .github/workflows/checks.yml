@@ -46,6 +46,14 @@ jobs:
           if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { Start-Process explorer.exe; Start-Sleep -Seconds 3 }
           cargo test --locked live_explorer_organization_round_trip -- --ignored --test-threads=1 --nocapture
           if ($LASTEXITCODE) { throw 'Live Explorer acceptance failed' }
+      - name: Cloud Files and redirected Desktop acceptance
+        if: matrix.os == 'windows-11-arm'
+        shell: pwsh
+        env:
+          DESKTOP_PILOT_DISPOSABLE_DESKTOP: '1'
+        run: |
+          cargo test --locked real_cloud_placeholder_and_redirected_desktop -- --ignored --test-threads=1 --nocapture
+          if ($LASTEXITCODE) { throw 'Cloud and redirected Desktop acceptance failed' }
       - name: Native organizer interface review
         if: matrix.os != 'windows-2022'
         shell: pwsh
