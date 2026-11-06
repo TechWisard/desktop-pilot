@@ -13,12 +13,24 @@ $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('test-pilot-ui-review-' + [
 [IO.Directory]::CreateDirectory($fixtureRoot) | Out-Null
 $records = [Collections.Generic.List[object]]::new()
 $renderer = 'native OpenGL'
+$primaryFailure = $null
+$emulatedX64 = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [Runtime.InteropServices.Architecture]::Arm64
 function Invoke-Fixture([string[]]$Arguments, [string]$Label, [int]$Timeout = 45000, [switch]$ScrollBottom) {
     $info = [Diagnostics.ProcessStartInfo]::new($exe)
     $info.UseShellExecute = $false
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
-    if ($SoftwareRenderer) { $info.Environment['GALLIUM_DRIVER'] = 'llvmpipe'; $info.Environment['LP_NUM_THREADS'] = '2' }
+    if ($SoftwareRenderer) {
+        $info.Environment['GALLIUM_DRIVER'] = 'llvmpipe'
+        $info.Environment['LP_NUM_THREADS'] = '2'
+        if ($emulatedX64) {
+            # LLVM issue 214488: Windows x64 emulation can report a CPU name
+            # that implies unsupported FMA4 to the test driver's shader JIT.
+            # Scope the documented Mesa cap to this child only, not the OS
+            # or application. The native renderer still draws every frame.
+            $info.Environment['GALLIUM_OVERRIDE_CPU_CAPS'] = 'sse4.1'
+        }
+    }
     foreach ($argument in $Arguments) { $info.ArgumentList.Add($argument) }
     $process = [Diagnostics.Process]::Start($info)
     $output = $process.StandardOutput.ReadToEndAsync()
@@ -37,6 +49,7 @@ function Invoke-Fixture([string[]]$Arguments, [string]$Label, [int]$Timeout = 45
         $stderr = $errors.GetAwaiter().GetResult()
         [IO.File]::WriteAllText((Join-Path $report "$Label-stdout.txt"), $stdout)
         [IO.File]::WriteAllText((Join-Path $report "$Label-stderr.txt"), $stderr)
+        @{exit_code=$process.ExitCode; elapsed_ms=$watch.ElapsedMilliseconds; scroll_messages=$scrollMessages} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $report "$Label-process.json") -Encoding utf8
         if ($process.ExitCode -ne 0) { throw "Native UI failed: $Label ($($process.ExitCode)): $stderr" }
         if ($ScrollBottom -and $scrollMessages -eq 0) { throw "No window-scoped scroll input was delivered: $Label" }
         return $scrollMessages
@@ -66,6 +79,7 @@ try {
         # Retain upstream licenses with the complete temporary distribution.
         # No driver files are included in the product or uploaded as evidence.
         $renderer = 'Mesa 26.2.4 llvmpipe; app-local test driver; not a hardware GPU test'
+        if ($emulatedX64) { $renderer += '; emulated x64, GALLIUM_OVERRIDE_CPU_CAPS=sse4.1' }
         [IO.File]::WriteAllText((Join-Path $report 'renderer.txt'), "$renderer`n$mesaUrl`nSHA256 $mesaSha`n")
     }
     foreach ($language in @('ru', 'en')) {
@@ -122,6 +136,28 @@ with sqlite3.connect(str(databases[0])) as db:
     }
     @{os=(Get-CimInstance Win32_OperatingSystem).Caption; renderer=$renderer; executable_sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant(); captures=@($records)} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $report 'manifest.json') -Encoding utf8
     Write-Host "Native UI: $($records.Count) captures verified; no desktop fixtures moved"
+} catch {
+    $primaryFailure = $_
+    [IO.File]::WriteAllText((Join-Path $report 'failure.txt'), $_.ToString() + "`n" + $_.ScriptStackTrace)
+    throw
 } finally {
-    if (Test-Path -LiteralPath $fixtureRoot) { Remove-Item -LiteralPath $fixtureRoot -Recurse -Force }
+    # Windows image teardown can briefly retain the exited EXE. Retry only
+    # deletion of this unique fixture. Never mask the original test failure.
+    $cleanupFailure = $null
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        if (-not (Test-Path -LiteralPath $fixtureRoot)) { $cleanupFailure = $null; break }
+        try {
+            Remove-Item -LiteralPath $fixtureRoot -Recurse -Force
+            $cleanupFailure = $null
+            break
+        } catch {
+            $cleanupFailure = $_
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    if ($cleanupFailure) {
+        [IO.File]::WriteAllText((Join-Path $report 'cleanup-failure.txt'), $cleanupFailure.ToString())
+        if (-not $primaryFailure) { throw $cleanupFailure }
+        Write-Warning "Fixture cleanup also failed: $cleanupFailure"
+    }
 }
