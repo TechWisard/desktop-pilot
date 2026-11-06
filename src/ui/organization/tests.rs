@@ -490,3 +490,59 @@ fn unchanged_organizer_frames_reuse_production_projection_but_edits_invalidate_i
     assert!(!fixture.desktop.join("Sites").exists());
     assert!(!organize::status(&fixture.app.store).unwrap().pending);
 }
+
+#[test]
+fn recovery_confirmation_cannot_authorize_a_different_pending_journal() {
+    let mut f = Fixture::new();
+    f.app.config.language = "en".into();
+    i18n::set("en");
+    let ctx = egui::Context::default();
+    configure_style(&ctx);
+    let viewport = egui::vec2(960.0, 720.0);
+
+    // The first recovery was explicitly acknowledged in this open dialog.
+    f.app
+        .store
+        .set("organization.active.v1", &Some("1001".to_owned()))
+        .unwrap();
+    settle(&ctx, &mut f.app, viewport);
+    f.app.organization_accept_for = Some("1001".to_owned());
+    let _ = render(&ctx, &mut f.app, viewport, Vec::new());
+    assert_eq!(f.app.organization_accept_for.as_deref(), Some("1001"));
+
+    // Another Settings process can resolve the first operation and create a
+    // newer recovery. The old checkbox must not silently approve the new ID.
+    f.app
+        .store
+        .set("organization.active.v1", &Some("1002".to_owned()))
+        .unwrap();
+    let output = render(&ctx, &mut f.app, viewport, Vec::new());
+    assert!(f.app.organization_accept_for.is_none());
+    let (_, button) = rendered_text(&output)
+        .iter()
+        .find(|(value, _)| value == "Accept current locations")
+        .expect("Recovery button must be shown");
+    click(&ctx, &mut f.app, viewport, button.center());
+    assert!(f.app.job.is_none(), "stale consent must not start a recovery job");
+    assert_eq!(
+        f.app
+            .store
+            .get::<Option<String>>("organization.active.v1")
+            .unwrap()
+            .as_deref(),
+        Some("1002")
+    );
+
+    // Clearing recovery also clears consent. If the same identifier returns
+    // later, it still requires a new user confirmation.
+    f.app.organization_accept_for = Some("1002".to_owned());
+    f.app
+        .store
+        .set("organization.active.v1", &Option::<String>::None)
+        .unwrap();
+    let _ = render(&ctx, &mut f.app, viewport, Vec::new());
+    assert!(f.app.organization_accept_for.is_none());
+    assert!(f.desktop.join("Alpha.url").is_file());
+    assert!(f.desktop.join("Beta.url").is_file());
+    assert!(!f.desktop.join("Sites").exists());
+}
