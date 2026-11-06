@@ -31,12 +31,11 @@ fn same_entry(left: &str, right: &str) -> bool {
 }
 
 fn enumeration_changed(error: &anyhow::Error) -> bool {
-    // ItemCount and Item are separate COM calls. After a rename Explorer can
-    // remove an item between them and report E_BOUNDS. Retry the complete
-    // read, never silently drop that item or treat a partial view as vacant.
-    error
-        .downcast_ref::<windows::core::Error>()
-        .is_some_and(|error| error.code() == windows::Win32::Foundation::E_BOUNDS)
+    // ItemCount, Item and GetItemPosition are separate COM calls. After a
+    // rename Explorer can report E_BOUNDS or GetItemPosition's E_FAIL when
+    // an item disappears. Retry the complete view, not an incomplete subset.
+    // Other E_FAIL failures remain hard errors.
+    native::unstable_explorer_view(error)
 }
 
 fn poll(
@@ -304,6 +303,76 @@ mod tests {
         .unwrap_err();
         assert_eq!(waits, 3);
         assert!(enumeration_changed(&error));
+    }
+
+    fn position_fail() -> anyhow::Error {
+        anyhow::Error::new(windows::core::Error::from_hresult(
+            windows::Win32::Foundation::E_FAIL,
+        ))
+        .context(native::ExplorerPositionUnstable)
+    }
+
+    #[test]
+    fn windows11_position_failure_retries_a_complete_view_including_unrelated_icons() {
+        // Reproduced in the live Windows 11 Explorer acceptance: an item was
+        // enumerated, but GetItemPosition returned E_FAIL during Undo.
+        let before = layout(&["Alpha.url", "Beta.url", "Personal"]);
+        let final_view = layout(&["Alpha.url", "Beta.url", "Personal"]);
+        let mut reads = vec![Err(position_fail()), Ok(final_view.clone())].into_iter();
+        let mut waits = 0;
+        let actual = poll(
+            &before,
+            &[path("Alpha.url"), path("Beta.url")],
+            &[],
+            || reads.next().unwrap(),
+            || {
+                waits += 1;
+                true
+            },
+        )
+        .unwrap();
+        assert_eq!(waits, 1);
+        assert_eq!(actual.items.len(), 3);
+        assert_eq!(actual.items[2].path, path("Personal"));
+        assert!(reads.next().is_none());
+    }
+
+    #[test]
+    fn transient_position_read_is_bounded_and_unrelated_e_fail_is_not_retried() {
+        let mut reads = 0;
+        let mut waits = 0;
+        let error = native::retry_desktop_view(
+            || {
+                reads += 1;
+                Err::<(), _>(position_fail())
+            },
+            || {
+                waits += 1;
+                waits < 3
+            },
+        )
+        .unwrap_err();
+        assert_eq!((reads, waits), (3, 3));
+        assert!(enumeration_changed(&error));
+
+        let unrelated: anyhow::Error =
+            windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL).into();
+        assert!(!enumeration_changed(&unrelated));
+        let mut waits = 0;
+        let error = native::retry_desktop_view(
+            || {
+                Err::<(), _>(
+                    windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL).into(),
+                )
+            },
+            || {
+                waits += 1;
+                true
+            },
+        )
+        .unwrap_err();
+        assert!(!enumeration_changed(&error));
+        assert_eq!(waits, 0);
     }
 
     #[test]
