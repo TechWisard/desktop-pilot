@@ -462,11 +462,8 @@ impl Settings {
                                 if ui
                                     .add_enabled(
                                         available && selected_count > 0,
-                                        egui::Button::new(t(
-                                            "Снять все отметки",
-                                            "Deselect all",
-                                        ))
-                                        .min_size(egui::vec2(160.0, 40.0)),
+                                        egui::Button::new(t("Снять все отметки", "Deselect all"))
+                                            .min_size(egui::vec2(160.0, 40.0)),
                                     )
                                     .clicked()
                                 {
