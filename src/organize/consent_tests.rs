@@ -556,3 +556,86 @@ fn mixed_apply_rechecks_every_rejected_object_before_moving() {
         );
     }
 }
+
+#[test]
+fn saved_catalog_source_alias_and_manual_choice_survive_preview_apply_and_undo() {
+    let f = Fixture::new();
+    for name in ["Alpha", "Beta", "Gamma"] {
+        f.site(name);
+    }
+    let original = f.desktop.join("Alpha.url");
+    let alias = f.desktop.join(".").join("Alpha.url");
+    assert_ne!(
+        norm(&original.to_string_lossy()),
+        norm(&alias.to_string_lossy())
+    );
+    let stale = f.plan(false);
+    assert_eq!(stale.summary(), (3, 1, 2));
+
+    // A policy change can arrive after the preview from another Settings
+    // window, with an alternate but valid spelling of the same local source.
+    let mut saved = native::read_link(&original).unwrap();
+    saved.source = alias.to_string_lossy().into_owned();
+    saved.policy = Policy::Always;
+    f.store.put_app(&saved).unwrap();
+    let previous_apps = f.store.apps().unwrap();
+    let error = apply(&f.store, &stale, &AtomicBool::new(false))
+        .expect_err("stale selection must not move a manually controlled alias");
+    assert!(format!("{error:#}").contains("catalog source"), "{error:#}");
+    assert_eq!(f.store.apps().unwrap(), previous_apps);
+    assert!(f.desktop.join("Beta.url").exists());
+    assert!(f.desktop.join("Gamma.url").exists());
+    assert!(!f.desktop.join("Sites").exists());
+    assert!(status(&f.store).unwrap().undo.is_none());
+
+    // A refreshed plan can still help: the two unrelated sites are moved,
+    // and Undo restores them without touching the user's manual source.
+    let refreshed = f.plan(false);
+    assert_eq!(refreshed.summary(), (2, 1, 1));
+    assert!(refreshed.skipped.iter().any(|s| s.name == "Alpha.url"));
+    assert_eq!(
+        apply(&f.store, &refreshed, &AtomicBool::new(false))
+            .unwrap()
+            .moved,
+        2
+    );
+    let undo_id = status(&f.store).unwrap().undo.unwrap();
+    assert_eq!(undo(&f.store, &undo_id).unwrap().restored, 2);
+    assert_eq!(f.store.app(&saved.id).unwrap(), saved);
+    assert!(original.is_file());
+    assert!(!status(&f.store).unwrap().pending);
+
+    // Even an automatic catalog record must not retain a broken path after
+    // its Desktop entry is moved. Explicitly releasing Always is not enough.
+    saved.policy = Policy::Auto;
+    f.store.put_app(&saved).unwrap();
+    assert_eq!(f.plan(false).summary(), (2, 1, 1));
+
+    // File ID alone must not reject a different directory entry: an external
+    // hard link remains usable when its Desktop sibling is moved.
+    let external_dir = f.store.home.join("Other");
+    disk::create_dir(&external_dir).unwrap();
+    let external = external_dir.join("Alpha.url");
+    disk::hard_link(&original, &external).unwrap();
+    saved.source = external.to_string_lossy().into_owned();
+    f.store.put_app(&saved).unwrap();
+    assert_eq!(f.plan(false).summary(), (3, 1, 2));
+    assert!(external.is_file());
+
+    // Restoring the canonical source address also removes the safeguard.
+    saved.source = original.to_string_lossy().into_owned();
+    f.store.put_app(&saved).unwrap();
+    let current = f.plan(false);
+    assert_eq!(current.summary(), (3, 1, 2));
+    assert_eq!(
+        apply(&f.store, &current, &AtomicBool::new(false))
+            .unwrap()
+            .moved,
+        3
+    );
+    let undo_id = status(&f.store).unwrap().undo.unwrap();
+    assert_eq!(undo(&f.store, &undo_id).unwrap().restored, 3);
+    assert_eq!(f.store.app(&saved.id).unwrap(), saved);
+    assert!(original.exists());
+    assert!(external.exists());
+}
