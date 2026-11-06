@@ -85,6 +85,10 @@ pub(super) struct Dependencies {
     // Only an opt-in file pass probes known local launch/icon paths. Exact
     // string equality misses 8.3, dot-segment and extended-path aliases.
     protected_local_ids: HashSet<String>,
+    // A saved catalog source may use an 8.3, dot-segment or extended Desktop
+    // spelling. Moving its original would leave that catalog source dangling.
+    catalog_source_alias_ids: HashSet<String>,
+    checked_catalog_source_aliases: HashSet<String>,
     checked_local_paths: HashSet<String>,
     arguments: HashSet<String>,
     sidecar_objects: HashSet<String>,
@@ -95,6 +99,29 @@ pub(super) struct Dependencies {
 }
 impl Dependencies {
     fn record(&mut self, app: &App, root: &Path, root_id: &str, check_working_directory: bool) {
+        // The catalog updates sources by their recorded spelling after Apply.
+        // Never move a Desktop entry referenced through a different spelling:
+        // after the rename that alias can no longer be verified or rewritten.
+        // Inspect only distinct non-canonical sources on local disks; a hard
+        // link in another parent directory does not name the Desktop entry.
+        let expanded_source = crate::model::expand_env(&app.source);
+        let source = crate::profile::ordinary_path(PathBuf::from(&expanded_source));
+        if let Some(name) = source.file_name()
+            && norm(&app.source) != norm(&root.join(name).to_string_lossy())
+            && self
+                .checked_catalog_source_aliases
+                .insert(norm(&app.source))
+            && source.is_absolute()
+            && reject_network_root(&source).is_ok()
+            && source
+                .parent()
+                .and_then(|parent| fs::directory(parent).ok())
+                .and_then(|parent| fs::identity(&parent).ok())
+                .is_some_and(|id| id == root_id)
+            && let Ok(stamp) = fs::inspect(&source, false)
+        {
+            self.catalog_source_alias_ids.insert(stamp.id);
+        }
         for value in [&app.target, &app.cwd, &app.icon] {
             let expanded = crate::model::expand_env(value);
             let path = Path::new(&expanded);
@@ -154,6 +181,10 @@ impl Dependencies {
         }
     }
     pub(super) fn check(&self, path: &Path, shortcut: bool, file_id: &str) -> Result<()> {
+        ensure!(
+            !self.catalog_source_alias_ids.contains(file_id),
+            "A saved catalog source aliases this desktop object; update its path before organizing"
+        );
         let normalized = norm(&path.to_string_lossy());
         ensure!(
             !self.sidecar_objects.contains(&normalized),
