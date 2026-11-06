@@ -1,0 +1,38 @@
+name: Apply reviewed integration fixes
+on:
+  push:
+    branches: [integration/desktop-pilot-completion-20261106]
+    paths: [scripts/finish-integration.py, .github/workflows/finish-integration.yml]
+permissions:
+  contents: read
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
+        with:
+          toolchain: '1.93.1'
+          components: rustfmt
+      - name: Apply anchored fixes and format without overwriting concurrent work
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python scripts/finish-integration.py
+          cargo fmt --all
+          git diff --check
+          git add src
+          git config user.name TechWisard
+          git config user.email 152439417+TechWisard@users.noreply.github.com
+          git commit -m 'Fix Explorer refresh race and complete native organizer lifecycle checks'
+          test "$(git ls-remote origin refs/heads/integration/desktop-pilot-completion-20261106 | cut -f1)" = "$GITHUB_SHA"
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" push origin HEAD:refs/heads/integration/desktop-pilot-completion-20261106
+          git show --stat --oneline HEAD
