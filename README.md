@@ -1,174 +1,69 @@
 # Desktop Pilot
 
-**Adaptive desktop shortcuts for Windows. Keep useful apps close and your existing layout intact.**
+**Useful shortcuts nearby. Desktop organization that stays under your control.**
 
-[Download for Windows](https://github.com/TechWisard/desktop-pilot/releases/latest) · [Русский](README.ru.md) · [How it works](docs/guide.md) · [Privacy](docs/privacy.md)
+[Download for Windows](https://github.com/TechWisard/desktop-pilot/releases/latest) · [Русский](README.ru.md) · [User guide](docs/guide.md) · [Privacy](docs/privacy.md)
 
 ![Windows checks](https://github.com/TechWisard/desktop-pilot/actions/workflows/checks.yml/badge.svg)
-![Platform: Windows x64](https://img.shields.io/badge/platform-Windows_x64-0078D4)
-![Interface: English + Русский](https://img.shields.io/badge/interface-English_%2B_Русский-46BBA0)
 
-Desktop Pilot is a local Windows desktop organizer and shortcut manager. It learns which apps you use, then maintains a small, stable group of quick-access shortcuts. Your original shortcuts, category folders and manually chosen positions stay under your control.
-
-![Desktop Pilot overview, using fictional demonstration data](docs/images/overview-en.png)
-
-*The screenshot uses fictional demonstration data.*
+Desktop Pilot is a local Windows desktop organizer and shortcut manager. It has two separate jobs: maintain a small, stable set of quick-access shortcut **copies**, and **organize existing desktop items only when you explicitly ask**. Neither action replaces your manual choices with an unexplained automatic cleanup.
 
 ## Get started
 
-1. Download the **Windows x64 ZIP archive** (`DesktopPilot-*-windows-x64.zip`) from the [latest release](https://github.com/TechWisard/desktop-pilot/releases/latest) and extract it.
-2. Run `desktop-pilot.exe`. The setup walks through the operating mode, number and position of shortcuts, and observation preferences. Choose **English** or **Русский** at any time.
-3. Use your computer normally. The default is **passive observation for 7 computer sessions**. No quick shortcuts are created during learning. After the threshold, the most-used eligible apps appear automatically during an idle period. Choose sessions, active days, either condition or both in Settings.
+1. Download `DesktopPilot-*-windows-x64.zip` from the [latest release](https://github.com/TechWisard/desktop-pilot/releases/latest), compare its SHA-256 with `SHA256SUMS.txt`, and extract it.
+2. Run `desktop-pilot.exe`. Choose English or Russian and follow setup. Automatic adaptation, observation with manual changes, and fully manual control are separate choices.
+3. To organize existing desktop shortcuts, open **Usage → Organize desktop**, review the proposed groups, leave anything you need in place, then apply the plan.
 
-Installation is per user, by default in `%LOCALAPPDATA%\DesktopPilot`; no administrator access is required. Settings are available from the tray icon and the Start menu. This preview executable is unsigned; download only from this repository's Releases and verify the supplied SHA-256 checksum.
+To update an existing installation, open the executable from the new archive. Your local profile, rules and history are retained. The executable is unsigned; verify its source and checksum before opening it.
 
-## Improvements in 0.2.122
+## Organize the desktop deliberately
 
-**Different folders keep their own shortcuts and profile data even when a folder name looks like a Windows variable.** A directory literally named `%USERNAME%` and one named after the signed-in user must not be merged by automatic catalog discovery. Desktop Pilot now keeps actual on-disk paths distinct when checking shortcuts, managed files, recovery journals, Windows icon positions, and background-process locks. User-entered launch templates still expand as before. No existing files or manual rules are rewritten. [Reproduction and safeguards](docs/research/2026-11-06-literal-filesystem-boundaries.md).
+The organizer first produces a read-only preview. By default it proposes groups for ordinary `.lnk` and `.url` shortcuts, not documents, projects or folders. Ordinary file categories require a separate opt-in. Groups with only one item do not create unnecessary folders.
 
-The desktop clean-up feature is still under review in PR #211; it is not in this release. Real Windows 11, redirected OneDrive desktop, and multi-monitor interactive acceptance remain outstanding.
+Every proposed item has a checkbox. Search and pages help inspect large desktops; filtering does not secretly clear selections on other pages. **Remember exceptions** can save the decision to keep everything where it is, without moving a file or creating a fake Undo entry. Changed or replaced files invalidate the old plan before movement starts.
 
-## Improvements in 0.2.121
+Original files are moved within the personal local desktop, not copied and deleted. Existing unrelated folders are never adopted, and conflicting names are never overwritten. Managed quick shortcuts, manual rules and known file dependencies remain protected. Cloud placeholders, reparse objects, executables, scripts and project folders are not silently reorganized.
 
-**Bulk import no longer silently skips a distinct shortcut because its containing directory looks like an environment variable.** A literal `%USERNAME%` directory and a directory named after the Windows user can contain different web shortcuts with the same filename. Pasting both full paths now preserves both entries. Explicit expansion of abbreviated input paths remains available. [Scope and regression](docs/research/2026-11-06-literal-percent-shortcut-import.md).
+Organization has its own **Undo** and persistent recovery journal. If the program is interrupted, reopen it and complete recovery. A manually returned original is recognized; its new icon position is not overwritten. A different file occupying the old name stops restoration rather than losing either file. See the [organization and recovery guide](docs/guide.md).
 
-The draft Organize desktop feature (PR #98) is not included. Its Windows 11, OneDrive and interactive icon-layout acceptance remains open.
+## Keep familiar shortcuts stable
 
-## Improvements in 0.2.16
+Automatic adaptation uses qualified foreground activity, repeated use and recency, not raw process launches. Defaults are four quick shortcuts, a seven-day review interval and at most one ordinary replacement per review. Initial observation waits for seven qualified computer sessions; each requires five minutes of tracked activity. These settings are adjustable.
 
-**Less background database activity while idle.** The worker now records a SQLite heartbeat at most once every 15 seconds during normal operation, rather than on every two-second poll. Startup and deliberate commands still update it immediately, and Settings retains its existing 150-second unresponsive-process warning. A deterministic 60-minute scheduler fixture checks 225 actual heartbeat writes instead of the previous per-tick 1,800, without disabling checks or losing recoverability. This is a count of SQLite updates, not a measured battery-life or disk-wear improvement. [Scope and tests](docs/research/2026-10-27-idle-heartbeat.md).
+**Always / Automatic / Never** rules override ranking. Set the replacement limit to **0** to keep existing choices while allowing empty places to fill. Manually moved quick shortcuts remain anchored. Removing one prevents its automatic return; editing one releases it from management. Source outages do not immediately discard a working copy. Multiple launch profiles are kept distinct.
 
-## Improvements in 0.2.15
+Automatic changes wait for actual inactivity, no held keys or mouse buttons, and a non-fullscreen foreground. The conditions are checked again before changes. The organizer itself is never scheduled automatically.
 
-Working in a different application after a large system-clock jump no longer discards recent session checkpoints for other apps. Cleanup remains bounded by the verified SQLite retention policy; the background worker reloads its cache after cleanup. Transient SQLite writer contention is retried safely before user changes begin; persistent errors remain visible. This prevents accidental loss of session continuity and spurious extra sessions after clock correction. Original shortcuts, placements and manual rules remain unchanged.
+## Readable and local
 
-## Improvements in 0.2.14
+English and Russian, saved text scale from 100% to 200%, keyboard zoom, large controls, searchable app details and separate advanced settings. A stopped profile is not silently restarted just because Settings is opened.
 
-- **Recent usage survives a large forward clock correction.** An apparent gap of more than seven days between cleanup checks temporarily holds time-based deletion for seven days, so a mistaken system clock cannot immediately erase recent app history. A later backward correction releases the hold, and ordinary 90-day retention continues.
-- The same protection applies to an existing profile on its first review after upgrading when the saved activity appears unusually old. Event and command logs remain count-bounded. No layout changes, new controls or network data collection. [Reproduction and limitations](docs/research/2026-10-26-forward-clock-retention.md).
-
-## Improvements in 0.2.13
-
-- **Unavailable shortcut sources can recover through a verified identical alias.** If a saved source is locked or partially written, a readable duplicate with the same full launch identity can be used without losing usage history, manual preferences or notes.
-- Healthy sources remain stable; existing quick copies are not recreated or moved; a personal launch profile never substitutes for a work profile with different arguments. Original shortcuts are unchanged. [Reproduction and limitations](docs/research/2026-10-26-alias-recovery.md).
-
-## Improvements in 0.2.12
-
-- **Preview matches the protected desktop layout after a clock correction.** If Windows time moves backwards while the original source shortcut is offline, Desktop Pilot no longer incorrectly proposes removing an already managed shortcut just because its saved outage timestamp appears in the future.
-- **Your explicit choices remain authoritative.** An existing **Always** or manually moved shortcut stays protected, while automatic copies retain their normal temporary grace after the next verification. **Never add**, changed launch identity, genuinely vacant places and deliberate capacity reductions are still respected. Missing originals never create new quick copies.
-- The regression runs through the actual local store, Windows shortcut parser, preview and apply paths, and verifies bytes, file identity and position, plus explicit release to **Never add**. This is not a measured change in user productivity. [Details and limitations](docs/research/2026-10-26-offline-preview-clock-correction.md).
-
-## Improvements in 0.2.11
-
-- **Recover from an incorrect computer clock.** A confirmed new app session is still counted if the last session timestamp was left more than 20 minutes in the future by a backward time correction. Small adjustments do not create false sessions.
-- **Automatic reviews no longer wait weeks on a future date.** A checkpoint more than 24 hours ahead is treated as due, but only with your opt-in, learning gate and quiet-desktop condition. An immediate repeat review is not triggered.
-- **Keep manual shortcuts where you chose them.** A real Store/desktop regression verifies the corrected clock does not override your automatic-review opt-out, a busy desktop, or existing manually protected files. [Reproduction and limitations](docs/research/2026-10-26-clock-correction-recovery.md).
-
-## Improvements in 0.2.10
-
-- **Your manual choices outlast a disconnected source.** An already managed shortcut marked **Always** or moved by you stays in its familiar place even after the ordinary 72-hour grace period. Returning the unchanged original does not remove and recreate the quick copy.
-- **Clear offline explanations in both languages.** The warning explains whether a copy is protected by your choice or only by the temporary grace period; Windows and network paths are preserved exactly.
-- Automatic copies still expire normally; **Never add**, changed launch identity, user deletion/edit and explicitly returning to **Automatic** remain authoritative. No new shortcut is created from an unavailable source. [Scenarios and validation](docs/research/2026-10-26-manual-absence-completion.md).
-
-## Improvements in 0.2.9
-
-- **A brief storage lock no longer stops tracking immediately.** When another application temporarily holds SQLite's writer lock, Desktop Pilot makes up to three bounded attempts to save the complete usage transaction. Confirmed time and sessions are recorded only once; persistent and non-lock errors are still reported rather than silently ignored.
-- **Clear recovery when tracking stops:** Home shows the saved reason for an unexpected background failure, with **View history** and **Resume background work**. Intentional shutdown and previously saved settings are not mistaken for errors.
-- Three additional regressions use the real SQLite store and Home status logic. All 170 Rust tests, native fixtures and release checks passed on both Windows CI environments before the release update. No network account, hidden telemetry or data migration is introduced. [Verification and limits](docs/verification.md).
-
-## Improvements in 0.2.8
-
-- **Keep the usable shortcut:** if a source or drive is temporarily missing and you reduce the number of quick-access slots, Desktop Pilot now removes an unavailable automatic copy before displacing a working one with a lower historical score. Manually chosen **Always** shortcuts still win, and unchanged places are not rearranged.
-- **Safer recovery from storage failures:** confirmed app-session timestamps in memory now advance only after their SQLite usage transaction commits. A failed write can no longer leave those two states disagreeing; this is not a claim that all disk failures can be repaired automatically.
-- Three new regression tests run on the actual selection, catalog/preview/apply and SQLite transaction paths. Existing original shortcuts, manual placements, 72-hour temporary-outage protection and offline privacy are preserved. [Verification and limits](docs/verification.md).
-
-## Improvements in 0.2.7
-
-- Frequent quick interactions now count toward app recommendations: verified engaged visits of only a few seconds are accumulated per app across window switches for up to 20 minutes, instead of being discarded whenever focus changes.
-- Single incidental switches, unsupported input and delays after sleep still do not create usage. At most 128 partial app windows are retained **in memory only**; daily usage data, user choices and manual placements use the same existing rules.
-- Windows regressions replay interleaved quick visits through the actual activity accumulator and SQLite store; tests also cover expired visits, incidental switches, memory limits and uninterrupted use. [Verification scope](docs/verification.md).
-
-## Improvements in 0.2.6
-
-- Temporary source or target unavailability no longer forces the next automatic review to remove an already managed shortcut immediately. The program keeps its familiar position for up to 72 hours from the first confirmed outage; it is removed at a later review if the source remains unavailable.
-- Missing originals are never used to create new shortcuts. An explicit **Never add** rule, a changed launch identity, or reducing the number of shortcut places still takes precedence.
-- Regression tests cover disappearing and restored source files and launch targets, the grace interval, manual exclusions and capacity changes. No extra background timer, cloud account or telemetry has been introduced. [Verification](docs/verification.md).
-
-## Improvements in 0.2.5
-
-- Empty quick-access positions are refilled together at the next review instead of one per review interval. A vacancy does not consume the limit on **replacing** familiar shortcuts.
-- Existing shortcuts remain stable: real replacements still require a clear score advantage and respect the configured maximum. Manually protected choices and original files remain unchanged.
-- Additional regression tests cover recovery from multiple vacancies and a mixed recovery/replacement review. [Verification](docs/verification.md).
-
-## Improvements in 0.2.4
-
-- Verified Windows Shell apps no longer start with an accidental **Never add** rule merely because their target is not a physical EXE. Invalid targets remain excluded; previously saved manual rules remain unchanged.
-- App search also matches launch profile arguments, working directories and personal notes, making same-named shortcuts easier to distinguish.
-- Windows regression fixtures exercise Shell discovery, activity, ranking, safe copying and manual exclusions. See the [verification scope](docs/verification.md).
-
-## Earlier interface improvements (0.2.3)
-
-- Larger text, generous buttons, clear navigation and a saved interface scale from 100% to 200%. The selector and Ctrl+plus, Ctrl+minus and Ctrl+0 shortcuts control the same setting.
-- Three understandable modes: automatic adaptation, observation with manual changes, or full manual control.
-- Pick a shortcut area on a desktop map, or let the app find free space. Advanced tuning is grouped separately.
-- Preview which apps will be added or removed before applying. Unsaved settings are clearly distinguished from the running configuration.
-- A readable app list with search, filters and direct page selection. Details open separately, and rule-saving progress stays visible beside the affected app. Add multiple shortcuts with the file picker, pasted paths or drag and drop.
-- Save initial setup and continue later. Completely disable the app from Data; opening Settings does not silently enable it again.
-- Open the downloaded executable to update an existing installation. Your profile is retained. After a failed file replacement, the app attempts to restore the previously running background process and reports any recovery failure separately.
-
-## A quieter desktop
-
-| Behavior | Default after setup |
-| --- | --- |
-| Quick-access area | 4 shortcuts in a free area of the primary display |
-| Review interval | Every 7 days, after an idle period and outside fullscreen activity |
-| Ordinary replacements | At most 1 per review |
-| Initial observation | 7 qualified computer sessions; configurable sessions / active days / either / both |
-| Replacement threshold | 1.5× the existing score **and** at least 3 points more |
-| Recency | Scores halve every 14 days; usage totals retained for 90 days |
-| Taskbar shortcuts | Already pinned apps excluded unless explicitly requested |
-| Manual choices | Always / Automatic / Never; moved quick shortcuts stay pinned |
-
-A computer session needs at least 5 minutes of tracked activity; a new session starts after 30 minutes without it. An active day also needs 5 minutes. Restarting the app preserves progress. Thresholds apply to the initial learning phase; after completion, ordinary weekly reviews take over.
-
-The first fill and explicit rule changes may affect more than one shortcut. Deleting a managed shortcut prevents it from coming back automatically. Files you edit are released from management. Each change has a local journal and an **Undo** action; rollback refuses to overwrite changed files.
-
-## You decide what deserves a shortcut
-
-Usage is more than a launch count. Repeated active days, confirmed foreground sessions, recency, taskbar pins and manual choices contribute to the decision. Opening a process or calling a shortcut adds no ranking points by itself. A foreground window must receive fresh keyboard, button or wheel interaction before its use counts; Windows-marked injected input is excluded. Startup apps can qualify only when you actually interact with them. If an app is normally opened through a file association, a context menu or a hotkey, choose **Never add**. Desktop Pilot cannot reliably infer that preference from process activity alone.
-
-The catalog scans personal and shared desktop shortcuts, together with the Start menu up to five folder levels deep. Add other `.lnk` or `.url` files from Apps. Catalog discovery does not put every application on the desktop. Ambiguous executable profiles are kept separate. Steam game directories and Windows app identities are used where they can be matched uniquely.
-
-Quick shortcuts created with 0.1.1 or later are exact copies of your originals. They launch directly and keep working when Desktop Pilot is stopped or its database is unavailable.
-
-## Local by design
-
-No account, analytics, cloud synchronization or network service. The tracker stores local app paths, daily usage totals, preferences and undo records. It never records key codes, typed text, window titles, document content or browser history. Input provenance flags and a recent interaction timestamp are used to distinguish activity from unattended launches. **Do not upload your local database or undo folder.** [Privacy details](docs/privacy.md)
+No account, telemetry, cloud synchronization or network service. Local records contain app paths, aggregate usage, preferences and Undo data, not typed text, key codes, window titles, document content or browsing history. **Do not upload your profile database or Undo folder.** [Privacy details](docs/privacy.md)
 
 ## Compatibility and verification
 
-Desktop Pilot remains a **preview**, intended for Windows 10/11 x64 with the standard Explorer desktop. The release is checked on Windows Server 2022 and 2025 runners, with separate application screenshots and isolated filesystem fixtures. The current verification scope is recorded in the linked report. Automated geometry tests cover 100 combinations of resolution, scaling and desktop origin, including empty, occupied and insufficient-space cases. Those tests do not replace physical multi-monitor testing.
+The application targets Windows 10/11 x64 with the standard Explorer desktop. This organizer's acceptance includes actual Windows 11 Explorer apply/Undo, Windows Server 2022/2025 checks, abrupt child-process termination followed by recovery, and native English/Russian interface captures at 100% and 200%, including scrolled content.
 
-Explorer auto-arrange must be off for positioning. A display-layout change pauses placement until you accept the new geometry. Unrecognized taskbar data stops changes rather than guessing; the pin filter can be disabled explicitly. Alternative shells and virtual-desktop managers are not validated. See [verification scope](docs/verification.md).
+The hosted Windows 11 machine is ARM64 running the x64 executable under emulation; UI captures use an app-local software renderer. This is not a physical x64 GPU or multi-monitor certification. Layout, occupied-cell, negative-origin and topology-change regressions cover the production placement logic, but do not substitute for every hardware arrangement. Active OneDrive-account synchronization and alternative shells are not certified. Unsupported cloud/network objects are refused or skipped, not silently moved.
+
+Explorer auto-arrange must be off for controlled positioning. Display-layout changes stop unsafe placement. [Release notes](docs/releases/0.3.0.md) · [Historical verification records](docs/verification.md)
 
 ## Build
 
-Install Rust **1.93.1** with the MSVC toolchain and Visual Studio C++ Build Tools, then run:
+Install Rust **1.93.1** with the MSVC toolchain and Visual Studio C++ Build Tools:
 
 ```powershell
 pwsh -File scripts/build-release.ps1
 ```
 
-The script runs formatting, unit tests and Clippy, then builds a release with local source paths remapped. The executable is in `target/release/desktop-pilot.exe`. The app is written in **Rust**, using egui/eframe, SQLite and native Windows Shell APIs.
+The script checks formatting, tests and strict Clippy before building `target/release/desktop-pilot.exe`. The application uses Rust, egui/eframe, SQLite and native Windows Shell APIs. Third-party and build-dependency notices are retained in the repository and distribution.
 
-For isolated native integration checks:
+For isolated native checks, use a new empty test profile:
 
 ```powershell
 target/release/desktop-pilot.exe --self-test --home "$env:TEMP\test-desktop-pilot-unique" --out "$env:TEMP\desktop-pilot-test.json"
 ```
 
-Use a new, empty `test-*` directory each time. The fixture uses its own shortcut directory and launches only its own inert executable. It does not change the real desktop or startup entries. [Architecture, operation and removal](docs/guide.md)
+The fixture does not alter your real desktop or autostart. Live Explorer and Cloud Files acceptance are separately restricted to an explicitly disposable hosted test session.
 
-## Feedback
-
-[Report a bug](https://github.com/TechWisard/desktop-pilot/issues) with the Windows version, display scaling and reproduction steps. Remove personal paths and application history from any report or screenshot.
+[Report a problem](https://github.com/TechWisard/desktop-pilot/issues) with reproduction steps, Windows version and scaling. Remove personal paths and history from reports.
