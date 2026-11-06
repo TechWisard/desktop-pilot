@@ -1,16 +1,23 @@
-param([string]$Executable = 'target/debug/desktop-pilot.exe', [string]$ReportDirectory = 'target/ui-review')
+param(
+    [string]$Executable = 'target/debug/desktop-pilot.exe',
+    [string]$ReportDirectory = 'target/ui-review',
+    [switch]$SoftwareRenderer = ($env:GITHUB_ACTIONS -eq 'true')
+)
 $ErrorActionPreference = 'Stop'
-$exe = (Resolve-Path -LiteralPath $Executable).Path
+$sourceExecutable = (Resolve-Path -LiteralPath $Executable).Path
+$exe = $sourceExecutable
 $report = [IO.Path]::GetFullPath($ReportDirectory)
 [IO.Directory]::CreateDirectory($report) | Out-Null
 $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('test-pilot-ui-review-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($fixtureRoot) | Out-Null
 $records = [Collections.Generic.List[object]]::new()
+$renderer = 'native OpenGL'
 function Invoke-Fixture([string[]]$Arguments, [string]$Label, [int]$Timeout = 45000) {
     $info = [Diagnostics.ProcessStartInfo]::new($exe)
     $info.UseShellExecute = $false
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
+    if ($SoftwareRenderer) { $info.Environment['GALLIUM_DRIVER'] = 'llvmpipe'; $info.Environment['LP_NUM_THREADS'] = '2' }
     foreach ($argument in $Arguments) { $info.ArgumentList.Add($argument) }
     $process = [Diagnostics.Process]::Start($info)
     $output = $process.StandardOutput.ReadToEndAsync()
@@ -23,6 +30,28 @@ function Invoke-Fixture([string[]]$Arguments, [string]$Label, [int]$Timeout = 45
     if ($process.ExitCode -ne 0) { throw "Native UI failed: $Label ($($process.ExitCode)): $stderr" }
 }
 try {
+    if ($SoftwareRenderer) {
+        # App-local test deployment only: no system installation or release DLL changes.
+        $archive = Join-Path $fixtureRoot 'mesa.7z'
+        $mesaUrl = 'https://github.com/pal1000/mesa-dist-win/releases/download/26.2.4/mesa3d-26.2.4-release-msvc.7z'
+        $mesaSha = '351fc8c8b695878ffb3eaa044b3ead08672a48b1a045e3c3e3975811df0f6695'
+        Invoke-WebRequest -Uri $mesaUrl -OutFile $archive
+        if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $mesaSha) { throw 'Software renderer checksum mismatch' }
+        $mesa = Join-Path $fixtureRoot 'mesa'
+        & 7z x $archive "-o$mesa" -y | Out-Null
+        if ($LASTEXITCODE) { throw 'Could not extract the verified software renderer' }
+        $application = Join-Path $fixtureRoot 'application'
+        [IO.Directory]::CreateDirectory($application) | Out-Null
+        $exe = Join-Path $application 'desktop-pilot.exe'
+        Copy-Item -LiteralPath $sourceExecutable -Destination $exe
+        $driver = Get-ChildItem -LiteralPath $mesa -Recurse -Filter opengl32.dll | Where-Object { $_.Directory.Name -eq 'x64' }
+        if (@($driver).Count -ne 1) { throw 'Expected one x64 software OpenGL driver' }
+        Get-ChildItem -LiteralPath $driver.Directory.FullName -Filter '*.dll' | Copy-Item -Destination $application
+        # Retain upstream licenses with the complete temporary distribution.
+        # No driver files are included in the product or uploaded as evidence.
+        $renderer = 'Mesa 26.2.4 llvmpipe; app-local test driver; not a hardware GPU test'
+        [IO.File]::WriteAllText((Join-Path $report 'renderer.txt'), "$renderer`n$mesaUrl`nSHA256 $mesaSha`n")
+    }
     foreach ($language in @('ru', 'en')) {
         foreach ($scale in @(1, 2)) {
             foreach ($view in @('organization', 'organization-filtered', 'organization-files', 'organization-warning')) {
@@ -69,7 +98,7 @@ with sqlite3.connect(str(databases[0])) as db:
             }
         }
     }
-    @{os=(Get-CimInstance Win32_OperatingSystem).Caption; executable_sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant(); captures=@($records)} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $report 'manifest.json') -Encoding utf8
+    @{os=(Get-CimInstance Win32_OperatingSystem).Caption; renderer=$renderer; executable_sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant(); captures=@($records)} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $report 'manifest.json') -Encoding utf8
     Write-Host "Native UI: $($records.Count) captures verified; no desktop fixtures moved"
 } finally {
     if (Test-Path -LiteralPath $fixtureRoot) { Remove-Item -LiteralPath $fixtureRoot -Recurse -Force }
