@@ -30,6 +30,16 @@ fn same_entry(left: &str, right: &str) -> bool {
     identity(pa).is_some_and(|id| identity(pb).as_ref() == Some(&id))
 }
 
+// Explorer can invalidate an enumeration index while its folder view updates.
+// Retry only this recognized transient COM result, never an arbitrary error.
+fn transient_shell_bounds(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<windows::core::Error>()
+            .is_some_and(|error| error.code().0 == 0x8000_000Bu32 as i32)
+    })
+}
+
 fn poll(
     before: &native::Layout,
     appeared: &[String],
@@ -38,7 +48,11 @@ fn poll(
     mut retry: impl FnMut() -> bool,
 ) -> Result<native::Layout> {
     loop {
-        let current = read()?;
+        let current = match read() {
+            Ok(current) => current,
+            Err(error) if transient_shell_bounds(&error) && retry() => continue,
+            Err(error) => return Err(error),
+        };
         ensure!(
             current.topology == before.topology && current.flags & 1 == 0,
             "Files are safe, but the display layout changed. Icon positions were not restored."
@@ -138,6 +152,71 @@ mod tests {
             topology: "fixture".into(),
             icon_size: 32,
         }
+    }
+    #[test]
+    fn transient_explorer_bounds_race_rechecks_real_layout_without_waiving_safety() {
+        let before = layout(&["Alpha.url", "Personal"]);
+        let mut reads = 0;
+        let mut waits = 0;
+        let result = poll(
+            &before,
+            &[path("Sites")],
+            &[path("Alpha.url")],
+            || {
+                reads += 1;
+                if reads == 1 {
+                    return Err(windows::core::Error::from_hresult(windows::core::HRESULT(
+                        0x8000_000Bu32 as i32,
+                    ))
+                    .into());
+                }
+                Ok(layout(&["Sites", "Personal"]))
+            },
+            || {
+                waits += 1;
+                true
+            },
+        )
+        .unwrap();
+        assert_eq!((reads, waits), (2, 1));
+        assert_eq!(result.items.len(), 2);
+
+        let mut reads = 0;
+        let mut waits = 0;
+        let error = poll(
+            &before,
+            &[path("Sites")],
+            &[path("Alpha.url")],
+            || {
+                reads += 1;
+                Err(windows::core::Error::from_hresult(windows::core::HRESULT(
+                    0x8000_000Bu32 as i32,
+                ))
+                .into())
+            },
+            || {
+                waits += 1;
+                waits < 3
+            },
+        )
+        .unwrap_err();
+        assert!(transient_shell_bounds(&error));
+        assert_eq!((reads, waits), (3, 3));
+    }
+
+    #[test]
+    fn unexpected_shell_error_is_not_retried_or_mislabeled_as_a_view_race() {
+        let before = layout(&["Alpha.url"]);
+        let error = poll(
+            &before,
+            &[],
+            &[],
+            || anyhow::bail!("An unrelated filesystem error"),
+            || panic!("The unrelated failure must not be retried"),
+        )
+        .unwrap_err();
+        assert!(!transient_shell_bounds(&error));
+        assert!(error.to_string().contains("unrelated filesystem"));
     }
     #[test]
     fn notification_delivery_may_precede_both_folder_creation_and_old_icon_removal() {

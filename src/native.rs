@@ -560,10 +560,16 @@ impl Desktop {
             let folder: IShellFolder = self.view.GetFolder()?;
             let mut out = Vec::new();
             for i in 0..n {
-                let p = self.view.Item(i)?;
+                let p = self
+                    .view
+                    .Item(i)
+                    .with_context(|| format!("Explorer view changed during enumeration at item {i}/{n}"))?;
                 let result = (|| -> Result<_> {
                     ensure!(!p.is_null(), "Explorer returned an empty item identifier");
-                    let pos = self.view.GetItemPosition(p)?;
+                    let pos = self
+                        .view
+                        .GetItemPosition(p)
+                        .with_context(|| format!("Explorer could not read desktop icon position at item {i}/{n}"))?;
                     // The view can reorder between COM calls. Resolve names
                     // from the exact child PIDL used for its position, never
                     // from a second lookup of the now potentially stale index.
@@ -759,12 +765,14 @@ pub fn position_many(positions: &[(String, Point)]) -> Result<()> {
         });
     }
     unsafe {
-        d.view.SelectAndPositionItems(
-            pointers.len() as u32,
-            pointers.as_ptr(),
-            Some(points.as_ptr()),
-            SVSI_POSITIONITEM.0 as u32,
-        )?;
+        d.view
+            .SelectAndPositionItems(
+                pointers.len() as u32,
+                pointers.as_ptr(),
+                Some(points.as_ptr()),
+                SVSI_POSITIONITEM.0 as u32,
+            )
+            .context("Explorer rejected positioning the selected desktop icons")?;
     }
     let actual = layout()?;
     for (path, point) in positions {
