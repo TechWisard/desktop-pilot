@@ -7,6 +7,8 @@ mod fs;
 mod journal;
 #[cfg(test)]
 mod live_tests;
+mod refresh;
+pub(crate) mod runtime_checks;
 pub(crate) use journal::remember_keep;
 mod metadata;
 mod plan;

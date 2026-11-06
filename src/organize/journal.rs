@@ -254,8 +254,7 @@ fn restore_layout(journal: &Journal, undo: bool, restored: &HashSet<String>) -> 
     let Some(before) = &journal.layout else {
         return Ok(());
     };
-    native::refresh(Path::new(&journal.root));
-    let current = native::layout()?;
+    let current = super::refresh::settled(journal, undo, restored)?;
     ensure!(
         current.topology == before.topology && current.flags & 1 == 0,
         "Files are safe, but the display layout changed. Icon positions were not restored."
