@@ -439,6 +439,43 @@ impl Settings {
                                 "В оценке учтены новые папки. Перед переносом расположение и состав проверяются повторно.",
                                 "New folders count towards the space estimate. Locations and selections are checked again before moving.",
                             ));
+                            let selected_count =
+                                plan.items.iter().filter(|item| item.selected).count();
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(format!(
+                                    "{}: {selected_count} / {}",
+                                    t("Отмечено", "Selected"),
+                                    plan.items.len()
+                                ));
+                                if ui
+                                    .add_enabled(
+                                        available && selected_count < plan.items.len(),
+                                        egui::Button::new(t("Отметить все", "Select all"))
+                                            .min_size(egui::vec2(130.0, 40.0)),
+                                    )
+                                    .clicked()
+                                {
+                                    for item in &mut plan.items {
+                                        item.selected = true;
+                                    }
+                                }
+                                if ui
+                                    .add_enabled(
+                                        available && selected_count > 0,
+                                        egui::Button::new(t("Снять все отметки", "Deselect all"))
+                                            .min_size(egui::vec2(160.0, 40.0)),
+                                    )
+                                    .clicked()
+                                {
+                                    for item in &mut plan.items {
+                                        item.selected = false;
+                                    }
+                                }
+                            });
+                            ui.small(t(
+                                "Команды действуют на весь план, включая скрытые поиском строки и другие страницы.",
+                                "These controls affect the entire plan, including filtered-out rows and other pages.",
+                            ));
                             if !organization_projection_available(
                                 plan,
                                 &self.config,

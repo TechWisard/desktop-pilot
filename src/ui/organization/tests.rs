@@ -168,6 +168,88 @@ fn click(ctx: &egui::Context, app: &mut Settings, viewport: egui::Vec2, at: egui
     }
 }
 
+fn click_organization_button(
+    ctx: &egui::Context,
+    app: &mut Settings,
+    viewport: egui::Vec2,
+    label: &str,
+) {
+    settle(ctx, app, viewport);
+    let output = render(ctx, app, viewport, Vec::new());
+    let painted = rendered_text(&output);
+    let at = painted
+        .iter()
+        .find(|(text, _)| text == label)
+        .map(|(_, rect)| rect.center())
+        .unwrap_or_else(|| {
+            panic!(
+                "Missing visible organizer control '{label}': {:?}",
+                painted.iter().map(|(text, _)| text).collect::<Vec<_>>()
+            )
+        });
+    click(ctx, app, viewport, at);
+}
+
+#[test]
+fn one_bulk_choice_changes_the_entire_real_plan_even_with_hidden_rows() {
+    let mut f = Fixture::new();
+    f.analyze();
+    let ctx = egui::Context::default();
+    configure_style(&ctx);
+    i18n::set("en");
+    f.app.config.language = "en".into();
+    let viewport = egui::vec2(1200.0, 900.0);
+    let original_sources: Vec<_> = ["Alpha.url", "Beta.url"]
+        .iter()
+        .map(|name| fs::read(f.desktop.join(name)).unwrap())
+        .collect();
+
+    // Search hides both rows, yet the global action must update both, not
+    // just the visible page/filter. No filesystem mutation occurs on selection.
+    f.app.organization_query = "unmatched".into();
+    click_organization_button(&ctx, &mut f.app, viewport, "Deselect all");
+    let plan = f.app.organization_plan.as_ref().unwrap();
+    assert_eq!(plan.items.len(), 2);
+    assert!(plan.items.iter().all(|item| !item.selected));
+    assert_eq!(plan.summary(), (0, 0, 0));
+    assert_eq!(f.app.organization_query, "unmatched");
+
+    click_organization_button(&ctx, &mut f.app, viewport, "Select all");
+    let plan = f.app.organization_plan.as_ref().unwrap();
+    assert!(plan.items.iter().all(|item| item.selected));
+    assert_eq!(plan.summary(), (2, 1, 1));
+
+    // A partial filter must not allow a hidden selected row to remain when
+    // the user asks to keep the whole plan on the desktop.
+    f.app.organization_query = "Alpha".into();
+    click_organization_button(&ctx, &mut f.app, viewport, "Deselect all");
+    assert!(
+        f.app
+            .organization_plan
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| !item.selected)
+    );
+    f.app.organization_apply();
+    f.finish_job();
+    for (name, contents) in ["Alpha.url", "Beta.url"]
+        .iter()
+        .zip(original_sources.iter())
+    {
+        assert_eq!(&fs::read(f.desktop.join(name)).unwrap(), contents);
+    }
+    assert!(!f.desktop.join("Sites").exists());
+    assert!(organize::status(&f.app.store).unwrap().undo.is_none());
+
+    f.app.organization_analyze();
+    f.finish_job();
+    let repeated = f.app.organization_plan.as_ref().unwrap();
+    assert!(repeated.items.is_empty());
+    assert_eq!(repeated.skipped.len(), 2);
+}
+
 #[test]
 fn all_six_thousand_preview_and_skipped_items_remain_accessible() {
     for count in [0usize, 1, 39, 40, 41, 60, 61, 5999, 6000] {
