@@ -26,7 +26,7 @@ Run this detection both during initial preview and at Apply, which is necessary 
 
 ## Reproducible integration sequence
 
-`src/organize/consent_tests.rs::aliased_desktop_working_directory_protects_opt_in_files_at_preview_and_apply` uses production SQLite, a real Windows Shell link (not executed), an actual local directory opened via the production identity primitive, an old organization preview and normal Apply/Undo. Its intentionally distinct textual path `Desktop\\.` points at the same directory. It checks that:
+`src/organize/consent_tests.rs::aliased_desktop_working_directory_protects_opt_in_files_at_preview_and_apply` uses production SQLite, a real Windows Shell link (not executed), an actual local directory opened via the production identity primitive, an old organization preview and normal Apply/Undo. It checks two intentionally distinct textual spellings, an ordinary `Desktop\\.` suffix and the corresponding extended local `\\\\?\\C:\\...\\Desktop\\.` spelling; both point at the same directory. It checks that:
 
 1. The old preview initially proposes two document moves.
 2. An imported app whose stored working directory uses the alias makes the freshly analyzed plan exclude both documents.
