@@ -360,7 +360,9 @@ fn shortcut_paths(value: &str) -> Result<Vec<PathBuf>> {
                 entered
             }
         };
-        if seen.insert(norm(&path.to_string_lossy())) {
+        // These are concrete paths: an absolute filename containing
+        // %USERNAME% is not the same object as its expanded spelling.
+        if seen.insert(norm_literal_path(&path.to_string_lossy())) {
             paths.push(path);
         }
     }
@@ -5172,6 +5174,52 @@ mod tests {
                 "invalid file type or relative path reached the native parser: {invalid}"
             );
         }
+    }
+
+    #[test]
+    fn pasted_absolute_environment_like_names_do_not_collapse_distinct_shortcuts() {
+        let username = std::env::var("USERNAME").expect("Windows runner username");
+        let home = std::env::temp_dir().join(format!(
+            "desktop-pilot-literal-percent-path-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let literal = home.join("%USERNAME%").join("Editor.url");
+        let expanded = home.join(&username).join("Editor.url");
+        assert_ne!(literal, expanded);
+        std::fs::create_dir_all(literal.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(expanded.parent().unwrap()).unwrap();
+        let literal_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/literal\r\n";
+        let expanded_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/expanded\r\n";
+        std::fs::write(&literal, literal_bytes).unwrap();
+        std::fs::write(&expanded, expanded_bytes).unwrap();
+
+        let input = format!("{}\n{}", literal.display(), expanded.display());
+        let paths = shortcut_paths(&input).unwrap();
+        assert_eq!(paths, vec![literal.clone(), expanded.clone()]);
+        assert_ne!(
+            norm_literal_path(&literal.to_string_lossy()),
+            norm_literal_path(&expanded.to_string_lossy())
+        );
+        // The real shortcut reader must receive both original filesystem
+        // entries, not only the first path from a prematurely deduplicated list.
+        let targets: Vec<_> = paths
+            .iter()
+            .map(|path| {
+                validate_shortcut_path(path).unwrap();
+                native::read_link(path).unwrap().target
+            })
+            .collect();
+        assert_eq!(
+            targets,
+            ["https://example.invalid/literal", "https://example.invalid/expanded"]
+        );
+        assert_eq!(std::fs::read(&literal).unwrap(), literal_bytes);
+        assert_eq!(std::fs::read(&expanded).unwrap(), expanded_bytes);
+        std::fs::remove_dir_all(home).unwrap();
     }
 
     #[test]

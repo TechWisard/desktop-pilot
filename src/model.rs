@@ -11,7 +11,13 @@ pub fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 pub fn norm(s: &str) -> String {
-    let expanded = expand_env(s).replace('/', "\\");
+    norm_literal_path(&expand_env(s))
+}
+/// Normalize an already literal Windows path without interpreting filename
+/// components that happen to look like environment-variable references.
+/// Expansion, when wanted, belongs at the input boundary before this call.
+pub fn norm_literal_path(s: &str) -> String {
+    let expanded = s.replace('/', "\\");
     // Extended UNC device prefixes are case-insensitive on ordinary Windows
     // file paths. Treat their different spellings as the same saved source.
     // get() also avoids slicing through a multibyte path prefix.
