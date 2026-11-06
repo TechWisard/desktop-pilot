@@ -4,6 +4,8 @@ use super::*;
 // rename checkpoint with a separate, forcibly terminated child process.
 #[path = "tests_cases.rs"]
 mod cases;
+#[path = "cloud_acceptance_tests.rs"]
+mod cloud_acceptance;
 #[path = "process_recovery_tests.rs"]
 mod process_recovery;
 
