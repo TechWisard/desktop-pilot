@@ -116,8 +116,11 @@ fn real_cloud_placeholder_and_redirected_desktop_preserve_local_choices() -> Res
     );
     let _com = native::Com::new()?;
     let home = std::env::temp_dir().join(format!("test-cloud-organizer-{}", fs::operation_id()?));
+    disk::create_dir_all(home.join("SyncRoot").join("Desktop"))?;
+    // Hosted TEMP can contain an 8.3 parent alias. Compare the same real
+    // directory, not a short spelling against the organizer's canonical path.
+    let home = crate::profile::ordinary_path(disk::canonicalize(home)?);
     let desktop = home.join("SyncRoot").join("Desktop");
-    disk::create_dir_all(&desktop)?;
     let mut cleanup = Cleanup {
         home: home.clone(),
         registered: None,
@@ -136,10 +139,14 @@ fn real_cloud_placeholder_and_redirected_desktop_preserve_local_choices() -> Res
         .ok()?;
     }
     // Resolve the actual per-user Known Folder, without a test path override.
+    let resolved = root(&store)?;
+    let expected_id = fs::identity(&fs::directory(&desktop)?)?;
+    let resolved_id = fs::identity(&fs::directory(&resolved)?)?;
     ensure!(
-        norm_literal_path(&root(&store)?.to_string_lossy())
-            == norm_literal_path(&desktop.to_string_lossy()),
-        "The organizer did not resolve the redirected Known Folder"
+        resolved_id == expected_id,
+        "Redirected Desktop differs: expected {}, resolved {}",
+        desktop.display(),
+        resolved.display()
     );
     unsafe {
         SHSetKnownFolderPath(
