@@ -648,7 +648,7 @@ fn long_preview_uses_the_modal_wheel_at_normal_and_double_scale() {
         let path = fixture.desktop.join(format!("Project {index:02}.url"));
         fs::write(
             &path,
-            format!("[InternetShortcut]\\r\\nURL=https://example.invalid/project/{index}\\r\\n"),
+            format!("[InternetShortcut]\r\nURL=https://example.invalid/project/{index}\r\n"),
         )
         .unwrap();
     }

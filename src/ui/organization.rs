@@ -548,22 +548,22 @@ impl Settings {
                                     )
                                 })
                                 .collect();
-                                for (index, destination, moving) in rows {
-                                    let item = &mut plan.items[index];
-                                    let label = if moving {
-                                        format!("{}  →  {destination}", item.name)
-                                    } else {
-                                        format!(
-                                            "{} — {}",
-                                            item.name,
-                                            t("Остаётся", "Stays in place")
-                                        )
-                                    };
-                                    ui.add_enabled(
-                                        available,
-                                        egui::Checkbox::new(&mut item.selected, label),
-                                    );
-                                }
+                            for (index, destination, moving) in rows {
+                                let item = &mut plan.items[index];
+                                let label = if moving {
+                                    format!("{}  →  {destination}", item.name)
+                                } else {
+                                    format!(
+                                        "{} — {}",
+                                        item.name,
+                                        t("Остаётся", "Stays in place")
+                                    )
+                                };
+                                ui.add_enabled(
+                                    available,
+                                    egui::Checkbox::new(&mut item.selected, label),
+                                );
+                            }
                             ui.small(format!(
                                 "{}: {}–{} / {}",
                                 t("Объекты в плане", "Plan items"),
@@ -594,17 +594,17 @@ impl Settings {
                                     let (start, end) =
                                         organization_pages(ui, &mut page, skipped.len());
                                     ctx.data_mut(|data| data.insert_temp(id, page));
-                                        for entry in &skipped[start..end] {
-                                            ui.add(
-                                                egui::Label::new(format!(
-                                                    "{} — {}",
-                                                    entry.name,
-                                                    organization_reason(&entry.reason),
-                                                ))
-                                                .wrap()
-                                                .selectable(true),
-                                            );
-                                        }
+                                    for entry in &skipped[start..end] {
+                                        ui.add(
+                                            egui::Label::new(format!(
+                                                "{} — {}",
+                                                entry.name,
+                                                organization_reason(&entry.reason),
+                                            ))
+                                            .wrap()
+                                            .selectable(true),
+                                        );
+                                    }
                                     ui.small(format!("{}–{} / {}", start + 1, end, skipped.len()));
                                 });
                             }
