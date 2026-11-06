@@ -560,20 +560,14 @@ impl Desktop {
             let folder: IShellFolder = self.view.GetFolder()?;
             let mut out = Vec::new();
             for i in 0..n {
-                let p = self
-                    .view
-                    .Item(i)
-                    .with_context(|| {
-                        format!("Explorer view changed during enumeration at item {i}/{n}")
-                    })?;
+                let p = self.view.Item(i).with_context(|| {
+                    format!("Explorer view changed during enumeration at item {i}/{n}")
+                })?;
                 let result = (|| -> Result<_> {
                     ensure!(!p.is_null(), "Explorer returned an empty item identifier");
-                    let pos = self
-                        .view
-                        .GetItemPosition(p)
-                        .with_context(|| {
-                            format!("Explorer could not read desktop icon position at item {i}/{n}")
-                        })?;
+                    let pos = self.view.GetItemPosition(p).with_context(|| {
+                        format!("Explorer could not read desktop icon position at item {i}/{n}")
+                    })?;
                     // The view can reorder between COM calls. Resolve names
                     // from the exact child PIDL used for its position, never
                     // from a second lookup of the now potentially stale index.
