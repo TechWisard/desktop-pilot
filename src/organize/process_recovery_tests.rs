@@ -72,7 +72,10 @@ fn crash_process_fixture() {
     let home = crate::profile::ordinary_path(disk::canonicalize(home).unwrap());
     let temp = crate::profile::ordinary_path(disk::canonicalize(std::env::temp_dir()).unwrap());
     assert_eq!(home.parent(), Some(temp.as_path()));
-    assert_eq!(home.file_name().unwrap(), format!("{PREFIX}{nonce}").as_str());
+    assert_eq!(
+        home.file_name().unwrap(),
+        format!("{PREFIX}{nonce}").as_str()
+    );
     assert_eq!(disk::read_to_string(home.join("nonce")).unwrap(), nonce);
     let _com = native::Com::new().unwrap();
     let store = Store::open(&home).unwrap();
@@ -218,7 +221,10 @@ fn run_interruption(index: usize) {
         &AtomicBool::new(false),
     )
     .unwrap();
-    assert_eq!(apply(&store, &plan, &AtomicBool::new(false)).unwrap().moved, 2);
+    assert_eq!(
+        apply(&store, &plan, &AtomicBool::new(false)).unwrap().moved,
+        2
+    );
     let next = status(&store).unwrap().undo.unwrap();
     assert_eq!(undo(&store, &next).unwrap().restored, 2);
     for (path, stamp, bytes) in &originals {
