@@ -22,6 +22,12 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It lear
 
 Installation is per user, by default in `%LOCALAPPDATA%\DesktopPilot`; no administrator access is required. Settings are available from the tray icon and the Start menu. This preview executable is unsigned; download only from this repository's Releases and verify the supplied SHA-256 checksum.
 
+## Improvements in 0.2.122
+
+**Different folders keep their own shortcuts and profile data even when a folder name looks like a Windows variable.** A directory literally named `%USERNAME%` and one named after the signed-in user must not be merged by automatic catalog discovery. Desktop Pilot now keeps actual on-disk paths distinct when checking shortcuts, managed files, recovery journals, Windows icon positions, and background-process locks. User-entered launch templates still expand as before. No existing files or manual rules are rewritten. [Reproduction and safeguards](docs/research/2026-11-06-literal-filesystem-boundaries.md).
+
+The desktop clean-up feature is still under review in PR #211; it is not in this release. Real Windows 11, redirected OneDrive desktop, and multi-monitor interactive acceptance remain outstanding.
+
 ## Improvements in 0.2.121
 
 **Bulk import no longer silently skips a distinct shortcut because its containing directory looks like an environment variable.** A literal `%USERNAME%` directory and a directory named after the Windows user can contain different web shortcuts with the same filename. Pasting both full paths now preserves both entries. Explicit expansion of abbreviated input paths remains available. [Scope and regression](docs/research/2026-11-06-literal-percent-shortcut-import.md).
