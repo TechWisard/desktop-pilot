@@ -172,12 +172,16 @@ fn literal_percent_names_keep_photo_and_its_xmp_sidecar_together() {
     let plan = f.plan(true);
     assert!(
         plan.skipped.iter().any(|item| {
-            item.name == "Photo%USERNAME%.jpg"
-                && item.reason.contains("Associated file set")
+            item.name == "Photo%USERNAME%.jpg" && item.reason.contains("Associated file set")
         }),
         "the real analyzer must protect a photo with an adjacent sidecar"
     );
-    assert!(!plan.items.iter().any(|item| item.name == "Photo%USERNAME%.jpg"));
+    assert!(
+        !plan
+            .items
+            .iter()
+            .any(|item| item.name == "Photo%USERNAME%.jpg")
+    );
     assert_eq!(plan.summary(), (2, 1, 1));
     let outcome = f.apply(&plan);
     assert_eq!(outcome.moved, 2);
