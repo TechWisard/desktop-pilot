@@ -603,7 +603,6 @@ fn pasted_web_address_selects_its_real_shortcut_not_notes_or_longer_links() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-
 #[test]
 fn copied_literal_percent_directory_finds_only_its_own_saved_shortcut() {
     // An actual folder with percent signs and the expanded username folder
