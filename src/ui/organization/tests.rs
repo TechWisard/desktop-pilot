@@ -638,3 +638,62 @@ fn recovery_confirmation_cannot_authorize_a_different_pending_journal() {
     assert!(f.desktop.join("Beta.url").is_file());
     assert!(!f.desktop.join("Sites").exists());
 }
+
+#[test]
+fn long_preview_uses_the_modal_wheel_at_normal_and_double_scale() {
+    let mut fixture = Fixture::new();
+    // Over one page of real scanner candidates, rather than UI-only rows.
+    for index in 0..43 {
+        let path = fixture.desktop.join(format!("Project {index:02}.url"));
+        fs::write(
+            &path,
+            format!("[InternetShortcut]\r\nURL=https://example.invalid/project/{index}\r\n"),
+        )
+        .unwrap();
+    }
+    fixture.app.organization_analyze();
+    fixture.finish_job();
+    let plan = fixture.app.organization_plan.as_ref().unwrap();
+    assert_eq!(plan.items.len(), 45);
+    let last_on_page = plan.items[ORGANIZATION_PAGE_SIZE - 1].name.clone();
+
+    for scale in [1.0, 2.0] {
+        let ctx = egui::Context::default();
+        configure_style(&ctx);
+        ctx.set_zoom_factor(scale);
+        i18n::set("en");
+        fixture.app.config.language = "en".into();
+        fixture.app.organization_page = 0;
+        fixture.app.organization_query.clear();
+        let viewport = egui::vec2(1120.0 / scale, 820.0 / scale);
+        settle(&ctx, &mut fixture.app, viewport);
+        let pointer = egui::pos2(viewport.x * 0.5, viewport.y * 0.62);
+        let mut reached = false;
+        for _ in 0..85 {
+            let output = render(
+                &ctx,
+                &mut fixture.app,
+                viewport,
+                vec![
+                    egui::Event::PointerMoved(pointer),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0.0, -120.0),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+            if rendered_text(&output)
+                .iter()
+                .any(|(text, _)| text.contains(&last_on_page))
+            {
+                reached = true;
+                break;
+            }
+        }
+        assert!(
+            reached,
+            "The last row on the page was unreachable with the modal wheel at {scale}x: {last_on_page}"
+        );
+    }
+}
