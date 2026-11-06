@@ -223,14 +223,15 @@ fn one_bulk_choice_changes_the_entire_real_plan_even_with_hidden_rows() {
     // the user asks to keep the whole plan on the desktop.
     f.app.organization_query = "Alpha".into();
     click_organization_button(&ctx, &mut f.app, viewport, "Deselect all");
-    assert!(f
-        .app
-        .organization_plan
-        .as_ref()
-        .unwrap()
-        .items
-        .iter()
-        .all(|item| !item.selected));
+    assert!(
+        f.app
+            .organization_plan
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| !item.selected)
+    );
     f.app.organization_apply();
     f.finish_job();
     for (name, contents) in ["Alpha.url", "Beta.url"]
