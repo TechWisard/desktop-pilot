@@ -391,7 +391,14 @@ pub(crate) fn apply_stopped(store: &Store, plan: &Plan, cancel: &AtomicBool) -> 
     // Read the current choices under the same changes lock as every writer.
     let keep: HashSet<String> = store.get::<Vec<String>>(KEEP)?.into_iter().collect();
     let paths = plan::paths(root, cancel)?;
-    let dependencies = plan::dependencies(root, &paths, &apps, cancel)?;
+    let dependencies = plan::dependencies(
+        root,
+        &paths,
+        &apps,
+        cancel,
+        plan.options.include_files,
+        &plan.root_id,
+    )?;
     let managed_paths: HashSet<_> = state.owned.iter().map(|o| norm(&o.path)).collect();
     let managed_ids: HashSet<_> = state
         .owned

@@ -127,6 +127,96 @@ fn explicit_shortcut_argument_keeps_its_document_out_of_the_plan() {
 }
 
 #[test]
+fn aliased_desktop_working_directory_protects_opt_in_files_at_preview_and_apply() {
+    let f = Fixture::new();
+    for name in ["Important.txt", "Other.pdf"] {
+        disk::write(f.desktop.join(name), b"user document").unwrap();
+    }
+    let old_preview = f.plan(true);
+    assert_eq!(old_preview.summary(), (2, 1, 1));
+
+    // A stored application can name this very desktop through an alternate
+    // absolute spelling (8.3 / extended paths have the same problem). The
+    // string comparison previously missed it and offered to move its files.
+    let tools = f.store.home.join("Tools");
+    disk::create_dir(&tools).unwrap();
+    let executable = tools.join("Reader.exe");
+    disk::write(&executable, b"fixture; never execute").unwrap();
+    let link = tools.join("Reader.lnk");
+    native::make_link(&link, &executable, "", "", 0, "fixture").unwrap();
+    let mut app = native::read_link(&link).unwrap();
+    let root_alias = f.desktop.join(".");
+    for alias in [
+        root_alias.to_string_lossy().into_owned(),
+        format!(r"\\?\{}", root_alias.display()),
+    ] {
+        app.cwd = alias;
+        assert_ne!(
+            norm(&app.cwd),
+            norm(&f.desktop.to_string_lossy()),
+            "the regression requires two distinct textual spellings"
+        );
+        let ordinary = crate::profile::ordinary_path(PathBuf::from(&app.cwd));
+        assert_eq!(
+            fs::identity(&fs::directory(&ordinary).unwrap()).unwrap(),
+            fs::identity(&fs::directory(&f.desktop).unwrap()).unwrap()
+        );
+        f.store.put_app(&app).unwrap();
+
+        let fresh = f.plan(true);
+        assert!(fresh.items.is_empty());
+        for name in ["Important.txt", "Other.pdf"] {
+            assert!(
+                fresh
+                    .skipped
+                    .iter()
+                    .any(|item| { item.name == name && item.reason.contains("working directory") })
+            );
+        }
+
+        // Another Settings window can have an older preview. Apply rechecks
+        // the same production dependency rules before moving even one file.
+        let before_apps = f.store.apps().unwrap();
+        let error = apply(&f.store, &old_preview, &AtomicBool::new(false))
+            .expect_err("an old preview cannot override a new desktop dependency");
+        assert!(
+            format!("{error:#}").contains("working directory"),
+            "{error:#}"
+        );
+        assert_eq!(f.store.apps().unwrap(), before_apps);
+        assert_eq!(
+            disk::read(f.desktop.join("Important.txt")).unwrap(),
+            b"user document"
+        );
+        assert_eq!(
+            disk::read(f.desktop.join("Other.pdf")).unwrap(),
+            b"user document"
+        );
+        assert!(!f.desktop.join("Documents").exists());
+        assert!(!status(&f.store).unwrap().pending);
+        assert!(status(&f.store).unwrap().undo.is_none());
+    }
+
+    // After the user changes the app's working folder, a newly reviewed
+    // plan can still be applied and completely undone.
+    app.cwd = tools.to_string_lossy().into_owned();
+    f.store.put_app(&app).unwrap();
+    let reviewed = f.plan(true);
+    assert_eq!(reviewed.summary(), (2, 1, 1));
+    assert_eq!(
+        apply(&f.store, &reviewed, &AtomicBool::new(false))
+            .unwrap()
+            .moved,
+        2
+    );
+    let operation = status(&f.store).unwrap().undo.unwrap();
+    assert_eq!(undo(&f.store, &operation).unwrap().restored, 2);
+    for name in ["Important.txt", "Other.pdf"] {
+        assert_eq!(disk::read(f.desktop.join(name)).unwrap(), b"user document");
+    }
+}
+
+#[test]
 fn dependency_created_after_preview_prevents_every_move() {
     let f = Fixture::new();
     for name in ["Important.txt", "Other.txt"] {

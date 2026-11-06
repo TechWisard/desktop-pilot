@@ -84,11 +84,13 @@ pub(super) struct Dependencies {
     paths: HashSet<String>,
     arguments: HashSet<String>,
     sidecar_objects: HashSet<String>,
+    // Avoid repeatedly opening the same local working-directory alias.
+    checked_working_directories: HashSet<String>,
     desktop_working_directory: bool,
     incomplete: bool,
 }
 impl Dependencies {
-    fn record(&mut self, app: &App, root: &Path) {
+    fn record(&mut self, app: &App, root: &Path, root_id: &str, check_working_directory: bool) {
         for value in [&app.target, &app.cwd, &app.icon] {
             let expanded = crate::model::expand_env(value);
             let path = Path::new(&expanded);
@@ -103,8 +105,25 @@ impl Dependencies {
             // false positives are preferable to breaking a saved launch.
             self.arguments.insert(norm(&app.arguments).replace('"', ""));
         }
-        self.desktop_working_directory |=
-            !app.cwd.is_empty() && norm(&app.cwd) == norm(&root.to_string_lossy());
+        if check_working_directory && !self.desktop_working_directory && !app.cwd.is_empty() {
+            let expanded = crate::model::expand_env(&app.cwd);
+            let normalized = norm(&expanded);
+            if normalized == norm(&root.to_string_lossy()) {
+                self.desktop_working_directory = true;
+            } else if self.checked_working_directories.insert(normalized) {
+                // Keep extended local drive paths, but convert extended UNC
+                // to ordinary UNC before the network-drive rejection.
+                let working = crate::profile::ordinary_path(PathBuf::from(&expanded));
+                // Short (8.3), extended and aliased local paths can designate
+                // the very same Desktop even when their strings differ. Never
+                // touch remote directories while checking this dependency.
+                if working.is_absolute() && reject_network_root(&working).is_ok() {
+                    self.desktop_working_directory = fs::directory(&working)
+                        .and_then(|directory| fs::identity(&directory))
+                        .is_ok_and(|id| id == root_id);
+                }
+            }
+        }
     }
     pub(super) fn check(&self, path: &Path, shortcut: bool) -> Result<()> {
         let normalized = norm(&path.to_string_lossy());
@@ -162,6 +181,8 @@ pub(super) fn dependencies(
     paths: &[PathBuf],
     apps: &[App],
     cancel: &AtomicBool,
+    include_files: bool,
+    root_id: &str,
 ) -> Result<Dependencies> {
     let mut dependencies = Dependencies {
         // Build once from the same bounded directory snapshot used for analysis
@@ -170,7 +191,7 @@ pub(super) fn dependencies(
         ..Default::default()
     };
     for app in apps {
-        dependencies.record(app, root);
+        dependencies.record(app, root, root_id, include_files);
     }
     for path in paths.iter().filter(|p| is_shortcut(p)) {
         ensure!(
@@ -178,7 +199,7 @@ pub(super) fn dependencies(
             "Organization analysis cancelled"
         );
         match fs::inspect(path, true).and_then(|_| metadata::read(path)) {
-            Ok(app) => dependencies.record(&app, root),
+            Ok(app) => dependencies.record(&app, root, root_id, include_files),
             // Unknown is not independent. Shortcut grouping can still proceed,
             // but the optional ordinary-file pass needs a complete local view.
             Err(_) => dependencies.incomplete = true,
@@ -231,7 +252,14 @@ pub fn analyze(
         russian: config.language == "ru",
     };
     let paths = paths(&root, cancel)?;
-    let dependencies = dependencies(&root, &paths, &apps, cancel)?;
+    let dependencies = dependencies(
+        &root,
+        &paths,
+        &apps,
+        cancel,
+        plan.options.include_files,
+        &plan.root_id,
+    )?;
     // Explorer may present an 8.3 alias (RUNNER~1) for the very same file
     // whose canonical desktop path uses the long directory name. Index the
     // current desktop positions once; compare file identity only when the
