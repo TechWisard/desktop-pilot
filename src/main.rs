@@ -12,6 +12,7 @@ mod launch_validity_tests;
 mod learning;
 mod model;
 mod native;
+mod organize;
 mod profile;
 mod report;
 mod setup;

@@ -12,6 +12,16 @@ The catalog reads personal and shared desktop shortcuts, together with the Start
 
 Windows Known Folders are used for redirected desktops. An explicit `--home` always selects that profile. A normal launch recognizes a profile beside the installed executable before falling back to `%LOCALAPPDATA%\DesktopPilot`.
 
+### Organize a crowded desktop
+
+**Organize desktop and free space** is available in the last setup step; **Organize desktop** is also on Home. Analysis is read-only until you explicitly apply the preview. Only confidently recognized shortcuts are included by default; ordinary documents, images, media and archives require a separate opt-in. Executables, scripts, unknown dependencies and existing user folders stay untouched.
+
+The preview shows each proposed destination. Uncheck individual objects to keep them on the desktop; that decision is remembered after Apply. A singleton does not create an empty-benefit folder. The freed-space estimate counts newly created folders too. If there still is no space for the chosen quick shortcuts, reduce the shortcut count or continue in **Observe only** mode.
+
+**Apply selected changes** rechecks paths, file identities, user choices and the desktop before moving anything. Objects are renamed on the same local volume without overwriting destinations. User-pinned rules and managed quick shortcuts are not automatically moved. **Undo last organization** restores verified originals but never overwrites files that appeared in the meantime. If interrupted, resolve recovery first or explicitly accept the actual locations; background placement will not start until that state is resolved. Resetting saved exclusions requires a separate confirmation.
+
+Network desktop roots are not reorganized automatically. Complex linked documents and cloud-synchronized folders may require manual review. No guarantee is made that every fully occupied desktop can be cleared without user decisions.
+
 ## Everyday use
 
 | Section | What you can do |
