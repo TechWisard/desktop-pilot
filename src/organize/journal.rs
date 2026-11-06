@@ -399,6 +399,7 @@ pub(crate) fn apply_stopped(store: &Store, plan: &Plan, cancel: &AtomicBool) -> 
         plan.options.include_files,
         &plan.root_id,
     )?;
+    let legacy_managed_ids = plan::legacy_managed_alias_ids(root, &plan.root_id, &state);
     let managed_paths: HashSet<_> = state.owned.iter().map(|o| norm(&o.path)).collect();
     let managed_ids: HashSet<_> = state
         .owned
@@ -425,7 +426,9 @@ pub(crate) fn apply_stopped(store: &Store, plan: &Plan, cancel: &AtomicBool) -> 
         );
         let normalized = norm(&path.to_string_lossy());
         ensure!(
-            !managed_ids.contains(actual.id.as_str()) && !managed_paths.contains(&normalized),
+            !managed_ids.contains(actual.id.as_str())
+                && !managed_paths.contains(&normalized)
+                && !legacy_managed_ids.contains(&actual.id),
             "This object became a managed quick shortcut; refresh the plan"
         );
         ensure!(

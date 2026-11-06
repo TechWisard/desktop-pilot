@@ -218,6 +218,44 @@ impl Dependencies {
     }
 }
 
+/// Protect an existing quick shortcut recorded by a pre-file-ID profile even
+/// when its Desktop path uses a short-name or dot-segment spelling. Comparing
+/// names alone can otherwise offer a managed copy as a new organization move.
+/// Only an actual entry in this Personal Desktop is protected: hard links in
+/// another directory do not identify the same Desktop icon.
+pub(super) fn legacy_managed_alias_ids(
+    root: &Path,
+    root_id: &str,
+    state: &State,
+) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    let mut checked = HashSet::new();
+    for owned in state.owned.iter().filter(|owned| owned.file_id.is_none()) {
+        let expanded = crate::model::expand_env(&owned.path);
+        let path = crate::profile::ordinary_path(PathBuf::from(expanded));
+        let Some(name) = path.file_name() else {
+            continue;
+        };
+        let spelling = norm(&path.to_string_lossy());
+        if !path.is_absolute()
+            || spelling == norm(&root.join(name).to_string_lossy())
+            || reject_network_root(&path).is_err()
+            || !checked.insert(spelling)
+        {
+            continue;
+        }
+        let same_desktop = path
+            .parent()
+            .and_then(|parent| fs::directory(parent).ok())
+            .and_then(|parent| fs::identity(&parent).ok())
+            .is_some_and(|id| id == root_id);
+        if same_desktop && let Ok(stamp) = fs::inspect(&path, false) {
+            ids.insert(stamp.id);
+        }
+    }
+    ids
+}
+
 pub(super) fn paths(root: &Path, cancel: &AtomicBool) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     for entry in std::fs::read_dir(root)? {
@@ -316,6 +354,7 @@ pub fn analyze(
     let state: State = store.get("state")?;
     let apps = store.apps()?;
     let keep: HashSet<String> = store.get::<Vec<String>>(KEEP)?.into_iter().collect();
+    let legacy_managed_ids = legacy_managed_alias_ids(&root, &root_id, &state);
     let managed_paths: HashSet<_> = state.owned.iter().map(|o| norm(&o.path)).collect();
     let managed_ids: HashSet<_> = state
         .owned
@@ -392,7 +431,9 @@ pub fn analyze(
             );
             let normalized = norm(&path.to_string_lossy());
             ensure!(
-                !managed_paths.contains(&normalized) && !managed_ids.contains(stamp.id.as_str()),
+                !managed_paths.contains(&normalized)
+                    && !managed_ids.contains(stamp.id.as_str())
+                    && !legacy_managed_ids.contains(&stamp.id),
                 "Managed quick shortcut: left in place"
             );
             ensure!(

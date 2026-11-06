@@ -646,3 +646,66 @@ fn saved_catalog_source_alias_and_manual_choice_survive_preview_apply_and_undo()
     assert!(original.exists());
     assert!(external.exists());
 }
+
+#[test]
+fn legacy_managed_alias_cannot_be_organized_even_from_a_stale_preview() {
+    let f = Fixture::new();
+    for name in ["Alpha", "Beta", "Gamma"] {
+        f.site(name);
+    }
+    let original = f.desktop.join("Alpha.url");
+    let alias = f.desktop.join(".").join("Alpha.url");
+    let stale = f.plan(false);
+    assert_eq!(stale.summary(), (3, 1, 2));
+
+    // Older saved placement rows have no file ID. Another Settings window
+    // can restore one using a dot-segment source after this preview was built.
+    // The ordinary string comparison would miss that managed Desktop entry.
+    let mut state: State = f.store.get("state").unwrap();
+    state.owned.push(crate::model::Owned {
+        app: native::read_link(&original).unwrap().id,
+        path: alias.to_string_lossy().into_owned(),
+        sha: crate::model::hash(&disk::read(&original).unwrap()),
+        position: Point::default(),
+        manual: false,
+        since: 1,
+        file_id: None,
+    });
+    f.store.set("state", &state).unwrap();
+    let old_apps = f.store.apps().unwrap();
+    let failure = apply(&f.store, &stale, &AtomicBool::new(false))
+        .expect_err("the managed alias must invalidate a stale proposed move");
+    assert!(
+        format!("{failure:#}").contains("managed quick shortcut"),
+        "{failure:#}"
+    );
+    assert_eq!(f.store.apps().unwrap(), old_apps);
+    assert!(!f.desktop.join("Sites").exists());
+    assert!(status(&f.store).unwrap().undo.is_none());
+
+    let fresh = f.plan(false);
+    assert_eq!(fresh.summary(), (2, 1, 1));
+    assert!(fresh.skipped.iter().any(|item| item.name == "Alpha.url"));
+    assert_eq!(
+        apply(&f.store, &fresh, &AtomicBool::new(false))
+            .unwrap()
+            .moved,
+        2
+    );
+    let operation = status(&f.store).unwrap().undo.unwrap();
+    assert_eq!(undo(&f.store, &operation).unwrap().restored, 2);
+    assert_eq!(f.store.get::<State>("state").unwrap().owned, state.owned);
+    assert!(original.is_file());
+    assert!(!status(&f.store).unwrap().pending);
+
+    // A hard link in a different directory is not the managed Desktop icon.
+    // The sibling source must remain a valid proposal, not an unrelated veto.
+    let foreign_dir = f.store.home.join("Unrelated");
+    disk::create_dir(&foreign_dir).unwrap();
+    let foreign = foreign_dir.join("Alpha.url");
+    disk::hard_link(&original, &foreign).unwrap();
+    state.owned[0].path = foreign.to_string_lossy().into_owned();
+    f.store.set("state", &state).unwrap();
+    assert_eq!(f.plan(false).summary(), (3, 1, 2));
+    assert!(foreign.is_file());
+}
