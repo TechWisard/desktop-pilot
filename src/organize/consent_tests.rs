@@ -217,6 +217,102 @@ fn aliased_desktop_working_directory_protects_opt_in_files_at_preview_and_apply(
 }
 
 #[test]
+fn aliased_local_launch_or_icon_path_cannot_move_a_desktop_dependency() {
+    let f = Fixture::new();
+    for name in ["Important image.png", "Other.png"] {
+        disk::write(f.desktop.join(name), b"unchanged user image").unwrap();
+    }
+    let old_preview = f.plan(true);
+    assert_eq!(old_preview.summary(), (2, 1, 1));
+
+    let image = f.desktop.join("Important image.png");
+    let tools = f.store.home.join("Tools");
+    disk::create_dir(&tools).unwrap();
+    // A hard link elsewhere shares the same file ID but not the desktop
+    // directory entry: moving the desktop link does not break this target.
+    let external = tools.join("External image.png");
+    disk::hard_link(&image, &external).unwrap();
+    assert_eq!(
+        fs::inspect(&image, false).unwrap().id,
+        fs::inspect(&external, false).unwrap().id
+    );
+    let executable = tools.join("Viewer.exe");
+    disk::write(&executable, b"inert; not executed").unwrap();
+    let link = tools.join("Viewer.lnk");
+    native::make_link(&link, &executable, "", "", 0, "fixture").unwrap();
+    let mut app = native::read_link(&link).unwrap();
+    app.target = external.to_string_lossy().into_owned();
+    f.store.put_app(&app).unwrap();
+    assert_eq!(f.plan(true).summary(), (2, 1, 1));
+
+    // An alias in the actual personal Desktop does break when moved.
+    // Do not require 8.3 short names: those can be disabled on NTFS.
+    let dotted = f.desktop.join(".").join("Important image.png");
+    let aliases = [
+        dotted.to_string_lossy().into_owned(),
+        format!(r"\\?\{}", dotted.display()),
+    ];
+    for alias in aliases {
+        assert_ne!(norm(&alias), norm(&image.to_string_lossy()));
+        assert_eq!(
+            fs::inspect(&crate::profile::ordinary_path(PathBuf::from(&alias)), false)
+                .unwrap()
+                .id,
+            fs::inspect(&image, false).unwrap().id
+        );
+        for as_icon in [false, true] {
+            app.target = if as_icon {
+                executable.to_string_lossy().into_owned()
+            } else {
+                alias.clone()
+            };
+            app.icon = if as_icon { alias.clone() } else { String::new() };
+            f.store.put_app(&app).unwrap();
+
+            let fresh = f.plan(true);
+            assert!(fresh.items.iter().any(|item| item.name == "Other.png"));
+            assert!(!fresh.items.iter().any(|item| item.name == "Important image.png"));
+            assert!(fresh.skipped.iter().any(|item| {
+                item.name == "Important image.png"
+                    && item.reason.contains("Another known shortcut depends")
+            }));
+
+            // A second Settings window may still be holding the old plan.
+            let before = f.store.apps().unwrap();
+            let error = apply(&f.store, &old_preview, &AtomicBool::new(false))
+                .expect_err("Apply must recheck aliases before moving anything");
+            assert!(
+                format!("{error:#}").contains("Another known shortcut depends"),
+                "{error:#}"
+            );
+            assert_eq!(f.store.apps().unwrap(), before);
+            assert_eq!(disk::read(&image).unwrap(), b"unchanged user image");
+            assert_eq!(disk::read(f.desktop.join("Other.png")).unwrap(), b"unchanged user image");
+            assert!(!f.desktop.join("Images").exists());
+            assert!(!status(&f.store).unwrap().pending);
+            assert!(status(&f.store).unwrap().undo.is_none());
+        }
+    }
+
+    // The unrelated hard link is no reason to block explicit opt-in moves.
+    app.target = external.to_string_lossy().into_owned();
+    app.icon.clear();
+    f.store.put_app(&app).unwrap();
+    let reviewed = f.plan(true);
+    assert_eq!(reviewed.summary(), (2, 1, 1));
+    assert_eq!(
+        apply(&f.store, &reviewed, &AtomicBool::new(false))
+            .unwrap()
+            .moved,
+        2
+    );
+    let operation = status(&f.store).unwrap().undo.unwrap();
+    assert_eq!(undo(&f.store, &operation).unwrap().restored, 2);
+    assert_eq!(disk::read(&image).unwrap(), b"unchanged user image");
+    assert_eq!(disk::read(&external).unwrap(), b"unchanged user image");
+}
+
+#[test]
 fn dependency_created_after_preview_prevents_every_move() {
     let f = Fixture::new();
     for name in ["Important.txt", "Other.txt"] {
