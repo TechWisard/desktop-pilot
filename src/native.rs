@@ -1420,8 +1420,14 @@ mod tests {
         assert!(!username.is_empty());
         let actual = PathBuf::from(r"C:\Users\Pilot-Test").join(&username);
         let literal = PathBuf::from(r"C:\Users\Pilot-Test").join("%USERNAME%");
-        assert_ne!(norm_literal_path(&actual.to_string_lossy()), norm_literal_path(&literal.to_string_lossy()));
-        assert_ne!(lock_name("changes", &actual), lock_name("changes", &literal));
+        assert_ne!(
+            norm_literal_path(&actual.to_string_lossy()),
+            norm_literal_path(&literal.to_string_lossy())
+        );
+        assert_ne!(
+            lock_name("changes", &actual),
+            lock_name("changes", &literal)
+        );
 
         // A profile's legacy startup entry must not be claimed by a different
         // profile just because a literal directory resembles an environment key.
@@ -1433,7 +1439,10 @@ mod tests {
         assert!(!command_belongs_to_home(&command, &actual));
         assert_eq!(
             lock_name("changes", &actual),
-            lock_name("changes", &PathBuf::from(actual.to_string_lossy().to_uppercase()))
+            lock_name(
+                "changes",
+                &PathBuf::from(actual.to_string_lossy().to_uppercase())
+            )
         );
     }
 
@@ -1505,7 +1514,10 @@ mod tests {
                 CoTaskMemFree(Some(absolute.cast()));
                 item.unwrap()
             };
-            assert_eq!(norm_literal_path(&resolved.path), norm_literal_path(&path.to_string_lossy()));
+            assert_eq!(
+                norm_literal_path(&resolved.path),
+                norm_literal_path(&path.to_string_lossy())
+            );
             assert!(resolved.name.contains("Общий файл"));
             assert_eq!(resolved.position.x, index as i32);
             assert_eq!(resolved.position.y, 42);
