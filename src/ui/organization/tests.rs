@@ -524,7 +524,10 @@ fn recovery_confirmation_cannot_authorize_a_different_pending_journal() {
         .find(|(value, _)| value == "Accept current locations")
         .expect("Recovery button must be shown");
     click(&ctx, &mut f.app, viewport, button.center());
-    assert!(f.app.job.is_none(), "stale consent must not start a recovery job");
+    assert!(
+        f.app.job.is_none(),
+        "stale consent must not start a recovery job"
+    );
     assert_eq!(
         f.app
             .store
