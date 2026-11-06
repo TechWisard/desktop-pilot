@@ -6,33 +6,38 @@ on:
 permissions:
   contents: read
 jobs:
-  snapshot:
+  integrate:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Capture exact public source inputs and merge diagnostics
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
+        with:
+          toolchain: '1.93.1'
+          components: rustfmt
+      - name: Integrate exact reviewed inputs without rewriting history
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p review-inputs
-          git fetch --no-tags origin feature/desktop-organization-ui-20261031
-          test "$(git rev-parse FETCH_HEAD)" = 9424d6f3eed20df8707c15e2858b340b6f46041f
-          git branch review-organizer 9424d6f3eed20df8707c15e2858b340b6f46041f
-          git branch review-main 9b14123b1332e4b1d9c469ea4a26ae128377c432
-          git bundle create review-inputs/source.bundle review-main review-organizer
-          git bundle verify review-inputs/source.bundle
-          git log -12 --oneline review-main > review-inputs/main-history.txt
-          git log -12 --oneline review-organizer > review-inputs/organizer-history.txt
-          git merge-tree --write-tree review-main review-organizer > review-inputs/merge-diagnostics.txt || test "$?" -eq 1
-          sha256sum review-inputs/source.bundle > review-inputs/SHA256SUMS.txt
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: integration-review-inputs
-          path: review-inputs/
-          retention-days: 1
-          compression-level: 0
-          if-no-files-found: error
+          git fetch --no-tags origin main feature/desktop-organization-ui-20261031
+          test "$(git rev-parse origin/main)" = 9b14123b1332e4b1d9c469ea4a26ae128377c432
+          test "$(git rev-parse origin/feature/desktop-organization-ui-20261031)" = 9424d6f3eed20df8707c15e2858b340b6f46041f
+          git config user.name TechWisard
+          git config user.email 152439417+TechWisard@users.noreply.github.com
+          python scripts/integrate-organizer.py
+          cargo fmt --all
+          git add -A
+          git diff --cached --check
+          git commit -m 'Integrate desktop organization and native interface acceptance'
+          test "$(git ls-remote origin refs/heads/integration/desktop-pilot-completion-20261106 | cut -f1)" = "$GITHUB_SHA"
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" push origin HEAD:refs/heads/integration/desktop-pilot-completion-20261106
+          printf 'Integrated source commit: '
+          git rev-parse HEAD

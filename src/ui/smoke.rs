@@ -1,0 +1,49 @@
+//! Read-only native screenshot views, restricted to an explicit test profile.
+use super::*;
+use crate::organize;
+use std::sync::atomic::AtomicBool;
+
+pub(super) fn organization(app: &mut Settings, view: &str) -> Result<()> {
+    ensure!(app.capture.is_some(), "An explicit screenshot destination is required");
+    let fixture: String = app.store.get("test_desktop")?;
+    ensure!(!fixture.is_empty(), "Organizer screenshots require a fixture desktop");
+    let home = std::fs::canonicalize(&app.store.home)?;
+    let desktop = std::fs::canonicalize(&fixture)?;
+    ensure!(desktop != home && desktop.starts_with(&home), "The screenshot desktop must be inside its isolated test profile");
+    let _com = native::Com::new()?;
+    app.onboarding = false;
+    app.organization_open = true;
+    app.organization_files = view == "organization-files";
+    app.organization_plan = Some(organize::analyze(&app.store, organize::Options { include_files: app.organization_files }, &app.config, &AtomicBool::new(false))?);
+    app.organization_projection = None;
+    app.organization_query = if view == "organization-filtered" { app.store.get("test_search")? } else { String::new() };
+    app.organization_page = 0;
+    app.layout_receiver = None;
+    app.find_after_layout = false;
+    if view == "organization-warning" { app.fail("An object changed after preview; refresh the plan"); }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn organizer_capture_refuses_the_real_desktop_or_an_external_fixture() {
+        let home = std::env::temp_dir().join(format!("test-organizer-capture-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let store = Store::open(&home).unwrap();
+        store.set("setup_complete", &true).unwrap();
+        store.set("background_disabled", &true).unwrap();
+        drop(store);
+        let mut app = Settings::new(home.clone()).unwrap();
+        app.layout_receiver = None;
+        assert!(organization(&mut app, "organization").is_err());
+        app.capture = Some(home.join("images"));
+        assert!(organization(&mut app, "organization").is_err());
+        app.store.set("test_desktop", &std::env::temp_dir().to_string_lossy()).unwrap();
+        assert!(organization(&mut app, "organization").is_err());
+        app.store.set("test_desktop", &home.to_string_lossy()).unwrap();
+        assert!(organization(&mut app, "organization").is_err());
+        drop(app);
+        let _ = std::fs::remove_dir_all(home);
+    }
+}
