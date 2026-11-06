@@ -250,7 +250,14 @@ pub fn analyze(
         russian: config.language == "ru",
     };
     let paths = paths(&root, cancel)?;
-    let dependencies = dependencies(&root, &paths, &apps, cancel, plan.options.include_files, &plan.root_id)?;
+    let dependencies = dependencies(
+        &root,
+        &paths,
+        &apps,
+        cancel,
+        plan.options.include_files,
+        &plan.root_id,
+    )?;
     // Explorer may present an 8.3 alias (RUNNER~1) for the very same file
     // whose canonical desktop path uses the long directory name. Index the
     // current desktop positions once; compare file identity only when the
