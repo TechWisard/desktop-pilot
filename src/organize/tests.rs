@@ -1054,6 +1054,9 @@ fn organizing_literal_percent_named_shortcut_preserves_manual_sibling_and_undo()
         manual_before
     );
     assert_eq!(disk::read(&manual.source).unwrap(), manual_bytes);
-    assert_eq!(serde_json::to_value(f.store.days().unwrap()).unwrap(), history);
+    assert_eq!(
+        serde_json::to_value(f.store.days().unwrap()).unwrap(),
+        history
+    );
     assert!(!status(&f.store).unwrap().pending);
 }

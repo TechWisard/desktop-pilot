@@ -39,7 +39,10 @@ fn update_catalog(store: &Store, journal: &Journal, undo: bool) -> Result<()> {
     let mut apps = store.apps()?;
     let mut sources = HashMap::<String, Vec<usize>>::new();
     for (index, app) in apps.iter().enumerate() {
-        sources.entry(norm_literal_path(&app.source)).or_default().push(index);
+        sources
+            .entry(norm_literal_path(&app.source))
+            .or_default()
+            .push(index);
     }
     for movement in &journal.movements {
         let original = Path::new(&journal.root).join(&movement.item.name);
@@ -180,7 +183,10 @@ fn restore_position_plan(
             None => skipped += 1,
         }
     }
-    let proposed_ids: HashSet<String> = proposals.iter().map(|(p, _)| norm_literal_path(p)).collect();
+    let proposed_ids: HashSet<String> = proposals
+        .iter()
+        .map(|(p, _)| norm_literal_path(p))
+        .collect();
     let sx = i64::from(current.spacing.x.max(3));
     let sy = i64::from(current.spacing.y.max(3));
     let cell = |point: &Point| {
@@ -399,7 +405,11 @@ pub(crate) fn apply_stopped(store: &Store, plan: &Plan, cancel: &AtomicBool) -> 
         &plan.root_id,
     )?;
     let legacy_managed_ids = plan::legacy_managed_alias_ids(root, &plan.root_id, &state);
-    let managed_paths: HashSet<_> = state.owned.iter().map(|o| norm_literal_path(&o.path)).collect();
+    let managed_paths: HashSet<_> = state
+        .owned
+        .iter()
+        .map(|o| norm_literal_path(&o.path))
+        .collect();
     let managed_ids: HashSet<_> = state
         .owned
         .iter()
@@ -599,7 +609,10 @@ fn undo_locked(store: &Store, journal: &mut Journal) -> Result<Outcome> {
                 continue;
             }
             let original_path = norm_literal_path(&original.to_string_lossy());
-            if let Some(copy) = state.owned.iter().find(|o| norm_literal_path(&o.path) == original_path)
+            if let Some(copy) = state
+                .owned
+                .iter()
+                .find(|o| norm_literal_path(&o.path) == original_path)
                 && let Some(id) = &copy.file_id
                 && id != &movement.item.stamp.id
                 && fs::matches_id(&original, id)?
@@ -1000,7 +1013,10 @@ mod layout_target_tests {
             .join("Alpha.url")
             .to_string_lossy()
             .into_owned();
-        assert_ne!(norm_literal_path(&alias_path), norm_literal_path(&requested_path));
+        assert_ne!(
+            norm_literal_path(&alias_path),
+            norm_literal_path(&requested_path)
+        );
         let alias_icon = native::Item {
             path: alias_path.clone(),
             name: "Alpha.url".into(),

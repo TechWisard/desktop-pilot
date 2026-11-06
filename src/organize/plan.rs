@@ -108,7 +108,8 @@ impl Dependencies {
         // A directory literally named %USERNAME% must keep its own identity.
         let source = crate::profile::ordinary_path(PathBuf::from(&app.source));
         if let Some(name) = source.file_name()
-            && norm_literal_path(&app.source) != norm_literal_path(&root.join(name).to_string_lossy())
+            && norm_literal_path(&app.source)
+                != norm_literal_path(&root.join(name).to_string_lossy())
             && self
                 .checked_catalog_source_aliases
                 .insert(norm_literal_path(&app.source))
@@ -133,7 +134,10 @@ impl Dependencies {
         if check_working_directory {
             for value in [&app.target, &app.icon] {
                 let expanded = crate::model::expand_env(value);
-                if !self.checked_local_paths.insert(norm_literal_path(&expanded)) {
+                if !self
+                    .checked_local_paths
+                    .insert(norm_literal_path(&expanded))
+                {
                     continue;
                 }
                 let path = crate::profile::ordinary_path(PathBuf::from(&expanded));
@@ -355,7 +359,11 @@ pub fn analyze(
     let apps = store.apps()?;
     let keep: HashSet<String> = store.get::<Vec<String>>(KEEP)?.into_iter().collect();
     let legacy_managed_ids = legacy_managed_alias_ids(&root, &root_id, &state);
-    let managed_paths: HashSet<_> = state.owned.iter().map(|o| norm_literal_path(&o.path)).collect();
+    let managed_paths: HashSet<_> = state
+        .owned
+        .iter()
+        .map(|o| norm_literal_path(&o.path))
+        .collect();
     let managed_ids: HashSet<_> = state
         .owned
         .iter()
