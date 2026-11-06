@@ -275,7 +275,12 @@ fn aliased_local_launch_or_icon_path_cannot_move_a_desktop_dependency() {
 
             let fresh = f.plan(true);
             assert!(fresh.items.iter().any(|item| item.name == "Other.png"));
-            assert!(!fresh.items.iter().any(|item| item.name == "Important image.png"));
+            assert!(
+                !fresh
+                    .items
+                    .iter()
+                    .any(|item| item.name == "Important image.png")
+            );
             assert!(fresh.skipped.iter().any(|item| {
                 item.name == "Important image.png"
                     && item.reason.contains("Another known shortcut depends")
