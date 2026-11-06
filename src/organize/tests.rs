@@ -960,7 +960,10 @@ fn analyzed_position_alias_must_belong_to_personal_desktop_not_public_hardlink()
     // Explorer can also spell the same local parent directory differently.
     // Unlike the Public hard link, this verified path is a valid alias.
     let alias = f.desktop.join(".").join("Alpha.url");
-    assert_ne!(norm(&alias.to_string_lossy()), norm(&source.to_string_lossy()));
+    assert_ne!(
+        norm(&alias.to_string_lossy()),
+        norm(&source.to_string_lossy())
+    );
     assert_eq!(fs::inspect(&alias, true).unwrap().id, stamp.id);
     let correct = Point { x: 211, y: 2 };
     aliases
