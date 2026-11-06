@@ -1,6 +1,6 @@
 //! Keep recognized media/sidecar sets in place rather than splitting them.
 //! Names are evidence of a possible dependency, not proof of file contents.
-use super::{Group, norm, plain_group};
+use super::{Group, norm_literal_path, plain_group};
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
@@ -21,7 +21,7 @@ pub(super) fn protected(paths: &[PathBuf]) -> HashSet<String> {
         let (Some(name), Some(stem)) = (path.file_name(), path.file_stem()) else {
             continue;
         };
-        let key = norm(&path.to_string_lossy());
+        let key = norm_literal_path(&path.to_string_lossy());
         by_name.insert(name.to_string_lossy().to_lowercase(), key.clone());
         by_stem
             .entry(stem.to_string_lossy().to_lowercase())
