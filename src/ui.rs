@@ -5215,7 +5215,10 @@ mod tests {
             .collect();
         assert_eq!(
             targets,
-            ["https://example.invalid/literal", "https://example.invalid/expanded"]
+            [
+                "https://example.invalid/literal",
+                "https://example.invalid/expanded"
+            ]
         );
         assert_eq!(std::fs::read(&literal).unwrap(), literal_bytes);
         assert_eq!(std::fs::read(&expanded).unwrap(), expanded_bytes);
