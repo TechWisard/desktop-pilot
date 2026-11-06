@@ -30,14 +30,13 @@ fn same_entry(left: &str, right: &str) -> bool {
     identity(pa).is_some_and(|id| identity(pb).as_ref() == Some(&id))
 }
 
-// Explorer can invalidate an enumeration index while its folder view updates.
-// Retry only this recognized transient COM result, never an arbitrary error.
-fn transient_shell_bounds(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        cause
-            .downcast_ref::<windows::core::Error>()
-            .is_some_and(|error| error.code().0 == 0x8000_000Bu32 as i32)
-    })
+fn enumeration_changed(error: &anyhow::Error) -> bool {
+    // ItemCount and Item are separate COM calls. After a rename Explorer can
+    // remove an item between them and report E_BOUNDS. Retry the complete
+    // read, never silently drop that item or treat a partial view as vacant.
+    error
+        .downcast_ref::<windows::core::Error>()
+        .is_some_and(|error| error.code() == windows::Win32::Foundation::E_BOUNDS)
 }
 
 fn poll(
@@ -50,7 +49,7 @@ fn poll(
     loop {
         let current = match read() {
             Ok(current) => current,
-            Err(error) if transient_shell_bounds(&error) && retry() => continue,
+            Err(error) if enumeration_changed(&error) && retry() => continue,
             Err(error) => return Err(error),
         };
         ensure!(
@@ -154,71 +153,6 @@ mod tests {
         }
     }
     #[test]
-    fn transient_explorer_bounds_race_rechecks_real_layout_without_waiving_safety() {
-        let before = layout(&["Alpha.url", "Personal"]);
-        let mut reads = 0;
-        let mut waits = 0;
-        let result = poll(
-            &before,
-            &[path("Sites")],
-            &[path("Alpha.url")],
-            || {
-                reads += 1;
-                if reads == 1 {
-                    return Err(windows::core::Error::from_hresult(windows::core::HRESULT(
-                        0x8000_000Bu32 as i32,
-                    ))
-                    .into());
-                }
-                Ok(layout(&["Sites", "Personal"]))
-            },
-            || {
-                waits += 1;
-                true
-            },
-        )
-        .unwrap();
-        assert_eq!((reads, waits), (2, 1));
-        assert_eq!(result.items.len(), 2);
-
-        let mut reads = 0;
-        let mut waits = 0;
-        let error = poll(
-            &before,
-            &[path("Sites")],
-            &[path("Alpha.url")],
-            || {
-                reads += 1;
-                Err(windows::core::Error::from_hresult(windows::core::HRESULT(
-                    0x8000_000Bu32 as i32,
-                ))
-                .into())
-            },
-            || {
-                waits += 1;
-                waits < 3
-            },
-        )
-        .unwrap_err();
-        assert!(transient_shell_bounds(&error));
-        assert_eq!((reads, waits), (3, 3));
-    }
-
-    #[test]
-    fn unexpected_shell_error_is_not_retried_or_mislabeled_as_a_view_race() {
-        let before = layout(&["Alpha.url"]);
-        let error = poll(
-            &before,
-            &[],
-            &[],
-            || anyhow::bail!("An unrelated filesystem error"),
-            || panic!("The unrelated failure must not be retried"),
-        )
-        .unwrap_err();
-        assert!(!transient_shell_bounds(&error));
-        assert!(error.to_string().contains("unrelated filesystem"));
-    }
-    #[test]
     fn notification_delivery_may_precede_both_folder_creation_and_old_icon_removal() {
         let before = layout(&["Alpha.url", "Beta.url", "Personal"]);
         let mut snapshots = vec![
@@ -318,5 +252,93 @@ mod tests {
         assert_ne!(literal, actual);
         assert!(!same_entry(&literal, &actual));
         assert!(same_entry(&literal, &literal));
+    }
+
+    fn bounds_error() -> anyhow::Error {
+        windows::core::Error::from_hresult(windows::Win32::Foundation::E_BOUNDS).into()
+    }
+
+    #[test]
+    fn changing_explorer_enumeration_retries_the_whole_read_and_keeps_obstacles() {
+        let before = layout(&["Alpha.url", "Beta.url", "Personal"]);
+        let final_view = layout(&["Sites", "Personal"]);
+        let mut reads = vec![
+            Err(bounds_error().context("reading a changing Explorer view")),
+            Ok(before.clone()),
+            Err(bounds_error()),
+            Ok(final_view.clone()),
+        ]
+        .into_iter();
+        let mut waits = 0;
+        let actual = poll(
+            &before,
+            &[path("Sites")],
+            &[path("Alpha.url"), path("Beta.url")],
+            || reads.next().unwrap(),
+            || {
+                waits += 1;
+                waits < 4
+            },
+        )
+        .unwrap();
+        assert_eq!(waits, 3);
+        assert_eq!(actual.items.len(), final_view.items.len());
+        assert_eq!(actual.items[1].path, path("Personal"));
+        assert_eq!(actual.items[1].position, final_view.items[1].position);
+        assert!(reads.next().is_none());
+    }
+
+    #[test]
+    fn a_persistent_bounds_error_stays_an_error_after_the_bounded_wait() {
+        let mut waits = 0;
+        let error = poll(
+            &layout(&["Alpha.url"]),
+            &[path("Sites")],
+            &[path("Alpha.url")],
+            || Err(bounds_error()),
+            || {
+                waits += 1;
+                waits < 3
+            },
+        )
+        .unwrap_err();
+        assert_eq!(waits, 3);
+        assert!(enumeration_changed(&error));
+    }
+
+    #[test]
+    fn access_errors_and_changed_topology_are_not_disguised_as_enumeration_delays() {
+        let before = layout(&["Alpha.url"]);
+        let denied: anyhow::Error =
+            windows::core::Error::from_hresult(windows::Win32::Foundation::E_ACCESSDENIED).into();
+        assert!(!enumeration_changed(&denied));
+        let mut denied = Some(denied);
+        let error = poll(
+            &before,
+            &[path("Sites")],
+            &[],
+            || Err(denied.take().unwrap()),
+            || panic!("access errors must not be retried"),
+        )
+        .unwrap_err();
+        assert!(!enumeration_changed(&error));
+        let mut changed = layout(&["Sites"]);
+        changed.topology = "different-monitor".into();
+        let mut reads = vec![Err(bounds_error()), Ok(changed)].into_iter();
+        let mut waits = 0;
+        assert!(
+            poll(
+                &before,
+                &[path("Sites")],
+                &[],
+                || reads.next().unwrap(),
+                || {
+                    waits += 1;
+                    true
+                },
+            )
+            .is_err()
+        );
+        assert_eq!(waits, 1);
     }
 }

@@ -43,6 +43,12 @@ pub(super) fn organization(app: &mut Settings, view: &str) -> Result<()> {
     if view == "organization-warning" {
         app.fail("An object changed after preview; refresh the plan");
     }
+    if app.capture_scroll_bottom {
+        // Give the isolated native review driver time to deliver ordinary
+        // window-scoped wheel messages through winit/egui. Do not substitute
+        // a hand-drawn view or change scrolling in a normal Settings window.
+        app.capture_at = Instant::now() + Duration::from_secs(6);
+    }
     Ok(())
 }
 

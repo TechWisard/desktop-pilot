@@ -4,6 +4,7 @@ param(
     [switch]$SoftwareRenderer = ($env:GITHUB_ACTIONS -eq 'true')
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'ui-review-input.ps1')
 $sourceExecutable = (Resolve-Path -LiteralPath $Executable).Path
 $exe = $sourceExecutable
 $report = [IO.Path]::GetFullPath($ReportDirectory)
@@ -12,7 +13,7 @@ $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('test-pilot-ui-review-' + [
 [IO.Directory]::CreateDirectory($fixtureRoot) | Out-Null
 $records = [Collections.Generic.List[object]]::new()
 $renderer = 'native OpenGL'
-function Invoke-Fixture([string[]]$Arguments, [string]$Label, [int]$Timeout = 45000) {
+function Invoke-Fixture([string[]]$Arguments, [string]$Label, [int]$Timeout = 45000, [switch]$ScrollBottom) {
     $info = [Diagnostics.ProcessStartInfo]::new($exe)
     $info.UseShellExecute = $false
     $info.RedirectStandardOutput = $true
@@ -22,12 +23,27 @@ function Invoke-Fixture([string[]]$Arguments, [string]$Label, [int]$Timeout = 45
     $process = [Diagnostics.Process]::Start($info)
     $output = $process.StandardOutput.ReadToEndAsync()
     $errors = $process.StandardError.ReadToEndAsync()
-    if (-not $process.WaitForExit($Timeout)) { $process.Kill($true); throw "Native UI timed out: $Label" }
-    $stdout = $output.GetAwaiter().GetResult()
-    $stderr = $errors.GetAwaiter().GetResult()
-    [IO.File]::WriteAllText((Join-Path $report "$Label-stdout.txt"), $stdout)
-    [IO.File]::WriteAllText((Join-Path $report "$Label-stderr.txt"), $stderr)
-    if ($process.ExitCode -ne 0) { throw "Native UI failed: $Label ($($process.ExitCode)): $stderr" }
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $scrollMessages = 0
+    try {
+        while (-not $process.WaitForExit(100)) {
+            if ($watch.ElapsedMilliseconds -gt $Timeout) { $process.Kill($true); throw "Native UI timed out: $Label" }
+            if ($ScrollBottom -and $watch.ElapsedMilliseconds -ge 1000) {
+                $process.Refresh()
+                if ([PilotUiReviewInput]::ScrollDown($process.MainWindowHandle, [uint32]$process.Id)) { $scrollMessages++ }
+            }
+        }
+        $stdout = $output.GetAwaiter().GetResult()
+        $stderr = $errors.GetAwaiter().GetResult()
+        [IO.File]::WriteAllText((Join-Path $report "$Label-stdout.txt"), $stdout)
+        [IO.File]::WriteAllText((Join-Path $report "$Label-stderr.txt"), $stderr)
+        if ($process.ExitCode -ne 0) { throw "Native UI failed: $Label ($($process.ExitCode)): $stderr" }
+        if ($ScrollBottom -and $scrollMessages -eq 0) { throw "No window-scoped scroll input was delivered: $Label" }
+        return $scrollMessages
+    } finally {
+        if (-not $process.HasExited) { $process.Kill($true); $process.WaitForExit() }
+        $process.Dispose()
+    }
 }
 try {
     if ($SoftwareRenderer) {
@@ -55,16 +71,20 @@ try {
     foreach ($language in @('ru', 'en')) {
         foreach ($scale in @(1, 2)) {
             foreach ($view in @('organization', 'organization-filtered', 'organization-files', 'organization-warning')) {
-                $name = "$language-$($scale * 100)-$view"
-                $profileHome = Join-Path $fixtureRoot "test-$name"
-                [IO.Directory]::CreateDirectory($profileHome) | Out-Null
-                $seed = Join-Path $profileHome 'seed.json'
-                [IO.File]::WriteAllText($seed, '[]')
-                Invoke-Fixture -Label "$name-init" -Arguments @('--init', $seed, '--home', $profileHome, '--out', (Join-Path $profileHome 'initialized.json'))
-                @'
+                foreach ($bottom in @($false, $true)) {
+                    if ($bottom -and $scale -ne 2) { continue }
+                    $suffix = if ($bottom) { '-bottom' } else { '' }
+                    $name = "$language-$($scale * 100)-$view$suffix"
+                    $profileHome = Join-Path $fixtureRoot "test-$name"
+                    [IO.Directory]::CreateDirectory($profileHome) | Out-Null
+                    $seed = Join-Path $profileHome 'seed.json'
+                    [IO.File]::WriteAllText($seed, '[]')
+                    Invoke-Fixture -Label "$name-init" -Arguments @('--init', $seed, '--home', $profileHome, '--out', (Join-Path $profileHome 'initialized.json')) | Out-Null
+                    @'
 import json, pathlib, sqlite3, sys
 home = pathlib.Path(sys.argv[1])
 language, scale, view = sys.argv[2], float(sys.argv[3]), sys.argv[4]
+bottom = sys.argv[5].lower() == 'true'
 desktop = home / 'Desktop'
 desktop.mkdir()
 for name, address in [('Project Alpha', 'alpha'), ('Project Beta', 'beta'), ('Reference notes', 'reference')]:
@@ -79,22 +99,24 @@ with sqlite3.connect(str(databases[0])) as db:
     config.update(language=language, collect=False, autostart=False)
     values = {'config': config, 'setup_complete': True, 'background_disabled': True,
               'test_desktop': str(desktop), 'test_view': view, 'test_search': 'Project Alpha',
+              'test_scroll_bottom': bottom,
               'ui_scale': scale, 'test_viewport': [1120.0, 820.0],
               'test_layout': {'items': [], 'spacing': {'x': 80, 'y': 100}, 'origin': {'x': 0, 'y': 0},
                               'work': [0, 0, 1920, 1040], 'flags': 0, 'topology': 'isolated-fixture', 'icon_size': 32}}
     db.executemany('INSERT OR REPLACE INTO kv(k,v) VALUES (?,?)', [(k, json.dumps(v)) for k, v in values.items()])
-'@ | python - $profileHome $language $scale $view
-                if ($LASTEXITCODE) { throw "Fixture setup failed: $name" }
-                $destination = Join-Path $report $name
-                Invoke-Fixture -Label $name -Arguments @('--ui-smoke', $destination, '--home', $profileHome)
-                $image = Join-Path $destination "dialog-$view.png"
-                if (-not (Test-Path -LiteralPath $image) -or (Get-Item -LiteralPath $image).Length -lt 4096) { throw "Native screenshot is missing or empty: $name" }
-                foreach ($leaf in @('Project Alpha.url', 'Project Beta.url', 'Reference notes.url', 'Notes one.txt', 'Notes two.txt', 'Existing project')) {
-                    if (-not (Test-Path -LiteralPath (Join-Path (Join-Path $profileHome 'Desktop') $leaf))) { throw "UI capture changed a fixture: $leaf" }
+'@ | python - $profileHome $language $scale $view $bottom
+                    if ($LASTEXITCODE) { throw "Fixture setup failed: $name" }
+                    $destination = Join-Path $report $name
+                    $scrollMessages = Invoke-Fixture -Label $name -ScrollBottom:$bottom -Arguments @('--ui-smoke', $destination, '--home', $profileHome)
+                    $image = Join-Path $destination "dialog-$view.png"
+                    if (-not (Test-Path -LiteralPath $image) -or (Get-Item -LiteralPath $image).Length -lt 4096) { throw "Native screenshot is missing or empty: $name" }
+                    foreach ($leaf in @('Project Alpha.url', 'Project Beta.url', 'Reference notes.url', 'Notes one.txt', 'Notes two.txt', 'Existing project')) {
+                        if (-not (Test-Path -LiteralPath (Join-Path (Join-Path $profileHome 'Desktop') $leaf))) { throw "UI capture changed a fixture: $leaf" }
+                    }
+                    if (@(Get-ChildItem -LiteralPath (Join-Path $profileHome 'Desktop')).Count -ne 6) { throw 'UI capture created an unexpected desktop object' }
+                    $records.Add(@{view=$view; language=$language; scale=$scale; scrolled=$bottom; scroll_messages=$scrollMessages; image="$name/dialog-$view.png"; sha256=(Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash.ToLowerInvariant(); exit_code=0})
+                    Write-Host "PASS native UI: $name (scroll messages: $scrollMessages)"
                 }
-                if (@(Get-ChildItem -LiteralPath (Join-Path $profileHome 'Desktop')).Count -ne 6) { throw 'UI capture created an unexpected desktop object' }
-                $records.Add(@{view=$view; language=$language; scale=$scale; image="$name/dialog-$view.png"; sha256=(Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash.ToLowerInvariant(); exit_code=0})
-                Write-Host "PASS native UI: $name"
             }
         }
     }
