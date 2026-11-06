@@ -10,22 +10,37 @@ using System.Runtime.InteropServices;
 using System.Text;
 public static class IdleDesktopFixture {
     [StructLayout(LayoutKind.Sequential)] public struct LastInput { public uint Size; public uint Tick; }
-    [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
-    [StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
-    [StructLayout(LayoutKind.Sequential)] public struct MouseInput { public int X, Y; public uint Data, Flags, Time; public UIntPtr Extra; }
-    [StructLayout(LayoutKind.Sequential)] public struct Input { public uint Type; public MouseInput Mouse; }
+    [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+    [DllImport("kernel32.dll")] public static extern uint GetTickCount();
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    [DllImport("user32.dll")] public static extern IntPtr GetThreadDesktop(uint threadId);
+    [DllImport("user32.dll", SetLastError=true)] public static extern bool AttachThreadInput(uint from, uint to, bool attach);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr window);
     [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LastInput input);
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int key);
-    [DllImport("kernel32.dll")] public static extern uint GetTickCount();
-    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
-    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
-    [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(Point point);
-    [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr window, uint flags);
-    [DllImport("user32.dll", SetLastError=true)] public static extern uint SendInput(uint count, Input[] inputs, int size);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr window, StringBuilder text, int capacity);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr window, StringBuilder text, int capacity);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool GetUserObjectInformation(IntPtr obj, int index, out int value, uint size, out uint needed);
+    public static bool ActivateOwnWindow(IntPtr window) {
+        uint own = GetCurrentThreadId(); uint ignored;
+        uint other = GetWindowThreadProcessId(GetForegroundWindow(), out ignored);
+        int receivesInput; uint needed;
+        if (!GetUserObjectInformation(GetThreadDesktop(own), 6, out receivesInput, 4, out needed) || receivesInput == 0)
+            throw new InvalidOperationException("The fixture is not on the active input desktop");
+        bool attached = false;
+        try {
+            if (other != 0 && other != own) {
+                attached = AttachThreadInput(own, other, true);
+                if (!attached) throw new InvalidOperationException("Cannot attach the fixture input queue: " + Marshal.GetLastWin32Error());
+            }
+            BringWindowToTop(window);
+            return SetForegroundWindow(window);
+        } finally {
+            if (attached) AttachThreadInput(own, other, false);
+        }
+    }
     public static string Describe(IntPtr window) {
         var text = new StringBuilder(256); var kind = new StringBuilder(256);
         GetWindowText(window, text, text.Capacity); GetClassName(window, kind, kind.Capacity);
@@ -38,19 +53,6 @@ public static class IdleDesktopFixture {
     public static int HeldKey() {
         for (int key = 1; key <= 254; key++) if (GetAsyncKeyState(key) < 0) return key;
         return 0;
-    }
-    public static void ClickOwnWindow(IntPtr window) {
-        Rect rect;
-        if (!GetWindowRect(window, out rect)) throw new InvalidOperationException("Fixture window has no rectangle");
-        var point = new Point { X = (rect.Left + rect.Right) / 2, Y = (rect.Top + rect.Bottom) / 2 };
-        if (!SetCursorPos(point.X, point.Y) || GetAncestor(WindowFromPoint(point), 2) != window)
-            throw new InvalidOperationException("Fixture is not the actual input target; refusing to click another window");
-        var inputs = new[] {
-            new Input { Type = 0, Mouse = new MouseInput { Flags = 0x0002 } },
-            new Input { Type = 0, Mouse = new MouseInput { Flags = 0x0004 } }
-        };
-        if (SendInput(2, inputs, Marshal.SizeOf(typeof(Input))) != 2)
-            throw new InvalidOperationException("Fixture activation input was rejected: " + Marshal.GetLastWin32Error());
     }
 }
 '@
@@ -68,14 +70,14 @@ $label.AutoSize = $false
 $label.Dock = [Windows.Forms.DockStyle]::Fill
 $form.Controls.Add($label)
 $form.Add_Shown({
-    $form.TopMost = $true
-    $form.Activate()
-    $activated = [IdleDesktopFixture]::SetForegroundWindow($form.Handle)
-    Write-Host "Fixture activation: $activated; handle=$($form.Handle)"
-    if ([IdleDesktopFixture]::GetForegroundWindow() -ne $form.Handle) {
-        # Focus the fixture exactly as a UI test would. This is not idle
-        # injection: readiness still waits for 16 seconds of actual inactivity.
-        [IdleDesktopFixture]::ClickOwnWindow($form.Handle)
+    try {
+        $form.TopMost = $true
+        $activated = [IdleDesktopFixture]::ActivateOwnWindow($form.Handle)
+        Write-Host "Fixture activation: $activated; handle=$($form.Handle)"
+    } catch {
+        [IO.File]::WriteAllText("$ReadyPath.error.txt", $_.ToString())
+        Write-Host "Fixture activation failed: $_"
+        $form.Close()
     }
 })
 $started = [Diagnostics.Stopwatch]::StartNew()
@@ -94,6 +96,8 @@ $timer.Add_Tick({
     $json = $state | ConvertTo-Json -Compress
     [IO.File]::WriteAllText("$ReadyPath.status.json", $json)
     if ([int]$started.Elapsed.TotalSeconds % 5 -eq 0) { Write-Host $json }
+    # Readiness is still the actual OS foreground and inactivity; never an
+    # injected quiet result or a substitute for the application's guards.
     if (-not (Test-Path -LiteralPath $ReadyPath) -and $foreground -eq $form.Handle -and $idle -ge 16000 -and $key -eq 0) {
         [IO.File]::WriteAllText($ReadyPath, $json)
     }
