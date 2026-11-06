@@ -22,6 +22,12 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It lear
 
 Installation is per user, by default in `%LOCALAPPDATA%\DesktopPilot`; no administrator access is required. Settings are available from the tray icon and the Start menu. This preview executable is unsigned; download only from this repository's Releases and verify the supplied SHA-256 checksum.
 
+## Improvements in 0.2.121
+
+**Bulk import no longer silently skips a distinct shortcut because its containing directory looks like an environment variable.** A literal `%USERNAME%` directory and a directory named after the Windows user can contain different web shortcuts with the same filename. Pasting both full paths now preserves both entries. Explicit expansion of abbreviated input paths remains available. [Scope and regression](docs/research/2026-11-06-literal-percent-shortcut-import.md).
+
+The draft Organize desktop feature (PR #98) is not included. Its Windows 11, OneDrive and interactive icon-layout acceptance remains open.
+
 ## Improvements in 0.2.16
 
 **Less background database activity while idle.** The worker now records a SQLite heartbeat at most once every 15 seconds during normal operation, rather than on every two-second poll. Startup and deliberate commands still update it immediately, and Settings retains its existing 150-second unresponsive-process warning. A deterministic 60-minute scheduler fixture checks 225 actual heartbeat writes instead of the previous per-tick 1,800, without disabling checks or losing recoverability. This is a count of SQLite updates, not a measured battery-life or disk-wear improvement. [Scope and tests](docs/research/2026-10-27-idle-heartbeat.md).
