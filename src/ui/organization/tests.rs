@@ -518,7 +518,8 @@ fn recovery_confirmation_cannot_authorize_a_different_pending_journal() {
         .unwrap();
     let output = render(&ctx, &mut f.app, viewport, Vec::new());
     assert!(f.app.organization_accept_for.is_none());
-    let (_, button) = rendered_text(&output)
+    let painted = rendered_text(&output);
+    let (_, button) = painted
         .iter()
         .find(|(value, _)| value == "Accept current locations")
         .expect("Recovery button must be shown");
@@ -539,6 +540,12 @@ fn recovery_confirmation_cannot_authorize_a_different_pending_journal() {
     f.app
         .store
         .set("organization.active.v1", &Option::<String>::None)
+        .unwrap();
+    let _ = render(&ctx, &mut f.app, viewport, Vec::new());
+    assert!(f.app.organization_accept_for.is_none());
+    f.app
+        .store
+        .set("organization.active.v1", &Some("1002".to_owned()))
         .unwrap();
     let _ = render(&ctx, &mut f.app, viewport, Vec::new());
     assert!(f.app.organization_accept_for.is_none());
