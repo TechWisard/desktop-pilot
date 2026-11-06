@@ -628,7 +628,12 @@ fn saved_catalog_source_alias_and_manual_choice_survive_preview_apply_and_undo()
     saved.source = canonical.to_string_lossy().into_owned();
     f.store.put_app(&saved).unwrap();
     let current = f.plan(false);
-    assert_eq!(current.summary(), (3, 1, 2), "{:?}", current.skipped);
+    let skipped: Vec<_> = current
+        .skipped
+        .iter()
+        .map(|item| format!("{}: {}", item.name, item.reason))
+        .collect();
+    assert_eq!(current.summary(), (3, 1, 2), "{skipped:?}");
     assert_eq!(
         apply(&f.store, &current, &AtomicBool::new(false))
             .unwrap()
