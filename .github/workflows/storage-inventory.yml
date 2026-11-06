@@ -1,0 +1,55 @@
+name: Actions storage inventory
+on:
+  push:
+    branches: [maintenance/verified-storage-cleanup-20261106]
+    paths: [.github/workflows/storage-inventory.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: List repository artifacts and caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: python
+        run: |
+          import json, os, urllib.request
+          repo = os.environ['GH_REPO']
+          assert repo == 'TechWisard/desktop-pilot'
+          headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                     'Accept': 'application/vnd.github+json',
+                     'X-GitHub-Api-Version': '2022-11-28'}
+          def pages(endpoint, key):
+              values = []
+              for page in range(1, 101):
+                  request = urllib.request.Request(
+                      f'https://api.github.com/repos/{repo}/{endpoint}?per_page=100&page={page}',
+                      headers=headers)
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      payload = json.load(response)
+                  batch = payload[key]
+                  values.extend(batch)
+                  if len(batch) < 100:
+                      return values
+              raise RuntimeError('Pagination limit reached; inventory is incomplete')
+          artifacts = pages('actions/artifacts', 'artifacts')
+          caches = pages('actions/caches', 'actions_caches')
+          result = {
+              'repository': repo, 'complete': True,
+              'artifacts': [{k: a.get(k) for k in
+                  ('id', 'name', 'size_in_bytes', 'digest', 'expired', 'created_at', 'expires_at', 'workflow_run')}
+                  for a in artifacts],
+              'caches': [{k: c.get(k) for k in
+                  ('id', 'key', 'ref', 'size_in_bytes', 'created_at', 'last_accessed_at')}
+                  for c in caches],
+              'artifact_bytes': sum(a['size_in_bytes'] for a in artifacts),
+              'cache_bytes': sum(c['size_in_bytes'] for c in caches),
+              'deleted': [],
+          }
+          print('STORAGE_INVENTORY_BEGIN')
+          print(json.dumps(result, ensure_ascii=False))
+          print('STORAGE_INVENTORY_END')
