@@ -160,9 +160,12 @@ fn aliased_desktop_working_directory_protects_opt_in_files_at_preview_and_apply(
     let fresh = f.plan(true);
     assert!(fresh.items.is_empty());
     for name in ["Important.txt", "Other.pdf"] {
-        assert!(fresh.skipped.iter().any(|item| {
-            item.name == name && item.reason.contains("working directory")
-        }));
+        assert!(
+            fresh
+                .skipped
+                .iter()
+                .any(|item| { item.name == name && item.reason.contains("working directory") })
+        );
     }
 
     // Another Settings window can have an older preview. Apply rechecks
@@ -170,10 +173,19 @@ fn aliased_desktop_working_directory_protects_opt_in_files_at_preview_and_apply(
     let before_apps = f.store.apps().unwrap();
     let error = apply(&f.store, &old_preview, &AtomicBool::new(false))
         .expect_err("an old preview cannot override a new desktop dependency");
-    assert!(format!("{error:#}").contains("working directory"), "{error:#}");
+    assert!(
+        format!("{error:#}").contains("working directory"),
+        "{error:#}"
+    );
     assert_eq!(f.store.apps().unwrap(), before_apps);
-    assert_eq!(disk::read(f.desktop.join("Important.txt")).unwrap(), b"user document");
-    assert_eq!(disk::read(f.desktop.join("Other.pdf")).unwrap(), b"user document");
+    assert_eq!(
+        disk::read(f.desktop.join("Important.txt")).unwrap(),
+        b"user document"
+    );
+    assert_eq!(
+        disk::read(f.desktop.join("Other.pdf")).unwrap(),
+        b"user document"
+    );
     assert!(!f.desktop.join("Documents").exists());
     assert!(!status(&f.store).unwrap().pending);
     assert!(status(&f.store).unwrap().undo.is_none());
@@ -184,7 +196,12 @@ fn aliased_desktop_working_directory_protects_opt_in_files_at_preview_and_apply(
     f.store.put_app(&app).unwrap();
     let reviewed = f.plan(true);
     assert_eq!(reviewed.summary(), (2, 1, 1));
-    assert_eq!(apply(&f.store, &reviewed, &AtomicBool::new(false)).unwrap().moved, 2);
+    assert_eq!(
+        apply(&f.store, &reviewed, &AtomicBool::new(false))
+            .unwrap()
+            .moved,
+        2
+    );
     let operation = status(&f.store).unwrap().undo.unwrap();
     assert_eq!(undo(&f.store, &operation).unwrap().restored, 2);
     for name in ["Important.txt", "Other.pdf"] {
