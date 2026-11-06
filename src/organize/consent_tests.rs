@@ -622,8 +622,10 @@ fn saved_catalog_source_alias_and_manual_choice_survive_preview_apply_and_undo()
     assert_eq!(f.plan(false).summary(), (3, 1, 2));
     assert!(external.is_file());
 
-    // Restoring the canonical source address also removes the safeguard.
-    saved.source = original.to_string_lossy().into_owned();
+    // The fixture's Temp spelling may be an 8.3 path. Use the same
+    // canonical root as production Analyze, not the test input spelling.
+    let canonical = root(&f.store).unwrap().join("Alpha.url");
+    saved.source = canonical.to_string_lossy().into_owned();
     f.store.put_app(&saved).unwrap();
     let current = f.plan(false);
     assert_eq!(current.summary(), (3, 1, 2), "{:?}", current.skipped);
