@@ -6,7 +6,7 @@ use std::{
 };
 
 fn same_entry(left: &str, right: &str) -> bool {
-    if norm(left) == norm(right) {
+    if norm_literal_path(left) == norm_literal_path(right) {
         return true;
     }
     let left = Path::new(left);
@@ -229,5 +229,15 @@ mod tests {
         .unwrap();
         assert_eq!(result.items.len(), 3);
         assert_eq!(result.items[2].name, "Personal");
+    }
+
+    #[test]
+    fn literal_variable_filename_is_not_a_shell_enumeration_alias() {
+        let username = std::env::var("USERNAME").expect("Windows username is required");
+        let actual = path(&format!("{username}.url"));
+        let literal = path("%USERNAME%.url");
+        assert_ne!(literal, actual);
+        assert!(!same_entry(&literal, &actual));
+        assert!(same_entry(&literal, &literal));
     }
 }

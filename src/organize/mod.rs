@@ -23,7 +23,7 @@ pub use plan::analyze;
 pub use plan::find_free_zone;
 
 use crate::{
-    model::{Config, Point, Policy, State, norm},
+    model::{Config, Point, Policy, State, norm, norm_literal_path},
     native,
     store::Store,
 };

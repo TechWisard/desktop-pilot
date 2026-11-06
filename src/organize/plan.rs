@@ -104,13 +104,14 @@ impl Dependencies {
         // after the rename that alias can no longer be verified or rewritten.
         // Inspect only distinct non-canonical sources on local disks; a hard
         // link in another parent directory does not name the Desktop entry.
-        let expanded_source = crate::model::expand_env(&app.source);
-        let source = crate::profile::ordinary_path(PathBuf::from(&expanded_source));
+        // Catalog sources are existing filesystem paths, not launch templates.
+        // A directory literally named %USERNAME% must keep its own identity.
+        let source = crate::profile::ordinary_path(PathBuf::from(&app.source));
         if let Some(name) = source.file_name()
-            && norm(&app.source) != norm(&root.join(name).to_string_lossy())
+            && norm_literal_path(&app.source) != norm_literal_path(&root.join(name).to_string_lossy())
             && self
                 .checked_catalog_source_aliases
-                .insert(norm(&app.source))
+                .insert(norm_literal_path(&app.source))
             && source.is_absolute()
             && reject_network_root(&source).is_ok()
             && source
@@ -126,13 +127,13 @@ impl Dependencies {
             let expanded = crate::model::expand_env(value);
             let path = Path::new(&expanded);
             if path.is_absolute() {
-                self.paths.insert(norm(&expanded));
+                self.paths.insert(norm_literal_path(&expanded));
             }
         }
         if check_working_directory {
             for value in [&app.target, &app.icon] {
                 let expanded = crate::model::expand_env(value);
-                if !self.checked_local_paths.insert(norm(&expanded)) {
+                if !self.checked_local_paths.insert(norm_literal_path(&expanded)) {
                     continue;
                 }
                 let path = crate::profile::ordinary_path(PathBuf::from(&expanded));
@@ -162,8 +163,8 @@ impl Dependencies {
         }
         if check_working_directory && !self.desktop_working_directory && !app.cwd.is_empty() {
             let expanded = crate::model::expand_env(&app.cwd);
-            let normalized = norm(&expanded);
-            if normalized == norm(&root.to_string_lossy()) {
+            let normalized = norm_literal_path(&expanded);
+            if normalized == norm_literal_path(&root.to_string_lossy()) {
                 self.desktop_working_directory = true;
             } else if self.checked_working_directories.insert(normalized) {
                 // Keep extended local drive paths, but convert extended UNC
@@ -185,7 +186,7 @@ impl Dependencies {
             !self.catalog_source_alias_ids.contains(file_id),
             "A saved catalog source aliases this desktop object; update its path before organizing"
         );
-        let normalized = norm(&path.to_string_lossy());
+        let normalized = norm_literal_path(&path.to_string_lossy());
         ensure!(
             !self.sidecar_objects.contains(&normalized),
             "Associated file set: left in place"
@@ -231,14 +232,13 @@ pub(super) fn legacy_managed_alias_ids(
     let mut ids = HashSet::new();
     let mut checked = HashSet::new();
     for owned in state.owned.iter().filter(|owned| owned.file_id.is_none()) {
-        let expanded = crate::model::expand_env(&owned.path);
-        let path = crate::profile::ordinary_path(PathBuf::from(expanded));
+        let path = crate::profile::ordinary_path(PathBuf::from(&owned.path));
         let Some(name) = path.file_name() else {
             continue;
         };
-        let spelling = norm(&path.to_string_lossy());
+        let spelling = norm_literal_path(&path.to_string_lossy());
         if !path.is_absolute()
-            || spelling == norm(&root.join(name).to_string_lossy())
+            || spelling == norm_literal_path(&root.join(name).to_string_lossy())
             || reject_network_root(&path).is_err()
             || !checked.insert(spelling)
         {
@@ -269,7 +269,7 @@ pub(super) fn paths(root: &Path, cancel: &AtomicBool) -> Result<Vec<PathBuf>> {
             "The desktop contains more than 6000 objects. No incomplete plan was created."
         );
     }
-    paths.sort_by_key(|path| norm(&path.to_string_lossy()));
+    paths.sort_by_key(|path| norm_literal_path(&path.to_string_lossy()));
     Ok(paths)
 }
 
@@ -321,7 +321,7 @@ pub(super) fn source_position(
     root_id: &str,
     stamp_id: &str,
 ) -> Option<Point> {
-    if let Some(position) = positions.get(&norm(&path.to_string_lossy())) {
+    if let Some(position) = positions.get(&norm_literal_path(&path.to_string_lossy())) {
         return Some(position.clone());
     }
     let name = path.file_name()?.to_string_lossy().to_lowercase();
@@ -355,7 +355,7 @@ pub fn analyze(
     let apps = store.apps()?;
     let keep: HashSet<String> = store.get::<Vec<String>>(KEEP)?.into_iter().collect();
     let legacy_managed_ids = legacy_managed_alias_ids(&root, &root_id, &state);
-    let managed_paths: HashSet<_> = state.owned.iter().map(|o| norm(&o.path)).collect();
+    let managed_paths: HashSet<_> = state.owned.iter().map(|o| norm_literal_path(&o.path)).collect();
     let managed_ids: HashSet<_> = state
         .owned
         .iter()
@@ -364,7 +364,7 @@ pub fn analyze(
     let manual_paths: HashSet<_> = apps
         .iter()
         .filter(|a| a.policy != Policy::Auto)
-        .map(|a| norm(&a.source))
+        .map(|a| norm_literal_path(&a.source))
         .collect();
     let mut plan = Plan {
         root: root.to_string_lossy().into_owned(),
@@ -393,7 +393,7 @@ pub fn analyze(
     let mut aliases = HashMap::<String, Vec<(PathBuf, Point)>>::new();
     if let Some(layout) = &plan.layout {
         for item in &layout.items {
-            positions.insert(norm(&item.path), item.position.clone());
+            positions.insert(norm_literal_path(&item.path), item.position.clone());
             if let Some(name) = Path::new(&item.path).file_name() {
                 aliases
                     .entry(name.to_string_lossy().to_lowercase())
@@ -429,7 +429,7 @@ pub fn analyze(
                 !keep.contains(&stamp.id),
                 "You chose to keep this object on the desktop"
             );
-            let normalized = norm(&path.to_string_lossy());
+            let normalized = norm_literal_path(&path.to_string_lossy());
             ensure!(
                 !managed_paths.contains(&normalized)
                     && !managed_ids.contains(stamp.id.as_str())
@@ -561,7 +561,7 @@ impl Plan {
         let movements = self.movements();
         let moved: HashSet<_> = movements
             .iter()
-            .map(|m| norm(&Path::new(&self.root).join(&m.item.name).to_string_lossy()))
+            .map(|m| norm_literal_path(&Path::new(&self.root).join(&m.item.name).to_string_lossy()))
             .collect();
         let alias_ids: HashMap<_, _> = movements
             .iter()
@@ -573,7 +573,7 @@ impl Plan {
             })
             .collect();
         projected.items.retain(|item| {
-            if moved.contains(&norm(&item.path)) {
+            if moved.contains(&norm_literal_path(&item.path)) {
                 return false;
             }
             // A normalized text mismatch must not leave an already moved

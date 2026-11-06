@@ -14,7 +14,7 @@ fn ensure_single_original_location(organized: &Path, original_id: &str) -> Resul
 
 fn checked_root(journal: &Journal, store: &Store) -> Result<std::fs::File> {
     ensure!(
-        norm(&root(store)?.to_string_lossy()) == norm(&journal.root),
+        norm_literal_path(&root(store)?.to_string_lossy()) == norm_literal_path(&journal.root),
         "The desktop location changed. Restore its original location before recovery."
     );
     let handle = fs::directory(Path::new(&journal.root))?;
@@ -39,7 +39,7 @@ fn update_catalog(store: &Store, journal: &Journal, undo: bool) -> Result<()> {
     let mut apps = store.apps()?;
     let mut sources = HashMap::<String, Vec<usize>>::new();
     for (index, app) in apps.iter().enumerate() {
-        sources.entry(norm(&app.source)).or_default().push(index);
+        sources.entry(norm_literal_path(&app.source)).or_default().push(index);
     }
     for movement in &journal.movements {
         let original = Path::new(&journal.root).join(&movement.item.name);
@@ -51,7 +51,7 @@ fn update_catalog(store: &Store, journal: &Journal, undo: bool) -> Result<()> {
         } else {
             (&original, &organized)
         };
-        if let Some(indices) = sources.get(&norm(&from.to_string_lossy())) {
+        if let Some(indices) = sources.get(&norm_literal_path(&from.to_string_lossy())) {
             for &index in indices {
                 let app = &mut apps[index];
                 if movement.item.launch.as_ref() == Some(&app.identity()) {
@@ -73,7 +73,7 @@ fn layout_equal(a: &native::Layout, b: &native::Layout) -> bool {
         let mut entries: Vec<_> = layout
             .items
             .iter()
-            .map(|i| (norm(&i.path), i.position.x, i.position.y))
+            .map(|i| (norm_literal_path(&i.path), i.position.x, i.position.y))
             .collect();
         entries.sort();
         entries
@@ -138,7 +138,7 @@ fn restore_position_plan(
     let by_path: HashMap<String, &native::Item> = current
         .items
         .iter()
-        .map(|item| (norm(&item.path), item))
+        .map(|item| (norm_literal_path(&item.path), item))
         .collect();
     // Explorer can report the same personal-desktop file through an 8.3
     // parent alias. Match the real file *and parent directory* by identity
@@ -154,7 +154,7 @@ fn restore_position_plan(
     }
     let mut proposals = Vec::new();
     for (path, point) in requested {
-        let resolved = by_path.get(&norm(&path)).copied().or_else(|| {
+        let resolved = by_path.get(&norm_literal_path(&path)).copied().or_else(|| {
             let target = Path::new(&path);
             let filename = target.file_name()?.to_string_lossy().to_lowercase();
             let parent = fs::directory(target.parent()?).ok()?;
@@ -180,7 +180,7 @@ fn restore_position_plan(
             None => skipped += 1,
         }
     }
-    let proposed_ids: HashSet<String> = proposals.iter().map(|(p, _)| norm(p)).collect();
+    let proposed_ids: HashSet<String> = proposals.iter().map(|(p, _)| norm_literal_path(p)).collect();
     let sx = i64::from(current.spacing.x.max(3));
     let sy = i64::from(current.spacing.y.max(3));
     let cell = |point: &Point| {
@@ -205,7 +205,7 @@ fn restore_position_plan(
     let mut blocked = HashSet::<String>::new();
     let mut dependents: HashMap<String, Vec<String>> = HashMap::new();
     for (index, (path, target)) in proposals.iter().enumerate() {
-        let id = norm(path);
+        let id = norm_literal_path(path);
         let (x, y) = cell(target);
         for dx in -1..=1 {
             for dy in -1..=1 {
@@ -217,7 +217,7 @@ fn restore_position_plan(
                     }
                 }
                 for item in occupied.get(&neighbor).into_iter().flatten() {
-                    let occupant = norm(&item.path);
+                    let occupant = norm_literal_path(&item.path);
                     if occupant == id || !overlaps(target, &item.position) {
                         continue;
                     }
@@ -244,7 +244,7 @@ fn restore_position_plan(
     (
         proposals
             .into_iter()
-            .filter(|(path, _)| !blocked.contains(&norm(path)))
+            .filter(|(path, _)| !blocked.contains(&norm_literal_path(path)))
             .collect(),
         skipped,
     )
@@ -304,7 +304,7 @@ fn remember_keep_locked(store: &Store, plan: &Plan) -> Result<Outcome> {
     let directory = fs::directory(&actual_root)?;
     ensure!(
         fs::identity(&directory)? == plan.root_id
-            && norm(&actual_root.to_string_lossy()) == norm(&plan.root),
+            && norm_literal_path(&actual_root.to_string_lossy()) == norm_literal_path(&plan.root),
         "The desktop changed after preview; refresh the plan"
     );
     // A failed check must leave every existing exclusion unchanged.
@@ -399,7 +399,7 @@ pub(crate) fn apply_stopped(store: &Store, plan: &Plan, cancel: &AtomicBool) -> 
         &plan.root_id,
     )?;
     let legacy_managed_ids = plan::legacy_managed_alias_ids(root, &plan.root_id, &state);
-    let managed_paths: HashSet<_> = state.owned.iter().map(|o| norm(&o.path)).collect();
+    let managed_paths: HashSet<_> = state.owned.iter().map(|o| norm_literal_path(&o.path)).collect();
     let managed_ids: HashSet<_> = state
         .owned
         .iter()
@@ -408,7 +408,7 @@ pub(crate) fn apply_stopped(store: &Store, plan: &Plan, cancel: &AtomicBool) -> 
     let manual_paths: HashSet<_> = apps
         .iter()
         .filter(|a| a.policy != Policy::Auto)
-        .map(|a| norm(&a.source))
+        .map(|a| norm_literal_path(&a.source))
         .collect();
     for movement in &journal.movements {
         fs::leaf(&movement.item.name)?;
@@ -423,7 +423,7 @@ pub(crate) fn apply_stopped(store: &Store, plan: &Plan, cancel: &AtomicBool) -> 
             !keep.contains(&actual.id),
             "Your keep-on-desktop choice changed after preview; refresh the plan"
         );
-        let normalized = norm(&path.to_string_lossy());
+        let normalized = norm_literal_path(&path.to_string_lossy());
         ensure!(
             !managed_ids.contains(actual.id.as_str())
                 && !managed_paths.contains(&normalized)
@@ -598,8 +598,8 @@ fn undo_locked(store: &Store, journal: &mut Journal) -> Result<Outcome> {
                 ensure_single_original_location(&organized, &movement.item.stamp.id)?;
                 continue;
             }
-            let original_path = norm(&original.to_string_lossy());
-            if let Some(copy) = state.owned.iter().find(|o| norm(&o.path) == original_path)
+            let original_path = norm_literal_path(&original.to_string_lossy());
+            if let Some(copy) = state.owned.iter().find(|o| norm_literal_path(&o.path) == original_path)
                 && let Some(id) = &copy.file_id
                 && id != &movement.item.stamp.id
                 && fs::matches_id(&original, id)?
@@ -1000,7 +1000,7 @@ mod layout_target_tests {
             .join("Alpha.url")
             .to_string_lossy()
             .into_owned();
-        assert_ne!(norm(&alias_path), norm(&requested_path));
+        assert_ne!(norm_literal_path(&alias_path), norm_literal_path(&requested_path));
         let alias_icon = native::Item {
             path: alias_path.clone(),
             name: "Alpha.url".into(),

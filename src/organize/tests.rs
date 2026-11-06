@@ -1002,3 +1002,58 @@ fn analyzed_position_alias_must_belong_to_personal_desktop_not_public_hardlink()
     assert!(public.join("Alpha.url").is_file());
     assert!(status(&f.store).unwrap().undo.is_none());
 }
+
+#[test]
+fn organizing_literal_percent_named_shortcut_preserves_manual_sibling_and_undo() {
+    let f = Fixture::new();
+    let username = std::env::var("USERNAME").expect("Windows username is required");
+    let resolved_name = format!("{username}.url");
+    let literal = f.url("%USERNAME%.url", "https://example.invalid/literal");
+    let manual = f.url(&resolved_name, "https://example.invalid/resolved");
+    let other = f.url("Independent.url", "https://example.invalid/independent");
+    assert_ne!(
+        crate::model::norm_literal_path(&literal.source),
+        crate::model::norm_literal_path(&manual.source)
+    );
+    f.store.policy(&manual.id, Policy::Never).unwrap();
+    let literal_before = fs::inspect(Path::new(&literal.source), true).unwrap();
+    let manual_before = fs::inspect(Path::new(&manual.source), true).unwrap();
+    let manual_bytes = disk::read(&manual.source).unwrap();
+    let history = serde_json::to_value(f.store.days().unwrap()).unwrap();
+
+    // This is production analysis over real .url files and persisted rules.
+    // Expanding a *literal filename* here used to hide both siblings.
+    let plan = f.plan(false);
+    assert!(plan.items.iter().any(|item| item.name == "%USERNAME%.url"));
+    assert!(plan.items.iter().any(|item| item.name == "Independent.url"));
+    assert!(!plan.items.iter().any(|item| item.name == resolved_name));
+    assert_eq!(plan.summary(), (2, 1, 1));
+
+    let outcome = f.apply(&plan);
+    assert_eq!(outcome.moved, 2);
+    assert_eq!(f.store.app(&manual.id).unwrap().source, manual.source);
+    assert_eq!(f.store.app(&manual.id).unwrap().policy, Policy::Never);
+    assert_eq!(disk::read(&manual.source).unwrap(), manual_bytes);
+    assert_eq!(
+        fs::inspect(&f.desktop.join("Sites/%USERNAME%.url"), true).unwrap(),
+        literal_before
+    );
+    assert!(f.desktop.join("Sites/Independent.url").is_file());
+    assert!(!Path::new(&other.source).exists());
+    let operation = f.last();
+    undo(&f.store, &operation).unwrap();
+    assert_eq!(f.store.app(&literal.id).unwrap().source, literal.source);
+    assert_eq!(f.store.app(&manual.id).unwrap().source, manual.source);
+    assert_eq!(f.store.app(&manual.id).unwrap().policy, Policy::Never);
+    assert_eq!(
+        fs::inspect(Path::new(&literal.source), true).unwrap(),
+        literal_before
+    );
+    assert_eq!(
+        fs::inspect(Path::new(&manual.source), true).unwrap(),
+        manual_before
+    );
+    assert_eq!(disk::read(&manual.source).unwrap(), manual_bytes);
+    assert_eq!(serde_json::to_value(f.store.days().unwrap()).unwrap(), history);
+    assert!(!status(&f.store).unwrap().pending);
+}
