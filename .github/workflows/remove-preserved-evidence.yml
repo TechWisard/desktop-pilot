@@ -1,0 +1,89 @@
+name: Remove externally preserved acceptance artifacts
+on:
+  push:
+    branches: [maintenance/verified-storage-cleanup-20261106]
+    paths: [.github/workflows/remove-preserved-evidence.yml]
+permissions:
+  contents: read
+  actions: write
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - name: Revalidate the exact private-preservation receipt before deletion
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: python
+        run: |
+          import hashlib, io, json, os, urllib.request, urllib.error, zipfile
+          repo = os.environ['GH_REPO']
+          assert repo == 'TechWisard/desktop-pilot'
+          origin = f'https://api.github.com/repos/{repo}/'
+          headers = {'Authorization':'Bearer '+os.environ['GH_TOKEN'], 'Accept':'application/vnd.github+json', 'X-GitHub-Api-Version':'2022-11-28'}
+          def api(path, method='GET'):
+              request = urllib.request.Request(origin+path, headers=headers, method=method)
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return None if response.status == 204 else json.load(response)
+          bundle_id = 13527684534
+          bundle_digest = 'sha256:f8a142e259c8e6a3bfa537aab3e0bf65031bc36125a87f016cb46151c5c6fd3e'
+          # This exact archive was uploaded to owner-only external storage,
+          # downloaded back and all 39 nested archives verified before this
+          # cleanup commit. No public link or cloud credential is required here.
+          meta = api(f'actions/artifacts/{bundle_id}')
+          assert meta['digest'] == bundle_digest and meta['size_in_bytes'] == 41198499
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, hdrs, newurl): return None
+          opener = urllib.request.build_opener(NoRedirect)
+          try:
+              response = opener.open(urllib.request.Request(origin+f'actions/artifacts/{bundle_id}/zip', headers=headers), timeout=30)
+          except urllib.error.HTTPError as error:
+              if error.code != 302: raise
+              location = error.headers['Location']
+              assert location.startswith('https://')
+              response = urllib.request.urlopen(location, timeout=60)
+          with response: data = response.read(41198500)
+          assert len(data) == 41198499 and 'sha256:'+hashlib.sha256(data).hexdigest() == bundle_digest
+          with zipfile.ZipFile(io.BytesIO(data)) as outer:
+              assert outer.testzip() is None
+              with zipfile.ZipFile(io.BytesIO(outer.read('completed-organizer-evidence.zip'))) as bundle:
+                  manifest = json.loads(bundle.read('manifest.json'))
+                  assert manifest['repository'] == repo
+                  selected = manifest['artifacts']
+                  assert len(selected) == 39 and sum(a['size_in_bytes'] for a in selected) == 41172660
+                  assert len({a['id'] for a in selected}) == 39
+                  for item in selected:
+                      archived = bundle.read(f"artifacts/{item['id']}.zip")
+                      assert len(archived) == item['size_in_bytes']
+                      assert 'sha256:'+hashlib.sha256(archived).hexdigest() == item['digest']
+                      assert item['workflow_run']['head_branch'] == 'integration/desktop-pilot-completion-20261106'
+          to_delete, already_absent, run_status = [], [], {}
+          # Preflight every object before deleting any. A newer artifact,
+          # another branch, an active run or changed metadata is never eligible.
+          for item in selected + [meta]:
+              try: current = api(f"actions/artifacts/{item['id']}")
+              except urllib.error.HTTPError as error:
+                  if error.code != 404: raise
+                  already_absent.append(item['id']); continue
+              assert all(current[k] == item[k] for k in ('id','name','size_in_bytes','digest'))
+              run = current['workflow_run']['id']
+              if run not in run_status: run_status[run] = api(f'actions/runs/{run}')['status']
+              assert run_status[run] == 'completed'
+              to_delete.append(current)
+          deleted = []
+          for item in to_delete:
+              api(f"actions/artifacts/{item['id']}", 'DELETE')
+              deleted.append({'id':item['id'],'bytes':item['size_in_bytes']})
+          def all_pages(endpoint, key):
+              result = []
+              for page in range(1, 101):
+                  batch = api(f'{endpoint}?per_page=100&page={page}')[key]
+                  result.extend(batch)
+                  if len(batch) < 100: return result
+              raise RuntimeError('Incomplete remaining inventory')
+          artifacts = all_pages('actions/artifacts','artifacts')
+          caches = all_pages('actions/caches','actions_caches')
+          print('VERIFIED_CLEANUP_BEGIN')
+          print(json.dumps({'deleted':deleted,'deleted_bytes':sum(d['bytes'] for d in deleted),'already_absent':already_absent,'preservation_sha256':bundle_digest,'remaining_artifacts':[{k:a.get(k) for k in ('id','name','size_in_bytes','digest','workflow_run')} for a in artifacts],'remaining_artifact_bytes':sum(a['size_in_bytes'] for a in artifacts),'remaining_caches':[{k:c.get(k) for k in ('id','key','size_in_bytes')} for c in caches],'remaining_cache_bytes':sum(c['size_in_bytes'] for c in caches),'releases_or_source_deleted':False}))
+          print('VERIFIED_CLEANUP_END')
