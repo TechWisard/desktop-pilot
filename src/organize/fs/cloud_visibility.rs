@@ -32,7 +32,10 @@ pub(in crate::organize) struct Guard {
 pub(in crate::organize) fn expose() -> Result<Guard> {
     let previous = if let Some(set) = setter() {
         let previous = unsafe { set(2) };
-        ensure!(previous >= 0, "Cloud placeholder visibility could not be verified");
+        ensure!(
+            previous >= 0,
+            "Cloud placeholder visibility could not be verified"
+        );
         Some((set, previous))
     } else {
         // The Cloud Files compatibility API and placeholders were introduced
