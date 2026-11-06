@@ -309,10 +309,8 @@ mod tests {
     #[test]
     fn access_errors_and_changed_topology_are_not_disguised_as_enumeration_delays() {
         let before = layout(&["Alpha.url"]);
-        let denied: anyhow::Error = windows::core::Error::from_hresult(
-            windows::Win32::Foundation::E_ACCESSDENIED,
-        )
-        .into();
+        let denied: anyhow::Error =
+            windows::core::Error::from_hresult(windows::Win32::Foundation::E_ACCESSDENIED).into();
         assert!(!enumeration_changed(&denied));
         let mut denied = Some(denied);
         let error = poll(
