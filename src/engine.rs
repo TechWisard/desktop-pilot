@@ -60,7 +60,7 @@ fn real_desktop(store: &Store) -> Result<bool> {
 fn safe_file(path: &Path, root: &Path) -> Result<()> {
     ensure!(
         path.parent()
-            .is_some_and(|p| norm(&p.to_string_lossy()) == norm(&root.to_string_lossy())),
+            .is_some_and(|p| norm_literal_path(&p.to_string_lossy()) == norm_literal_path(&root.to_string_lossy())),
         "Отказ: путь вне управляемого рабочего стола"
     );
     ensure!(
@@ -360,7 +360,7 @@ fn shortcut_path(
             ),
         };
         let path = desktop.join(format!("{label}.{}", extension.to_ascii_lowercase()));
-        let key = norm(&path.to_string_lossy());
+        let key = norm_literal_path(&path.to_string_lossy());
         if !reserved.contains(&key) && !path.try_exists()? {
             safe_file(&path, desktop)?;
             reserved.insert(key);
@@ -378,7 +378,7 @@ fn wait_removed(paths: &[String]) -> Result<()> {
         if !layout
             .items
             .iter()
-            .any(|i| paths.iter().any(|p| norm(p) == norm(&i.path)))
+            .any(|i| paths.iter().any(|p| norm_literal_path(p) == norm_literal_path(&i.path)))
         {
             return Ok(());
         }
@@ -615,7 +615,7 @@ fn visit_shortcut_paths_seen(
                 extension.eq_ignore_ascii_case("lnk") || extension.eq_ignore_ascii_case("url")
             })
         {
-            if !seen_paths.insert(norm(&path.to_string_lossy())) {
+            if !seen_paths.insert(norm_literal_path(&path.to_string_lossy())) {
                 continue;
             }
             out.push(path);
@@ -651,7 +651,7 @@ fn discover_shortcut_roots(
     let mut visited_roots = HashSet::new();
     let mut seen_shortcuts = HashSet::new();
     for (index, (root, _)) in roots.iter().enumerate() {
-        if !visited_roots.insert(norm(&root.to_string_lossy())) {
+        if !visited_roots.insert(norm_literal_path(&root.to_string_lossy())) {
             continue;
         }
         if let Err(error) =
@@ -663,8 +663,8 @@ fn discover_shortcut_roots(
             warnings.push(format!("{}: {error:#}", root.display()));
         }
     }
-    paths.sort_by_key(|path| norm(&path.to_string_lossy()));
-    paths.dedup_by(|a, b| norm(&a.to_string_lossy()) == norm(&b.to_string_lossy()));
+    paths.sort_by_key(|path| norm_literal_path(&path.to_string_lossy()));
+    paths.dedup_by(|a, b| norm_literal_path(&a.to_string_lossy()) == norm_literal_path(&b.to_string_lossy()));
     Ok(paths)
 }
 
@@ -705,7 +705,7 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
     // select a different original before these results are ready to persist.
     let scanned_sources: HashMap<_, _> = known
         .iter()
-        .map(|app| (app.id.clone(), (norm(&app.source), app.clone())))
+        .map(|app| (app.id.clone(), (norm_literal_path(&app.source), app.clone())))
         .collect();
     #[cfg(test)]
     BEFORE_REFRESH_DISCOVERY.with(|slot| {
@@ -741,7 +741,7 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
                 app.unavailable_since = 0;
             }
             Ok(actual) if actual.valid => {
-                verified_saved_sources.insert(norm(&app.source));
+                verified_saved_sources.insert(norm_literal_path(&app.source));
                 // Launch identity is unchanged. Refresh only the non-identity
                 // metadata read from the original file. Never rewrite the
                 // independently managed desktop copy or its user's position.
@@ -842,7 +842,7 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
             }
         })
         .collect();
-    let executable = norm(&std::env::current_exe()?.to_string_lossy());
+    let executable = norm_literal_path(&std::env::current_exe()?.to_string_lossy());
     let installed = norm(&store.home.join("desktop-pilot.exe").to_string_lossy());
     // Scan discovery used to compare every parsed shortcut against the entire
     // saved catalog, repeatedly rebuilding each identity (quadratic work for
@@ -855,13 +855,13 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
     }
     for path in paths {
         ensure!(!cancelled(), "Background catalog scan cancelled");
-        if verified_saved_sources.contains(&norm(&path.to_string_lossy())) {
+        if verified_saved_sources.contains(&norm_literal_path(&path.to_string_lossy())) {
             continue;
         }
         if state
             .owned
             .iter()
-            .any(|o| norm(&o.path) == norm(&path.to_string_lossy()))
+            .any(|o| norm_literal_path(&o.path) == norm_literal_path(&path.to_string_lossy()))
         {
             continue;
         }
@@ -1019,7 +1019,7 @@ fn refresh_apps_once(store: &Store, cancelled: &impl Fn() -> bool) -> Result<boo
                 let Some((source, before_scan)) = scanned_sources.get(&app.id) else {
                     continue;
                 };
-                if source != &norm(&latest.source) {
+                if source != &norm_literal_path(&latest.source) {
                     continue;
                 }
                 // A manual reimport may update icon, name or launch metadata
@@ -1093,8 +1093,8 @@ fn reconcile_manual_locked(store: &Store) -> Result<()> {
         );
     }
     let apps = store.apps()?;
-    let sources: HashSet<_> = apps.iter().map(|a| norm(&a.source)).collect();
-    let managed: HashSet<_> = state.owned.iter().map(|o| norm(&o.path)).collect();
+    let sources: HashSet<_> = apps.iter().map(|a| norm_literal_path(&a.source)).collect();
+    let managed: HashSet<_> = state.owned.iter().map(|o| norm_literal_path(&o.path)).collect();
     let mut kept = Vec::new();
     let mut policies = Vec::new();
     let mut messages = Vec::new();
@@ -1102,7 +1102,7 @@ fn reconcile_manual_locked(store: &Store) -> Result<()> {
         safe_file(Path::new(&o.path), &desktop)?;
         let app = apps.iter().find(|a| a.id == o.app);
         let display_name = app.map_or(o.app.as_str(), |a| a.name.as_str()).to_owned();
-        if sources.contains(&norm(&o.path)) {
+        if sources.contains(&norm_literal_path(&o.path)) {
             // Repair old profiles that accidentally claimed an original copy.
             policies.push((o.app.clone(), Policy::Never));
             messages.push(format!(
@@ -1115,10 +1115,10 @@ fn reconcile_manual_locked(store: &Store) -> Result<()> {
             if let Some(expected) = &o.file_id {
                 for entry in std::fs::read_dir(&desktop)? {
                     let p = entry?.path();
-                    let key = norm(&p.to_string_lossy());
+                    let key = norm_literal_path(&p.to_string_lossy());
                     if sources.contains(&key)
                         || managed.contains(&key)
-                        || kept.iter().any(|item: &Owned| norm(&item.path) == key)
+                        || kept.iter().any(|item: &Owned| norm_literal_path(&item.path) == key)
                     {
                         continue;
                     }
@@ -1157,7 +1157,7 @@ fn reconcile_manual_locked(store: &Store) -> Result<()> {
         }
         o.file_id = actual_id;
         if let Some(l) = &snap
-            && let Some(item) = l.items.iter().find(|i| norm(&i.path) == norm(&o.path))
+            && let Some(item) = l.items.iter().find(|i| norm_literal_path(&i.path) == norm_literal_path(&o.path))
             && item.position != o.position
         {
             o.position = item.position.clone();
@@ -1176,7 +1176,7 @@ fn reconcile_manual_locked(store: &Store) -> Result<()> {
     let mut unique_paths: HashMap<String, usize> = HashMap::new();
     let mut unique: Vec<Owned> = Vec::with_capacity(kept.len());
     for owned in kept {
-        let key = norm(&owned.path);
+        let key = norm_literal_path(&owned.path);
         if let Some(&index) = unique_paths.get(&key) {
             ensure!(
                 unique[index] == owned,
@@ -1282,7 +1282,7 @@ pub(crate) fn reserve_positions(
         .owned
         .iter()
         .filter(|o| removed.contains(&o.app))
-        .map(|o| norm(&o.path))
+        .map(|o| norm_literal_path(&o.path))
         .collect();
     let mut result = Vec::new();
     for point in zone_candidates(layout, cfg)? {
@@ -1295,7 +1295,7 @@ pub(crate) fn reserve_positions(
             continue;
         }
         if layout.items.iter().any(|i| {
-            !retiring.contains(&norm(&i.path))
+            !retiring.contains(&norm_literal_path(&i.path))
                 && (i64::from(i.position.x) - x).abs() < sx - 2
                 && (i64::from(i.position.y) - y).abs() < sy - 2
         }) {
@@ -1538,7 +1538,7 @@ fn apply_locked(
                 .filter(|i| {
                     !tx.changes
                         .iter()
-                        .any(|c| c.kind == "remove" && norm(&c.file.path) == norm(&i.path))
+                        .any(|c| c.kind == "remove" && norm_literal_path(&c.file.path) == norm_literal_path(&i.path))
                 })
                 .map(|i| (i.path.clone(), i.position.clone()))
                 .collect();
@@ -1624,7 +1624,7 @@ pub fn setup_complete(store: &Store) -> Result<bool> {
 fn safe_staging(path: &Path, desktop: &Path) -> Result<()> {
     ensure!(
         path.parent().is_some_and(
-            |parent| norm(&parent.to_string_lossy()) == norm(&desktop.to_string_lossy())
+            |parent| norm_literal_path(&parent.to_string_lossy()) == norm_literal_path(&desktop.to_string_lossy())
         ) && path
             .file_name()
             .is_some_and(|name| name.to_string_lossy().starts_with(".desktop-pilot-"))
@@ -1658,7 +1658,7 @@ pub fn rollback(store: &Store) -> Result<String> {
         "Invalid transaction identifier"
     );
     let desktop = root(store)?;
-    let sources: HashSet<_> = store.apps()?.iter().map(|app| norm(&app.source)).collect();
+    let sources: HashSet<_> = store.apps()?.iter().map(|app| norm_literal_path(&app.source)).collect();
     let current_state: State = store.get("state")?;
     let current_layout = if real_desktop(store)? {
         Some(native::layout()?)
@@ -1687,7 +1687,7 @@ pub fn rollback(store: &Store) -> Result<String> {
         );
         let path = Path::new(&change.file.path);
         safe_file(path, &desktop)?;
-        let key = norm(&change.file.path);
+        let key = norm_literal_path(&change.file.path);
         ensure!(
             seen.insert(key.clone()),
             "Transaction contains conflicting shortcut paths"
@@ -1700,7 +1700,7 @@ pub fn rollback(store: &Store) -> Result<String> {
         ensure!(
             backup
                 .parent()
-                .is_some_and(|parent| norm(&parent.to_string_lossy())
+                .is_some_and(|parent| norm_literal_path(&parent.to_string_lossy())
                     == norm(&store.home.join("history").join(&id).to_string_lossy())),
             "Invalid transaction backup path"
         );
@@ -1719,7 +1719,7 @@ pub fn rollback(store: &Store) -> Result<String> {
             let actual_id = file_identity(path)?;
             if let Some(current) = current_state.owned.iter().find(|owned| {
                 owned.app == change.file.app
-                    && norm(&owned.path) == key
+                    && norm_literal_path(&owned.path) == key
                     && owned.sha == change.file.sha
                     && owned.since == change.file.since
                     && owned.file_id.is_some()
@@ -1797,7 +1797,7 @@ pub fn rollback(store: &Store) -> Result<String> {
     for change in tx.changes.iter().rev() {
         let path = Path::new(&change.file.path);
         if change.kind == "add" {
-            if !foreign_adds.contains(&norm(&change.file.path)) && path.try_exists()? {
+            if !foreign_adds.contains(&norm_literal_path(&change.file.path)) && path.try_exists()? {
                 remove_owned(path, &change.file)?;
             }
         } else if !path.try_exists()? {
@@ -1825,7 +1825,7 @@ pub fn rollback(store: &Store) -> Result<String> {
         wait_removed(
             &tx.changes
                 .iter()
-                .filter(|c| c.kind == "add" && !foreign_adds.contains(&norm(&c.file.path)))
+                .filter(|c| c.kind == "add" && !foreign_adds.contains(&norm_literal_path(&c.file.path)))
                 .map(|c| c.file.path.clone())
                 .collect::<Vec<_>>(),
         )?;
@@ -1835,7 +1835,7 @@ pub fn rollback(store: &Store) -> Result<String> {
             .filter(|item| {
                 !tx.changes.iter().any(|c| {
                     c.kind == "add"
-                        && !foreign_adds.contains(&norm(&c.file.path))
+                        && !foreign_adds.contains(&norm_literal_path(&c.file.path))
                         && norm(&c.file.path) == norm(&item.path)
                 })
             })
@@ -1847,7 +1847,7 @@ pub fn rollback(store: &Store) -> Result<String> {
                 if Path::new(&owned.path).exists()
                     && !positions
                         .iter()
-                        .any(|(path, _)| norm(path) == norm(&owned.path))
+                        .any(|(path, _)| norm_literal_path(path) == norm_literal_path(&owned.path))
                 {
                     positions.push((owned.path.clone(), owned.position.clone()));
                 }
@@ -1893,7 +1893,7 @@ pub fn rollback(store: &Store) -> Result<String> {
             owned = current.clone();
         }
         let path = Path::new(&owned.path);
-        if !path.try_exists()? || sources.contains(&norm(&owned.path)) {
+        if !path.try_exists()? || sources.contains(&norm_literal_path(&owned.path)) {
             continue;
         }
         safe_file(path, &desktop)?;
@@ -1914,7 +1914,7 @@ pub fn rollback(store: &Store) -> Result<String> {
             && let Some(item) = layout
                 .items
                 .iter()
-                .find(|item| norm(&item.path) == norm(&owned.path))
+                .find(|item| norm_literal_path(&item.path) == norm_literal_path(&owned.path))
         {
             owned.position = item.position.clone();
         }
@@ -1976,7 +1976,7 @@ pub fn command(store: &Store, action: &str) -> Result<String> {
             let l = native::layout()?;
             s.topology = l.topology;
             for o in &mut s.owned {
-                if let Some(i) = l.items.iter().find(|i| norm(&i.path) == norm(&o.path)) {
+                if let Some(i) = l.items.iter().find(|i| norm_literal_path(&i.path) == norm_literal_path(&o.path)) {
                     o.position = i.position.clone();
                 }
             }
@@ -4714,6 +4714,69 @@ mod tests {
         };
         assert!(reserve_positions(&l, &c, &State::default(), &[], 1).is_err());
     }
+    #[test]
+    fn literal_percent_named_desktop_sibling_is_not_an_allowed_write_target() {
+        with_store(|store| {
+            let username = std::env::var("USERNAME").expect("Windows user name is required");
+            assert!(!username.is_empty());
+            let parent = store.home.join("two-distinct-desktop-roots");
+            let desktop = parent.join(&username);
+            let literal_sibling = parent.join("%USERNAME%");
+            std::fs::create_dir_all(&desktop).unwrap();
+            std::fs::create_dir_all(&literal_sibling).unwrap();
+            let foreign = literal_sibling.join("personal.url");
+            let bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/personal\r\n";
+            std::fs::write(&foreign, bytes).unwrap();
+            let legitimate = desktop.join("managed.url");
+            std::fs::write(&legitimate, b"[InternetShortcut]\r\nURL=https://example.invalid/work\r\n").unwrap();
+
+            // The old environment-expanding normalizer treated these sibling
+            // directories as equal, although they are distinct disk locations.
+            assert_eq!(
+                norm(&desktop.to_string_lossy()),
+                norm(&literal_sibling.to_string_lossy())
+            );
+            assert!(safe_file(&legitimate, &desktop).is_ok());
+            assert!(safe_file(&foreign, &desktop).is_err());
+
+            let staged = literal_sibling.join(".desktop-pilot-foreign.tmp");
+            std::fs::write(&staged, b"unrelated").unwrap();
+            assert!(safe_staging(&staged, &desktop).is_err());
+            assert_eq!(std::fs::read(&foreign).unwrap(), bytes);
+            assert_eq!(std::fs::read(&staged).unwrap(), b"unrelated");
+        });
+    }
+
+    #[test]
+    fn discovery_keeps_literal_percent_directory_and_expanded_sibling_distinct() {
+        with_store(|store| {
+            let username = std::env::var("USERNAME").expect("Windows user name is required");
+            assert!(!username.is_empty());
+            let parent = store.home.join("two-discovery-roots");
+            let actual = parent.join(&username);
+            let literal = parent.join("%USERNAME%");
+            std::fs::create_dir_all(&actual).unwrap();
+            std::fs::create_dir_all(&literal).unwrap();
+            let first = actual.join("app.url");
+            let second = literal.join("app.url");
+            std::fs::write(&first, b"[InternetShortcut]\r\nURL=https://example.invalid/a\r\n").unwrap();
+            std::fs::write(&second, b"[InternetShortcut]\r\nURL=https://example.invalid/b\r\n").unwrap();
+            let mut warnings = Vec::new();
+            let found = discover_shortcut_roots(
+                &[(actual, "Desktop"), (literal, "Start menu")],
+                &mut warnings,
+                10,
+            )
+            .unwrap();
+            assert_eq!(found.len(), 2, "distinct real shortcut files must not be collapsed");
+            assert!(found.contains(&first));
+            assert!(found.contains(&second));
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert_eq!(std::fs::read(&first).unwrap().last(), Some(&b'\n'));
+            assert_eq!(std::fs::read(&second).unwrap().last(), Some(&b'\n'));
+        });
+    }
+
     #[test]
     fn traversal_is_rejected() {
         assert!(safe_file(Path::new(r"C:\elsewhere\x.lnk"), Path::new(r"C:\Desktop")).is_err());
