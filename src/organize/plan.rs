@@ -111,12 +111,14 @@ impl Dependencies {
             if normalized == norm(&root.to_string_lossy()) {
                 self.desktop_working_directory = true;
             } else if self.checked_working_directories.insert(normalized) {
-                let working = Path::new(&expanded);
+                // Keep extended local drive paths, but convert extended UNC
+                // to ordinary UNC before the network-drive rejection.
+                let working = crate::profile::ordinary_path(PathBuf::from(&expanded));
                 // Short (8.3), extended and aliased local paths can designate
                 // the very same Desktop even when their strings differ. Never
                 // touch remote directories while checking this dependency.
-                if working.is_absolute() && reject_network_root(working).is_ok() {
-                    self.desktop_working_directory = fs::directory(working)
+                if working.is_absolute() && reject_network_root(&working).is_ok() {
+                    self.desktop_working_directory = fs::directory(&working)
                         .and_then(|directory| fs::identity(&directory))
                         .is_ok_and(|id| id == root_id);
                 }
