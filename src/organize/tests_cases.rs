@@ -151,6 +151,63 @@ fn defaults_leave_documents_projects_code_and_manual_choices_untouched() {
 }
 
 #[test]
+fn literal_percent_names_keep_photo_and_its_xmp_sidecar_together() {
+    let f = Fixture::new();
+    // Both the parent and filename are real, already materialized filesystem
+    // names. Neither is an environment-variable template.
+    let literal_desktop = f.desktop.join("%USERNAME%");
+    disk::create_dir(&literal_desktop).unwrap();
+    f.store
+        .set("test_desktop", &literal_desktop.to_string_lossy())
+        .unwrap();
+    for (name, content) in [
+        ("Photo%USERNAME%.jpg", "original image"),
+        ("Photo%USERNAME%.jpg.xmp", "local editing metadata"),
+        ("Standalone 1.jpg", "first independent image"),
+        ("Standalone 2.jpg", "second independent image"),
+    ] {
+        disk::write(literal_desktop.join(name), content).unwrap();
+    }
+
+    let plan = f.plan(true);
+    assert!(
+        plan.skipped.iter().any(|item| {
+            item.name == "Photo%USERNAME%.jpg" && item.reason.contains("Associated file set")
+        }),
+        "the real analyzer must protect a photo with an adjacent sidecar"
+    );
+    assert!(
+        !plan
+            .items
+            .iter()
+            .any(|item| item.name == "Photo%USERNAME%.jpg")
+    );
+    assert_eq!(plan.summary(), (2, 1, 1));
+    let outcome = f.apply(&plan);
+    assert_eq!(outcome.moved, 2);
+    assert_eq!(
+        disk::read(literal_desktop.join("Photo%USERNAME%.jpg")).unwrap(),
+        b"original image"
+    );
+    assert_eq!(
+        disk::read(literal_desktop.join("Photo%USERNAME%.jpg.xmp")).unwrap(),
+        b"local editing metadata"
+    );
+    assert!(literal_desktop.join("Images/Standalone 1.jpg").is_file());
+    assert!(literal_desktop.join("Images/Standalone 2.jpg").is_file());
+
+    undo(&f.store, &f.last()).unwrap();
+    assert!(literal_desktop.join("Standalone 1.jpg").is_file());
+    assert!(literal_desktop.join("Standalone 2.jpg").is_file());
+    assert!(!literal_desktop.join("Images").exists());
+    assert_eq!(
+        disk::read(literal_desktop.join("Photo%USERNAME%.jpg")).unwrap(),
+        b"original image"
+    );
+    assert!(!status(&f.store).unwrap().pending);
+}
+
+#[test]
 fn opt_in_files_are_renamed_not_copied_and_same_file_edits_survive_undo() {
     let f = Fixture::new();
     for name in ["one.txt", "two.pdf"] {
