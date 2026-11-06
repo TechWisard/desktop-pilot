@@ -58,7 +58,7 @@ pub(crate) fn run(parent: &Path) -> Result<()> {
         );
         let result = apply_stopped(stopped, &plan, &AtomicBool::new(false))?;
         let mut saved: Config = stopped.get("config")?;
-        saved.max_replacements = 0;
+        saved.max_changes = 0;
         stopped.set("config", &saved)?;
         stopped.policy(&originals[0].0.id, Policy::Always)?;
         Ok(result)
@@ -72,7 +72,7 @@ pub(crate) fn run(parent: &Path) -> Result<()> {
         "Worker was not restarted after committed organization"
     );
     ensure!(
-        store.get::<Config>("config")?.max_replacements == 0
+        store.get::<Config>("config")?.max_changes == 0
             && store.app(&originals[0].0.id)?.policy == Policy::Always,
         "Worker restart overwrote a newer manual choice"
     );
