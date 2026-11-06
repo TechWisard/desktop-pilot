@@ -355,17 +355,16 @@ mod tests {
         assert_eq!((reads, waits), (3, 3));
         assert!(enumeration_changed(&error));
 
-        let unrelated: anyhow::Error = windows::core::Error::from_hresult(
-            windows::Win32::Foundation::E_FAIL,
-        )
-        .into();
+        let unrelated: anyhow::Error =
+            windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL).into();
         assert!(!enumeration_changed(&unrelated));
         let mut waits = 0;
         let error = native::retry_desktop_view(
-            || Err::<(), _>(windows::core::Error::from_hresult(
-                windows::Win32::Foundation::E_FAIL,
-            )
-            .into()),
+            || {
+                Err::<(), _>(
+                    windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL).into(),
+                )
+            },
             || {
                 waits += 1;
                 true
