@@ -725,12 +725,8 @@ fn full_bulk_import_keeps_both_percent_named_shortcuts_and_manual_ownership() {
         let expanded_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/expanded\r\n";
         std::fs::write(&literal, literal_bytes).unwrap();
         std::fs::write(&expanded, expanded_bytes).unwrap();
-        let paths = shortcut_paths(&format!(
-            "{}\n{}",
-            literal.display(),
-            expanded.display()
-        ))
-        .unwrap();
+        let paths =
+            shortcut_paths(&format!("{}\n{}", literal.display(), expanded.display())).unwrap();
         assert_eq!(paths, vec![literal.clone(), expanded.clone()]);
         let before = data(settings, anchor);
         let epoch: u64 = settings.store.get("catalog_epoch").unwrap();
@@ -748,12 +744,21 @@ fn full_bulk_import_keeps_both_percent_named_shortcuts_and_manual_ownership() {
         assert_eq!(data(settings, anchor), before);
         assert_eq!(std::fs::read(&literal).unwrap(), literal_bytes);
         assert_eq!(std::fs::read(&expanded).unwrap(), expanded_bytes);
-        assert_eq!(settings.store.get::<u64>("catalog_epoch").unwrap(), epoch + 1);
+        assert_eq!(
+            settings.store.get::<u64>("catalog_epoch").unwrap(),
+            epoch + 1
+        );
 
         let repeat = import(settings, paths).unwrap();
         assert!(repeat.failed.is_empty());
-        assert_eq!((repeat.created, repeat.updated, repeat.added.len()), (0, 0, 2));
-        assert_eq!(settings.store.get::<u64>("catalog_epoch").unwrap(), epoch + 1);
+        assert_eq!(
+            (repeat.created, repeat.updated, repeat.added.len()),
+            (0, 0, 2)
+        );
+        assert_eq!(
+            settings.store.get::<u64>("catalog_epoch").unwrap(),
+            epoch + 1
+        );
         assert_eq!(data(settings, anchor), before);
         assert_eq!(std::fs::read(&literal).unwrap(), literal_bytes);
         assert_eq!(std::fs::read(&expanded).unwrap(), expanded_bytes);
