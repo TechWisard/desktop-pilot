@@ -85,12 +85,8 @@ impl Drop for Cleanup {
     fn drop(&mut self) {
         unsafe {
             if let Some(path) = &self.old_desktop {
-                let _ = SHSetKnownFolderPath(
-                    &FOLDERID_Desktop,
-                    0,
-                    std::ptr::null_mut(),
-                    path.as_ptr(),
-                );
+                let _ =
+                    SHSetKnownFolderPath(&FOLDERID_Desktop, 0, std::ptr::null_mut(), path.as_ptr());
             }
             if let Some(path) = &self.registered {
                 let _ = CfUnregisterSyncRoot(path.as_ptr());
@@ -131,8 +127,13 @@ fn real_cloud_placeholder_and_redirected_desktop_preserve_local_choices() -> Res
     let old = native::desktop()?;
     cleanup.old_desktop = Some(wide(&old));
     unsafe {
-        SHSetKnownFolderPath(&FOLDERID_Desktop, 0, std::ptr::null_mut(), wide(&desktop).as_ptr())
-            .ok()?;
+        SHSetKnownFolderPath(
+            &FOLDERID_Desktop,
+            0,
+            std::ptr::null_mut(),
+            wide(&desktop).as_ptr(),
+        )
+        .ok()?;
     }
     // Resolve the actual per-user Known Folder, without a test path override.
     ensure!(
@@ -141,8 +142,13 @@ fn real_cloud_placeholder_and_redirected_desktop_preserve_local_choices() -> Res
         "The organizer did not resolve the redirected Known Folder"
     );
     unsafe {
-        SHSetKnownFolderPath(&FOLDERID_Desktop, 0, std::ptr::null_mut(), wide(&old).as_ptr())
-            .ok()?;
+        SHSetKnownFolderPath(
+            &FOLDERID_Desktop,
+            0,
+            std::ptr::null_mut(),
+            wide(&old).as_ptr(),
+        )
+        .ok()?;
     }
     cleanup.old_desktop = None;
     ensure!(native::desktop()? == old, "Known Folder restoration failed");
@@ -175,7 +181,7 @@ fn real_cloud_placeholder_and_redirected_desktop_preserve_local_choices() -> Res
     };
     let policies = Policies {
         size: std::mem::size_of::<Policies>() as u32,
-        hydration: [2, 0], // FULL permits a dehydrated file.
+        hydration: [2, 0],  // FULL permits a dehydrated file.
         population: [3, 0], // Namespace is already complete; no provider callback.
         in_sync: 0,
         hard_links: 0,
@@ -209,12 +215,18 @@ fn real_cloud_placeholder_and_redirected_desktop_preserve_local_choices() -> Res
     let remote_path = desktop.join("Remote.url");
     let remote_id = placeholder_identity(&remote_path)?;
     let attributes = remote_path.symlink_metadata()?.file_attributes();
-    ensure!(attributes & 0x400 != 0, "Expected a Cloud Files reparse object");
+    ensure!(
+        attributes & 0x400 != 0,
+        "Expected a Cloud Files reparse object"
+    );
     ensure!(fs::inspect(&remote_path, true).is_err());
     let mut originals = Vec::new();
     for name in ["Alpha", "Beta", "RareImportant"] {
         let path = desktop.join(format!("{name}.url"));
-        disk::write(&path, format!("[InternetShortcut]\r\nURL=https://example.invalid/{name}\r\n"))?;
+        disk::write(
+            &path,
+            format!("[InternetShortcut]\r\nURL=https://example.invalid/{name}\r\n"),
+        )?;
         let app = native::read_link(&path)?;
         store.put_app(&app)?;
         if name == "RareImportant" {
@@ -231,7 +243,10 @@ fn real_cloud_placeholder_and_redirected_desktop_preserve_local_choices() -> Res
     let store = Store::open(&home)?;
     ensure!(undo(&store, &operation)?.restored == 2);
     for (path, expected) in originals {
-        ensure!(fs::inspect(&path, true)? == expected, "Local original changed");
+        ensure!(
+            fs::inspect(&path, true)? == expected,
+            "Local original changed"
+        );
     }
     ensure!(placeholder_identity(&remote_path)? == remote_id);
     ensure!(remote_path.symlink_metadata()?.file_attributes() == attributes);
@@ -244,6 +259,8 @@ fn real_cloud_placeholder_and_redirected_desktop_preserve_local_choices() -> Res
     cleanup.registered = None;
     drop(store);
     disk::remove_dir_all(&home)?;
-    println!("CLOUD_ACCEPTANCE: real dehydrated placeholder untouched; two local moves/Undo; Known Folder restored; no account or network");
+    println!(
+        "CLOUD_ACCEPTANCE: real dehydrated placeholder untouched; two local moves/Undo; Known Folder restored; no account or network"
+    );
     Ok(())
 }
