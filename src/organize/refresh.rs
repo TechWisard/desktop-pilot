@@ -30,6 +30,15 @@ fn same_entry(left: &str, right: &str) -> bool {
     identity(pa).is_some_and(|id| identity(pb).as_ref() == Some(&id))
 }
 
+fn enumeration_changed(error: &anyhow::Error) -> bool {
+    // ItemCount and Item are separate COM calls. After a rename Explorer can
+    // remove an item between them and report E_BOUNDS. Retry the complete
+    // read, never silently drop that item or treat a partial view as vacant.
+    error
+        .downcast_ref::<windows::core::Error>()
+        .is_some_and(|error| error.code() == windows::Win32::Foundation::E_BOUNDS)
+}
+
 fn poll(
     before: &native::Layout,
     appeared: &[String],
@@ -38,7 +47,11 @@ fn poll(
     mut retry: impl FnMut() -> bool,
 ) -> Result<native::Layout> {
     loop {
-        let current = read()?;
+        let current = match read() {
+            Ok(current) => current,
+            Err(error) if enumeration_changed(&error) && retry() => continue,
+            Err(error) => return Err(error),
+        };
         ensure!(
             current.topology == before.topology && current.flags & 1 == 0,
             "Files are safe, but the display layout changed. Icon positions were not restored."
@@ -239,5 +252,95 @@ mod tests {
         assert_ne!(literal, actual);
         assert!(!same_entry(&literal, &actual));
         assert!(same_entry(&literal, &literal));
+    }
+
+    fn bounds_error() -> anyhow::Error {
+        windows::core::Error::from_hresult(windows::Win32::Foundation::E_BOUNDS).into()
+    }
+
+    #[test]
+    fn changing_explorer_enumeration_retries_the_whole_read_and_keeps_obstacles() {
+        let before = layout(&["Alpha.url", "Beta.url", "Personal"]);
+        let final_view = layout(&["Sites", "Personal"]);
+        let mut reads = vec![
+            Err(bounds_error().context("reading a changing Explorer view")),
+            Ok(before.clone()),
+            Err(bounds_error()),
+            Ok(final_view.clone()),
+        ]
+        .into_iter();
+        let mut waits = 0;
+        let actual = poll(
+            &before,
+            &[path("Sites")],
+            &[path("Alpha.url"), path("Beta.url")],
+            || reads.next().unwrap(),
+            || {
+                waits += 1;
+                waits < 4
+            },
+        )
+        .unwrap();
+        assert_eq!(waits, 3);
+        assert_eq!(actual.items.len(), final_view.items.len());
+        assert_eq!(actual.items[1].path, path("Personal"));
+        assert_eq!(actual.items[1].position, final_view.items[1].position);
+        assert!(reads.next().is_none());
+    }
+
+    #[test]
+    fn a_persistent_bounds_error_stays_an_error_after_the_bounded_wait() {
+        let mut waits = 0;
+        let error = poll(
+            &layout(&["Alpha.url"]),
+            &[path("Sites")],
+            &[path("Alpha.url")],
+            || Err(bounds_error()),
+            || {
+                waits += 1;
+                waits < 3
+            },
+        )
+        .unwrap_err();
+        assert_eq!(waits, 3);
+        assert!(enumeration_changed(&error));
+    }
+
+    #[test]
+    fn access_errors_and_changed_topology_are_not_disguised_as_enumeration_delays() {
+        let before = layout(&["Alpha.url"]);
+        let denied: anyhow::Error = windows::core::Error::from_hresult(
+            windows::Win32::Foundation::E_ACCESSDENIED,
+        )
+        .into();
+        assert!(!enumeration_changed(&denied));
+        let mut denied = Some(denied);
+        let error = poll(
+            &before,
+            &[path("Sites")],
+            &[],
+            || Err(denied.take().unwrap()),
+            || panic!("access errors must not be retried"),
+        )
+        .unwrap_err();
+        assert!(!enumeration_changed(&error));
+        let mut changed = layout(&["Sites"]);
+        changed.topology = "different-monitor".into();
+        let mut reads = vec![Err(bounds_error()), Ok(changed)].into_iter();
+        let mut waits = 0;
+        assert!(
+            poll(
+                &before,
+                &[path("Sites")],
+                &[],
+                || reads.next().unwrap(),
+                || {
+                    waits += 1;
+                    true
+                },
+            )
+            .is_err()
+        );
+        assert_eq!(waits, 1);
     }
 }
