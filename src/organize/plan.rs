@@ -354,7 +354,7 @@ pub fn analyze(
     let state: State = store.get("state")?;
     let apps = store.apps()?;
     let keep: HashSet<String> = store.get::<Vec<String>>(KEEP)?.into_iter().collect();
-    let legacy_managed_ids = legacy_managed_alias_ids(&root, &plan.root_id, &state);
+    let legacy_managed_ids = legacy_managed_alias_ids(&root, &root_id, &state);
     let managed_paths: HashSet<_> = state.owned.iter().map(|o| norm(&o.path)).collect();
     let managed_ids: HashSet<_> = state
         .owned
