@@ -2,7 +2,7 @@ name: Disposable desktop session probe
 on:
   push:
     branches: [integration/desktop-pilot-completion-20261106]
-    paths: [scripts/native-idle-host.ps1, .github/workflows/desktop-session-probe.yml]
+    paths: [scripts/native-idle-host.ps1, scripts/prepare-hosted-desktop.ps1, .github/workflows/desktop-session-probe.yml]
 permissions:
   contents: read
 jobs:
@@ -17,6 +17,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          ./scripts/prepare-hosted-desktop.ps1
           $root = Join-Path $env:RUNNER_TEMP ('test-idle-' + [guid]::NewGuid().ToString('N'))
           New-Item -ItemType Directory $root | Out-Null
           $ready = Join-Path $root 'ready.json'
