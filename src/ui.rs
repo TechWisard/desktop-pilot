@@ -251,7 +251,7 @@ pub struct Settings {
     organization_files: bool,
     organization_query: String,
     organization_page: usize,
-    organization_accept_confirm: bool,
+    organization_accept_for: Option<String>,
     organization_reset_confirm: bool,
     import_paths: String,
     import_error: String,
@@ -896,7 +896,7 @@ impl Settings {
             organization_files: false,
             organization_query: String::new(),
             organization_page: 0,
-            organization_accept_confirm: false,
+            organization_accept_for: None,
             organization_reset_confirm: false,
             import_paths: String::new(),
             import_error: String::new(),
@@ -1544,7 +1544,7 @@ impl Settings {
                         Ok(JobResult::OrganizationChanged(outcome, warning)) => {
                             self.organization_plan = None;
                             self.organization_projection = None;
-                            self.organization_accept_confirm = false;
+                            self.organization_accept_for = None;
                             self.refresh_layout(self.onboarding);
                             let mut message = if outcome.kept > 0
                                 && outcome.moved == 0
@@ -1587,7 +1587,7 @@ impl Settings {
                         Ok(JobResult::OrganizationAccepted(warning)) => {
                             self.organization_plan = None;
                             self.organization_projection = None;
-                            self.organization_accept_confirm = false;
+                            self.organization_accept_for = None;
                             self.refresh_layout(self.onboarding);
                             self.inform(
                                 warning.unwrap_or_else(|| {

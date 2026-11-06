@@ -283,6 +283,17 @@ impl Settings {
         let mut close = false;
         let available = !self.busy();
         let status = organize::status(&self.store);
+        // A confirmation applies to one exact recovery journal. Another
+        // Settings window may resolve that journal and start a newer operation
+        // while this dialog remains open. Never carry consent to a new ID.
+        let pending_id = status
+            .as_ref()
+            .ok()
+            .filter(|state| state.pending)
+            .and_then(|state| state.undo.as_deref());
+        if self.organization_accept_for.as_deref() != pending_id {
+            self.organization_accept_for = None;
+        }
         let feedback = self.organization_feedback();
         let running = self.job.as_ref().map(|job| match job.label {
             "Analyzing the desktop…" => t("Анализируем рабочий стол…", "Analyzing the desktop…"),
@@ -353,19 +364,22 @@ impl Settings {
                             {
                                 undo = Some(id.clone());
                             }
+                            let mut confirmed =
+                                self.organization_accept_for.as_deref() == Some(id.as_str());
                             ui.add_enabled(
                                 available,
                                 egui::Checkbox::new(
-                                    &mut self.organization_accept_confirm,
+                                    &mut confirmed,
                                     t(
                                         "Я проверил файлы и хочу оставить их в текущем расположении.",
                                         "I checked the files and want to keep their current locations.",
                                     ),
                                 ),
                             );
+                            self.organization_accept_for = confirmed.then(|| id.clone());
                             if ui
                                 .add_enabled(
-                                    available && self.organization_accept_confirm,
+                                    available && confirmed,
                                     egui::Button::new(t(
                                         "Оставить как есть",
                                         "Accept current locations",
@@ -616,7 +630,7 @@ impl Settings {
         }
         if close {
             self.organization_open = false;
-            self.organization_accept_confirm = false;
+            self.organization_accept_for = None;
         }
         if analyze {
             self.organization_analyze();
