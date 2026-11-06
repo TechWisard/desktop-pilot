@@ -60,7 +60,15 @@ impl CatalogCache {
         // PowerShell also uses single quotes around paths; Windows paths can
         // start with environment variables rather than explicit drive names.
         let path = pasted_path(&query_lower);
-        let normalized_query = norm(path).replace('\\', "/");
+        // Copied absolute paths are concrete filesystem names. A directory
+        // literally called %USERNAME% must not resolve to the user's folder.
+        // Keep expansion for an explicitly entered relative %SystemRoot% root.
+        let normalized_query = if Path::new(path).is_absolute() {
+            norm_literal_path(path)
+        } else {
+            norm(path)
+        }
+        .replace('\\', "/");
         // A copied absolute path is one continuous location. Splitting a
         // directory like "Team Alpha" into separate search words can also
         // match a different profile using fragments from unrelated fields.
@@ -78,7 +86,7 @@ impl CatalogCache {
             })
         });
         // Ordinary and extended Win32 drive/UNC names share one file identity.
-        let normalized_file_path = full_file_path.map(norm);
+        let normalized_file_path = full_file_path.map(norm_literal_path);
         // A copied web address identifies a shortcut's launch destination,
         // not a note mentioning that address or a longer, unrelated URL.
         // Keep the entered path/query case: only the HTTP(S) host is
@@ -104,7 +112,7 @@ impl CatalogCache {
             .enumerate()
             .filter(|(index, app)| {
                 let matches = if let Some(path) = normalized_file_path.as_deref() {
-                    let source = norm(&app.source);
+                    let source = norm_literal_path(&app.source);
                     if path.ends_with(".lnk") || path.ends_with(".url") {
                         source == path
                     } else {
