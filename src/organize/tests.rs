@@ -929,3 +929,76 @@ fn double_location_hardlink_keeps_interrupted_recovery_open_until_resolved() {
     assert_eq!(f.store.app(&beta.id).unwrap().source, beta.source);
     assert_eq!(fs::inspect(&organized_alpha, true).unwrap(), alpha_before);
 }
+
+#[test]
+fn analyzed_position_alias_must_belong_to_personal_desktop_not_public_hardlink() {
+    let f = Fixture::new();
+    let (original, _) = f.two_sites();
+    let source = Path::new(&original.source);
+    let stamp = fs::inspect(source, true).unwrap();
+    let root_id = fs::identity(&fs::directory(&f.desktop).unwrap()).unwrap();
+
+    // A Public Desktop icon may refer to the same NTFS file: file ID alone
+    // does not establish which Explorer grid position belongs to this source.
+    let public = f.home.join("Public");
+    disk::create_dir(&public).unwrap();
+    let foreign = public.join("Alpha.url");
+    disk::hard_link(source, &foreign).unwrap();
+    assert_eq!(fs::inspect(&foreign, true).unwrap().id, stamp.id);
+
+    let exact = std::collections::HashMap::new();
+    let mut aliases = std::collections::HashMap::from([(
+        "alpha.url".to_owned(),
+        vec![(foreign, Point { x: 111, y: 2 })],
+    )]);
+    assert_eq!(
+        plan::source_position(&exact, &aliases, source, &root_id, &stamp.id),
+        None,
+        "The Public Desktop hard link must never supply a personal icon position"
+    );
+
+    // Explorer can also spell the same local parent directory differently.
+    // Unlike the Public hard link, this verified path is a valid alias.
+    let alias = f.desktop.join(".").join("Alpha.url");
+    assert_ne!(
+        norm(&alias.to_string_lossy()),
+        norm(&source.to_string_lossy())
+    );
+    assert_eq!(fs::inspect(&alias, true).unwrap().id, stamp.id);
+    let correct = Point { x: 211, y: 2 };
+    aliases
+        .get_mut("alpha.url")
+        .unwrap()
+        .push((alias, correct.clone()));
+    assert_eq!(
+        plan::source_position(&exact, &aliases, source, &root_id, &stamp.id),
+        Some(correct.clone())
+    );
+
+    // Two matching view entries have no unambiguous owner. Retain the file
+    // without claiming a saved layout position that might be the wrong icon.
+    let second_alias = f.desktop.join("..").join("Desktop").join("Alpha.url");
+    assert_eq!(fs::inspect(&second_alias, true).unwrap().id, stamp.id);
+    aliases
+        .get_mut("alpha.url")
+        .unwrap()
+        .push((second_alias, Point { x: 311, y: 2 }));
+    assert_eq!(
+        plan::source_position(&exact, &aliases, source, &root_id, &stamp.id),
+        None
+    );
+
+    // An exact Explorer path remains authoritative even if alias entries are
+    // ambiguous; no file, policy, history or Explorer position is modified.
+    let exact = std::collections::HashMap::from([(
+        norm(&source.to_string_lossy()),
+        Point { x: 411, y: 2 },
+    )]);
+    assert_eq!(
+        plan::source_position(&exact, &aliases, source, &root_id, &stamp.id),
+        Some(Point { x: 411, y: 2 })
+    );
+    assert!(f.desktop.join("Alpha.url").is_file());
+    assert!(public.join("Alpha.url").is_file());
+    assert!(status(&f.store).unwrap().undo.is_none());
+}

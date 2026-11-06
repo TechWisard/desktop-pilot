@@ -213,6 +213,33 @@ pub(super) fn is_shortcut(path: &Path) -> bool {
         .is_some_and(|s| s.eq_ignore_ascii_case("lnk") || s.eq_ignore_ascii_case("url"))
 }
 
+/// Resolve the position of a personal Desktop source in Explorer's merged view.
+/// A Public Desktop hard link has the same file ID, but is a different icon:
+/// accept an alias only when its containing directory is the same Desktop.
+/// Multiple matching view entries are ambiguous and must not pick a position.
+pub(super) fn source_position(
+    positions: &HashMap<String, Point>,
+    aliases: &HashMap<String, Vec<(PathBuf, Point)>>,
+    path: &Path,
+    root_id: &str,
+    stamp_id: &str,
+) -> Option<Point> {
+    if let Some(position) = positions.get(&norm(&path.to_string_lossy())) {
+        return Some(position.clone());
+    }
+    let name = path.file_name()?.to_string_lossy().to_lowercase();
+    let mut matching = aliases.get(&name)?.iter().filter(|(candidate, _)| {
+        fs::matches_id(candidate, stamp_id).unwrap_or(false)
+            && candidate
+                .parent()
+                .and_then(|parent| fs::directory(parent).ok())
+                .and_then(|parent| fs::identity(&parent).ok())
+                .is_some_and(|id| id == root_id)
+    });
+    let (_, position) = matching.next()?;
+    matching.next().is_none().then(|| position.clone())
+}
+
 pub fn analyze(
     store: &Store,
     options: Options,
@@ -315,14 +342,7 @@ pub fn analyze(
             );
             dependencies.check(&path, shortcut)?;
             let (group, launch) = classify(&path, &plan.options)?;
-            let position = positions.get(&normalized).cloned().or_else(|| {
-                aliases.get(&name.to_lowercase()).and_then(|candidates| {
-                    candidates
-                        .iter()
-                        .find(|(alias, _)| fs::matches_id(alias, &stamp.id).unwrap_or(false))
-                        .map(|(_, position)| position.clone())
-                })
-            });
+            let position = source_position(&positions, &aliases, &path, &plan.root_id, &stamp.id);
             Ok(Item {
                 name: name.to_owned(),
                 group,
