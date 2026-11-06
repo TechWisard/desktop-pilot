@@ -432,7 +432,7 @@ pub(crate) fn apply_stopped(store: &Store, plan: &Plan, cancel: &AtomicBool) -> 
             !manual_paths.contains(&normalized),
             "A manual rule changed after preview; refresh the plan"
         );
-        dependencies.check(&path, plan::is_shortcut(&path))?;
+        dependencies.check(&path, plan::is_shortcut(&path), &actual.id)?;
         ensure!(
             plan::classify(&path, &plan.options)?
                 == (movement.item.group, movement.item.launch.clone()),
