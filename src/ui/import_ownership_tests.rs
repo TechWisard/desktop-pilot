@@ -711,3 +711,56 @@ fn pasted_utf8_signature_does_not_discard_a_valid_quoted_shortcut() {
         );
     });
 }
+
+#[test]
+fn full_bulk_import_keeps_both_percent_named_shortcuts_and_manual_ownership() {
+    with_profile(|settings, anchor| {
+        let username = std::env::var("USERNAME").expect("Windows username");
+        let literal = settings.store.home.join("%USERNAME%").join("Editor.url");
+        let expanded = settings.store.home.join(&username).join("Editor.url");
+        assert_ne!(literal, expanded);
+        std::fs::create_dir_all(literal.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(expanded.parent().unwrap()).unwrap();
+        let literal_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/literal\r\n";
+        let expanded_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/expanded\r\n";
+        std::fs::write(&literal, literal_bytes).unwrap();
+        std::fs::write(&expanded, expanded_bytes).unwrap();
+        let paths =
+            shortcut_paths(&format!("{}\n{}", literal.display(), expanded.display())).unwrap();
+        assert_eq!(paths, vec![literal.clone(), expanded.clone()]);
+        let before = data(settings, anchor);
+        let epoch: u64 = settings.store.get("catalog_epoch").unwrap();
+
+        // Exercise Settings' real async import path, COM setup, identity
+        // indexing and SQLite transaction, not only a miniature parser.
+        let first = import(settings, paths.clone()).unwrap();
+        assert!(first.failed.is_empty());
+        assert_eq!((first.created, first.updated, first.added.len()), (2, 0, 2));
+        assert_eq!(settings.store.apps().unwrap().len(), 3);
+        for path in [&literal, &expanded] {
+            let parsed = native::read_link(path).unwrap();
+            assert!(settings.store.app(&parsed.id).is_ok());
+        }
+        assert_eq!(data(settings, anchor), before);
+        assert_eq!(std::fs::read(&literal).unwrap(), literal_bytes);
+        assert_eq!(std::fs::read(&expanded).unwrap(), expanded_bytes);
+        assert_eq!(
+            settings.store.get::<u64>("catalog_epoch").unwrap(),
+            epoch + 1
+        );
+
+        let repeat = import(settings, paths).unwrap();
+        assert!(repeat.failed.is_empty());
+        assert_eq!(
+            (repeat.created, repeat.updated, repeat.added.len()),
+            (0, 0, 2)
+        );
+        assert_eq!(
+            settings.store.get::<u64>("catalog_epoch").unwrap(),
+            epoch + 1
+        );
+        assert_eq!(data(settings, anchor), before);
+        assert_eq!(std::fs::read(&literal).unwrap(), literal_bytes);
+        assert_eq!(std::fs::read(&expanded).unwrap(), expanded_bytes);
+    });
+}
