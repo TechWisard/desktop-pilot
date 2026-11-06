@@ -641,8 +641,8 @@ fn copied_literal_percent_directory_finds_only_its_own_saved_shortcut() {
     literal.policy = Policy::Never;
     expanded.policy = Policy::Always;
     expanded.note = format!("Unrelated note mentions {}", literal.source);
-    let literal_id = literal.id.clone();
-    let expanded_id = expanded.id.clone();
+    let literal_ids = vec![literal.id.clone()];
+    let expanded_ids = vec![expanded.id.clone()];
     let literal_source = literal.source.clone();
     let expanded_source = expanded.source.clone();
     let store = Store::open(&root.join("profile")).unwrap();
@@ -667,18 +667,18 @@ fn copied_literal_percent_directory_finds_only_its_own_saved_shortcut() {
         format!("'{}'", literal_source.replace('\\', "/")),
     ] {
         cache.update(&apps, &ranking, &query, 0, 0, &recent);
-        assert_eq!(found_ids(&cache), [literal_id.clone()], "{query}");
+        assert_eq!(found_ids(&cache), literal_ids, "{query}");
         cache.update(&apps, &ranking, &query, 3, 0, &recent);
-        assert_eq!(found_ids(&cache), [literal_id.clone()], "{query}");
+        assert_eq!(found_ids(&cache), literal_ids, "{query}");
     }
     for query in [
         format!(r#""{expanded_source}""#),
         expanded_source.replace('\\', "/"),
     ] {
         cache.update(&apps, &ranking, &query, 0, 0, &recent);
-        assert_eq!(found_ids(&cache), [expanded_id.clone()], "{query}");
+        assert_eq!(found_ids(&cache), expanded_ids, "{query}");
         cache.update(&apps, &ranking, &query, 2, 0, &recent);
-        assert_eq!(found_ids(&cache), [expanded_id.clone()], "{query}");
+        assert_eq!(found_ids(&cache), expanded_ids, "{query}");
     }
     cache.update(
         &apps,
