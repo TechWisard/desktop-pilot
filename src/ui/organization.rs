@@ -553,11 +553,7 @@ impl Settings {
                                 let label = if moving {
                                     format!("{}  →  {destination}", item.name)
                                 } else {
-                                    format!(
-                                        "{} — {}",
-                                        item.name,
-                                        t("Остаётся", "Stays in place")
-                                    )
+                                    format!("{} — {}", item.name, t("Остаётся", "Stays in place"))
                                 };
                                 ui.add_enabled(
                                     available,

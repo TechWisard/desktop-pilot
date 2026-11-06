@@ -639,7 +639,6 @@ fn recovery_confirmation_cannot_authorize_a_different_pending_journal() {
     assert!(!f.desktop.join("Sites").exists());
 }
 
-
 #[test]
 fn long_preview_uses_the_modal_wheel_at_normal_and_double_scale() {
     let mut fixture = Fixture::new();
