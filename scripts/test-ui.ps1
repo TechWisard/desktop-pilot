@@ -6,18 +6,32 @@ $report = [IO.Path]::GetFullPath($ReportDirectory)
 $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('test-pilot-ui-review-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($fixtureRoot) | Out-Null
 $records = [Collections.Generic.List[object]]::new()
+function Invoke-Fixture([string[]]$Arguments, [string]$Label, [int]$Timeout = 45000) {
+    $info = [Diagnostics.ProcessStartInfo]::new($exe)
+    $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    foreach ($argument in $Arguments) { $info.ArgumentList.Add($argument) }
+    $process = [Diagnostics.Process]::Start($info)
+    $output = $process.StandardOutput.ReadToEndAsync()
+    $errors = $process.StandardError.ReadToEndAsync()
+    if (-not $process.WaitForExit($Timeout)) { $process.Kill($true); throw "Native UI timed out: $Label" }
+    $stdout = $output.GetAwaiter().GetResult()
+    $stderr = $errors.GetAwaiter().GetResult()
+    [IO.File]::WriteAllText((Join-Path $report "$Label-stdout.txt"), $stdout)
+    [IO.File]::WriteAllText((Join-Path $report "$Label-stderr.txt"), $stderr)
+    if ($process.ExitCode -ne 0) { throw "Native UI failed: $Label ($($process.ExitCode)): $stderr" }
+}
 try {
     foreach ($language in @('ru', 'en')) {
         foreach ($scale in @(1, 2)) {
             foreach ($view in @('organization', 'organization-filtered', 'organization-files', 'organization-warning')) {
                 $name = "$language-$($scale * 100)-$view"
-                $home = Join-Path $fixtureRoot "test-$name"
-                [IO.Directory]::CreateDirectory($home) | Out-Null
-                $seed = Join-Path $home 'seed.json'
+                $profileHome = Join-Path $fixtureRoot "test-$name"
+                [IO.Directory]::CreateDirectory($profileHome) | Out-Null
+                $seed = Join-Path $profileHome 'seed.json'
                 [IO.File]::WriteAllText($seed, '[]')
-                $init = Start-Process -FilePath $exe -ArgumentList @('--init', ('"' + $seed + '"'), '--home', ('"' + $home + '"'), '--out', ('"' + (Join-Path $home 'initialized.json') + '"')) -PassThru
-                if (-not $init.WaitForExit(30000)) { $init.Kill(); throw "Profile initialization timed out: $name" }
-                if ($init.ExitCode -ne 0) { throw "Profile initialization failed: $name" }
+                Invoke-Fixture -Label "$name-init" -Arguments @('--init', $seed, '--home', $profileHome, '--out', (Join-Path $profileHome 'initialized.json'))
                 @'
 import json, pathlib, sqlite3, sys
 home = pathlib.Path(sys.argv[1])
@@ -40,19 +54,17 @@ with sqlite3.connect(str(databases[0])) as db:
               'test_layout': {'items': [], 'spacing': {'x': 80, 'y': 100}, 'origin': {'x': 0, 'y': 0},
                               'work': [0, 0, 1920, 1040], 'flags': 0, 'topology': 'isolated-fixture', 'icon_size': 32}}
     db.executemany('INSERT OR REPLACE INTO kv(k,v) VALUES (?,?)', [(k, json.dumps(v)) for k, v in values.items()])
-'@ | python - $home $language $scale $view
+'@ | python - $profileHome $language $scale $view
                 if ($LASTEXITCODE) { throw "Fixture setup failed: $name" }
                 $destination = Join-Path $report $name
-                $process = Start-Process -FilePath $exe -ArgumentList @('--ui-smoke', ('"' + $destination + '"'), '--home', ('"' + $home + '"')) -PassThru
-                if (-not $process.WaitForExit(45000)) { $process.Kill(); throw "Native UI screenshot timed out: $name" }
-                if ($process.ExitCode -ne 0) { throw "Native UI failed: $name" }
+                Invoke-Fixture -Label $name -Arguments @('--ui-smoke', $destination, '--home', $profileHome)
                 $image = Join-Path $destination "dialog-$view.png"
                 if (-not (Test-Path -LiteralPath $image) -or (Get-Item -LiteralPath $image).Length -lt 4096) { throw "Native screenshot is missing or empty: $name" }
                 foreach ($leaf in @('Project Alpha.url', 'Project Beta.url', 'Reference notes.url', 'Notes one.txt', 'Notes two.txt', 'Existing project')) {
-                    if (-not (Test-Path -LiteralPath (Join-Path (Join-Path $home 'Desktop') $leaf))) { throw "UI capture changed a fixture: $leaf" }
+                    if (-not (Test-Path -LiteralPath (Join-Path (Join-Path $profileHome 'Desktop') $leaf))) { throw "UI capture changed a fixture: $leaf" }
                 }
-                if (@(Get-ChildItem -LiteralPath (Join-Path $home 'Desktop')).Count -ne 6) { throw 'UI capture created an unexpected desktop object' }
-                $records.Add(@{view=$view; language=$language; scale=$scale; image="$name/dialog-$view.png"; sha256=(Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash.ToLowerInvariant(); exit_code=$process.ExitCode})
+                if (@(Get-ChildItem -LiteralPath (Join-Path $profileHome 'Desktop')).Count -ne 6) { throw 'UI capture created an unexpected desktop object' }
+                $records.Add(@{view=$view; language=$language; scale=$scale; image="$name/dialog-$view.png"; sha256=(Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash.ToLowerInvariant(); exit_code=0})
                 Write-Host "PASS native UI: $name"
             }
         }
