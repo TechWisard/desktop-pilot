@@ -602,3 +602,98 @@ fn pasted_web_address_selects_its_real_shortcut_not_notes_or_longer_links() {
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+
+#[test]
+fn copied_literal_percent_directory_finds_only_its_own_saved_shortcut() {
+    // An actual folder with percent signs and the expanded username folder
+    // coexist. Both contain a valid shortcut with the same filename.
+    let username = std::env::var("USERNAME").expect("Windows exposes USERNAME");
+    assert_ne!(username.to_ascii_lowercase(), "%username%");
+    let root = std::env::temp_dir().join(format!(
+        "desktop-pilot-literal-catalog-search-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let literal_dir = root.join("%USERNAME%");
+    let expanded_dir = root.join(&username);
+    std::fs::create_dir_all(&literal_dir).unwrap();
+    std::fs::create_dir_all(&expanded_dir).unwrap();
+    let literal_path = literal_dir.join("Rare Tool.url");
+    let expanded_path = expanded_dir.join("Rare Tool.url");
+    let literal_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/literal\r\n";
+    let expanded_bytes = b"[InternetShortcut]\r\nURL=https://example.invalid/expanded\r\n";
+    std::fs::write(&literal_path, literal_bytes).unwrap();
+    std::fs::write(&expanded_path, expanded_bytes).unwrap();
+
+    // Use the native shortcut reader and the same SQLite Store as Settings.
+    let mut literal = native::read_link(&literal_path).unwrap();
+    let mut expanded = native::read_link(&expanded_path).unwrap();
+    assert!(literal.valid && expanded.valid);
+    assert_ne!(literal.id, expanded.id);
+    assert_eq!(norm(&literal.source), norm(&expanded.source));
+    assert_ne!(
+        norm_literal_path(&literal.source),
+        norm_literal_path(&expanded.source)
+    );
+    literal.policy = Policy::Never;
+    expanded.policy = Policy::Always;
+    expanded.note = format!("Unrelated note mentions {}", literal.source);
+    let literal_id = literal.id.clone();
+    let expanded_id = expanded.id.clone();
+    let literal_source = literal.source.clone();
+    let expanded_source = expanded.source.clone();
+    let store = Store::open(&root.join("profile")).unwrap();
+    store.put_app(&literal).unwrap();
+    store.put_app(&expanded).unwrap();
+    let apps = store.apps().unwrap();
+    let ranking = rank(&apps, &store.days().unwrap(), &Config::default(), now());
+    let mut cache = CatalogCache::default();
+    cache.rebuild(&apps, &ranking);
+    let recent = HashSet::new();
+    let found_ids = |cache: &CatalogCache| {
+        cache
+            .indices
+            .iter()
+            .map(|&index| apps[index].id.clone())
+            .collect::<Vec<_>>()
+    };
+
+    for query in [
+        format!(r#""{literal_source}""#),
+        literal_source.replace('\\', "/"),
+        format!("'{}'", literal_source.replace('\\', "/")),
+    ] {
+        cache.update(&apps, &ranking, &query, 0, 0, &recent);
+        assert_eq!(found_ids(&cache), [literal_id.clone()], "{query}");
+        cache.update(&apps, &ranking, &query, 3, 0, &recent);
+        assert_eq!(found_ids(&cache), [literal_id.clone()], "{query}");
+    }
+    for query in [
+        format!(r#""{expanded_source}""#),
+        expanded_source.replace('\\', "/"),
+    ] {
+        cache.update(&apps, &ranking, &query, 0, 0, &recent);
+        assert_eq!(found_ids(&cache), [expanded_id.clone()], "{query}");
+        cache.update(&apps, &ranking, &query, 2, 0, &recent);
+        assert_eq!(found_ids(&cache), [expanded_id.clone()], "{query}");
+    }
+    cache.update(
+        &apps,
+        &ranking,
+        &format!("{}-missing.url", literal_source),
+        0,
+        0,
+        &recent,
+    );
+    assert!(cache.indices.is_empty());
+
+    assert_eq!(store.apps().unwrap(), apps, "search must not alter rules");
+    assert_eq!(std::fs::read(&literal_path).unwrap(), literal_bytes);
+    assert_eq!(std::fs::read(&expanded_path).unwrap(), expanded_bytes);
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
