@@ -342,8 +342,7 @@ pub fn analyze(
             );
             dependencies.check(&path, shortcut)?;
             let (group, launch) = classify(&path, &plan.options)?;
-            let position =
-                source_position(&positions, &aliases, &path, &plan.root_id, &stamp.id);
+            let position = source_position(&positions, &aliases, &path, &plan.root_id, &stamp.id);
             Ok(Item {
                 name: name.to_owned(),
                 group,
