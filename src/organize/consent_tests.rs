@@ -145,50 +145,57 @@ fn aliased_desktop_working_directory_protects_opt_in_files_at_preview_and_apply(
     let link = tools.join("Reader.lnk");
     native::make_link(&link, &executable, "", "", 0, "fixture").unwrap();
     let mut app = native::read_link(&link).unwrap();
-    app.cwd = f.desktop.join(".").to_string_lossy().into_owned();
-    assert_ne!(
-        norm(&app.cwd),
-        norm(&f.desktop.to_string_lossy()),
-        "the regression requires two distinct textual spellings"
-    );
-    assert_eq!(
-        fs::identity(&fs::directory(Path::new(&app.cwd)).unwrap()).unwrap(),
-        fs::identity(&fs::directory(&f.desktop).unwrap()).unwrap()
-    );
-    f.store.put_app(&app).unwrap();
-
-    let fresh = f.plan(true);
-    assert!(fresh.items.is_empty());
-    for name in ["Important.txt", "Other.pdf"] {
-        assert!(
-            fresh
-                .skipped
-                .iter()
-                .any(|item| { item.name == name && item.reason.contains("working directory") })
+    let root_alias = f.desktop.join(".");
+    for alias in [
+        root_alias.to_string_lossy().into_owned(),
+        format!(r"\\?\{}", root_alias.display()),
+    ] {
+        app.cwd = alias;
+        assert_ne!(
+            norm(&app.cwd),
+            norm(&f.desktop.to_string_lossy()),
+            "the regression requires two distinct textual spellings"
         );
-    }
+        let ordinary = crate::profile::ordinary_path(PathBuf::from(&app.cwd));
+        assert_eq!(
+            fs::identity(&fs::directory(&ordinary).unwrap()).unwrap(),
+            fs::identity(&fs::directory(&f.desktop).unwrap()).unwrap()
+        );
+        f.store.put_app(&app).unwrap();
 
-    // Another Settings window can have an older preview. Apply rechecks
-    // the same production dependency rules before moving even one file.
-    let before_apps = f.store.apps().unwrap();
-    let error = apply(&f.store, &old_preview, &AtomicBool::new(false))
-        .expect_err("an old preview cannot override a new desktop dependency");
-    assert!(
-        format!("{error:#}").contains("working directory"),
-        "{error:#}"
-    );
-    assert_eq!(f.store.apps().unwrap(), before_apps);
-    assert_eq!(
-        disk::read(f.desktop.join("Important.txt")).unwrap(),
-        b"user document"
-    );
-    assert_eq!(
-        disk::read(f.desktop.join("Other.pdf")).unwrap(),
-        b"user document"
-    );
-    assert!(!f.desktop.join("Documents").exists());
-    assert!(!status(&f.store).unwrap().pending);
-    assert!(status(&f.store).unwrap().undo.is_none());
+        let fresh = f.plan(true);
+        assert!(fresh.items.is_empty());
+        for name in ["Important.txt", "Other.pdf"] {
+            assert!(
+                fresh
+                    .skipped
+                    .iter()
+                    .any(|item| { item.name == name && item.reason.contains("working directory") })
+            );
+        }
+
+        // Another Settings window can have an older preview. Apply rechecks
+        // the same production dependency rules before moving even one file.
+        let before_apps = f.store.apps().unwrap();
+        let error = apply(&f.store, &old_preview, &AtomicBool::new(false))
+            .expect_err("an old preview cannot override a new desktop dependency");
+        assert!(
+            format!("{error:#}").contains("working directory"),
+            "{error:#}"
+        );
+        assert_eq!(f.store.apps().unwrap(), before_apps);
+        assert_eq!(
+            disk::read(f.desktop.join("Important.txt")).unwrap(),
+            b"user document"
+        );
+        assert_eq!(
+            disk::read(f.desktop.join("Other.pdf")).unwrap(),
+            b"user document"
+        );
+        assert!(!f.desktop.join("Documents").exists());
+        assert!(!status(&f.store).unwrap().pending);
+        assert!(status(&f.store).unwrap().undo.is_none());
+    }
 
     // After the user changes the app's working folder, a newly reviewed
     // plan can still be applied and completely undone.
