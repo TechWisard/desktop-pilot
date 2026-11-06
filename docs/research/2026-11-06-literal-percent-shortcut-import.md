@@ -12,7 +12,7 @@ Keep existing `norm` behavior for callers that intentionally accept unexpanded e
 
 ## Reproducible real-logic regression
 
-Create two different `.url` files in separate real Windows directories, `%USERNAME%` and its actual expanded username, with the same `Editor.url` leaf but different HTTP destinations. Paste both absolute paths. Before the change, duplicate filtering returned **1** path; after the change, it returns **2**. Verify both with the actual Windows shortcut reader and compare their original bytes after parsing. The existing quoted/UNC/case-insensitive duplicate tests remain applicable.
+Create two different `.url` files in separate real Windows directories, `%USERNAME%` and its actual expanded username, with the same `Editor.url` leaf but different HTTP destinations. Paste both absolute paths. Before the change, duplicate filtering returned **1** path; after the change, it returns **2**. Verify both with the actual Windows shortcut reader and compare their original bytes after parsing. A second regression additionally goes through the real asynchronous Settings import job, COM setup, SQLite transaction, preserves an existing manually owned shortcut and its history, and verifies a repeat import makes no extra changes. The existing quoted/UNC/case-insensitive duplicate tests remain applicable.
 
 This is an import-candidate count in a synthetic fixture, **not evidence of time saved** by actual users. Source and test need the normal Windows 2022/2025 strict CI. Live Windows 11 GUI, OneDrive, scaling, and the separate draft desktop organizer still require physical acceptance.
 
