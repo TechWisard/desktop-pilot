@@ -266,7 +266,11 @@ fn aliased_local_launch_or_icon_path_cannot_move_a_desktop_dependency() {
             } else {
                 alias.clone()
             };
-            app.icon = if as_icon { alias.clone() } else { String::new() };
+            app.icon = if as_icon {
+                alias.clone()
+            } else {
+                String::new()
+            };
             f.store.put_app(&app).unwrap();
 
             let fresh = f.plan(true);
@@ -287,7 +291,10 @@ fn aliased_local_launch_or_icon_path_cannot_move_a_desktop_dependency() {
             );
             assert_eq!(f.store.apps().unwrap(), before);
             assert_eq!(disk::read(&image).unwrap(), b"unchanged user image");
-            assert_eq!(disk::read(f.desktop.join("Other.png")).unwrap(), b"unchanged user image");
+            assert_eq!(
+                disk::read(f.desktop.join("Other.png")).unwrap(),
+                b"unchanged user image"
+            );
             assert!(!f.desktop.join("Images").exists());
             assert!(!status(&f.store).unwrap().pending);
             assert!(status(&f.store).unwrap().undo.is_none());
