@@ -2,7 +2,7 @@ name: Disposable desktop session probe
 on:
   push:
     branches: [integration/desktop-pilot-completion-20261106]
-    paths: [scripts/native-idle-host.ps1, scripts/prepare-hosted-desktop.ps1, .github/workflows/desktop-session-probe.yml]
+    paths: [scripts/native-idle-host.ps1, scripts/prepare-hosted-desktop.ps1, scripts/inspect-hosted-input.ps1, .github/workflows/desktop-session-probe.yml]
 permissions:
   contents: read
 jobs:
@@ -13,6 +13,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Inspect input desktop without changing security or session state
+        shell: pwsh
+        run: ./scripts/inspect-hosted-input.ps1
       - name: Inspect actual foreground and idle state
         shell: pwsh
         run: |
@@ -29,6 +32,7 @@ jobs:
           try {
             Start-Sleep -Seconds 45
             if (Test-Path "$ready.status.json") { Get-Content "$ready.status.json" }
+            ./scripts/inspect-hosted-input.ps1 -ReportDirectory target/input-review/after
             if (-not (Test-Path $ready)) { throw 'No real idle foreground was established' }
             Get-Content $ready
           } finally {
@@ -36,3 +40,11 @@ jobs:
             if (-not $process.WaitForExit(5000)) { $process.Kill($true) }
             Remove-Item $root -Recurse -Force
           }
+      - name: Input desktop evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: input-desktop-probe
+          path: target/input-review/
+          retention-days: 1
+          if-no-files-found: ignore
