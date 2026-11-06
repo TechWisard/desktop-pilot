@@ -58,6 +58,8 @@ pub(super) fn identity(file: &File) -> Result<String> {
 }
 
 pub(super) fn directory(path: &Path) -> Result<File> {
+    // Cloud-backed directory placeholders can disguise their reparse bit.
+    let _cloud = cloud_visibility::expose()?;
     let file = OpenOptions::new()
         .access_mode(0x80)
         .share_mode(3)
@@ -264,6 +266,8 @@ pub(super) fn operation_id() -> Result<String> {
 
 pub(super) fn remove_empty_directory(path: &Path, expected: &str) -> Result<()> {
     use windows::Win32::Storage::FileSystem::{FILE_DISPOSITION_INFO, FileDispositionInfo};
+    // Never remove a placeholder folder that became disguised after creation.
+    let _cloud = cloud_visibility::expose()?;
     let file = OpenOptions::new()
         .access_mode(0x80 | 0x0001_0000)
         .share_mode(3)

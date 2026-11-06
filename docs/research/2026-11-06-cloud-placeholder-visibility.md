@@ -26,3 +26,21 @@ The same test verifies actual Desktop Known Folder redirection and restores it, 
 - https://github.com/microsoft/win32metadata/blob/main/generation/WinSDK/RecompiledIdlHeaders/um/cfapi.h
 
 The acceptance finding is confirmed; final correctness requires the corrected fixture and the complete integrated CI to pass. Synthetic acceptance is not measured user time savings.
+
+## Additional directory boundary (pending rerun)
+
+The same compatibility mode also affects directory placeholders. Source review
+found that `fs::directory` and `fs::remove_empty_directory` checked reparse
+attributes without requesting exposed placeholder mode. A cloud-backed folder
+could consequently be treated as a normal destination, or a previously created
+folder could be removed after being converted into a disguised placeholder.
+
+Both operations now use the same thread-bound, restoring guard before acquiring
+a directory handle. The disposable Cloud Files acceptance fixture additionally
+creates a real directory placeholder and checks that neither operation accepts
+it in either Windows compatibility mode, while preserving its reparse identity
+and restoring thread mode. Normal local directory use is exercised by the
+existing apply/undo test under DISGUISE mode. This is a safety regression,
+not evidence about installed OneDrive providers or actual user productivity.
+
+Source: https://learn.microsoft.com/en-us/windows/win32/api/cfapi/nf-cfapi-cfcreateplaceholders

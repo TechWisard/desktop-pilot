@@ -301,6 +301,64 @@ fn real_cloud_placeholder_and_redirected_desktop_preserve_local_choices() -> Res
     ensure!(unsafe { RtlQueryThreadPlaceholderCompatibilityMode() } == 1);
     ensure!(store.get::<bool>("background_disabled")?);
     ensure!(!status(&store)?.pending);
+    // A cloud placeholder may also be a directory. In disguised mode it must
+    // never be accepted as a destination or removed by cleanup.
+    let cloud_folder_name = wide(Path::new("CloudFolder"));
+    let cloud_folder_identity = b"isolated-directory";
+    let mut cloud_folder = Placeholder {
+        name: cloud_folder_name.as_ptr(),
+        metadata: Metadata {
+            basic: FILE_BASIC_INFO {
+                FileAttributes: 0x10,
+                ..Default::default()
+            },
+            size: 0,
+        },
+        identity: cloud_folder_identity.as_ptr().cast(),
+        identity_length: cloud_folder_identity.len() as u32,
+        flags: 3, // Disable on-demand population and mark in sync.
+        result: HRESULT(0),
+        usn: 0,
+    };
+    let mut directories_created = 0;
+    unsafe {
+        CfCreatePlaceholders(
+            wide(&desktop).as_ptr(),
+            &mut cloud_folder,
+            1,
+            1,
+            &mut directories_created,
+        )
+        .ok()?;
+    }
+    cloud_folder.result.ok()?;
+    ensure!(directories_created == 1, "Cloud folder was not created");
+    let cloud_folder_path = desktop.join("CloudFolder");
+    ensure!(exposed_attributes(&cloud_folder_path)? & 0x400 != 0);
+    let original_folder_id = fs::identity(
+        &OpenOptions::new()
+            .access_mode(0x80)
+            .share_mode(7)
+            .custom_flags(0x0200_0000 | 0x0020_0000)
+            .open(&cloud_folder_path)?,
+    )?;
+    for mode in [1, 2] {
+        let _mode = TestMode::set(mode)?;
+        ensure!(
+            fs::directory(&cloud_folder_path).is_err(),
+            "Cloud folder was accepted as a destination in mode {mode}"
+        );
+        ensure!(
+            fs::remove_empty_directory(&cloud_folder_path, &original_folder_id).is_err(),
+            "Cloud folder was removed in mode {mode}"
+        );
+        ensure!(unsafe { RtlQueryThreadPlaceholderCompatibilityMode() } == mode);
+    }
+    ensure!(
+        exposed_attributes(&cloud_folder_path)? & 0x400 != 0,
+        "Cloud folder lost its placeholder identity"
+    );
+    disk::remove_dir(&cloud_folder_path)?;
     // No sync provider was connected and no data was ever supplied, so a
     // hydration-dependent code path could not have completed successfully.
     disk::remove_file(&remote_path)?;
