@@ -1,0 +1,37 @@
+name: Review temporary Actions storage
+on:
+  push:
+    branches: [maintenance/storage-review-20261106]
+permissions:
+  contents: read
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Inventory artifacts and caches; remove only the externally verified snapshot
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = TechWisard/desktop-pilot
+          echo 'ARTIFACTS_BEFORE'
+          gh api --paginate "repos/$GH_REPO/actions/artifacts?per_page=100" --jq '.artifacts[] | {id,name,size_in_bytes,expired,created_at,expires_at,digest,run_id:.workflow_run.id}'
+          echo 'CACHES_BEFORE'
+          gh api --paginate "repos/$GH_REPO/actions/caches?per_page=100" --jq '.actions_caches[] | {id,key,ref,size_in_bytes,last_accessed_at}'
+          # The exact downloaded ZIP was uploaded to an owner-only Drive folder,
+          # downloaded back, and verified byte-for-byte before this deletion.
+          # ZIP SHA-256: f686a6b83ce1165d35338ae710e7b41ea16bf4a8f22f94819d5614a8609792db
+          metadata=$(gh api "repos/$GH_REPO/actions/artifacts/13493111652")
+          printf '%s' "$metadata" | jq -e '.id == 13493111652 and .name == "integration-review-inputs" and .workflow_run.id == 42197859607 and .size_in_bytes == 3853659' > /dev/null
+          gh api --method DELETE "repos/$GH_REPO/actions/artifacts/13493111652"
+          echo 'DELETED_EXTERNALLY_VERIFIED_ARTIFACT 13493111652'
+          echo 'ARTIFACTS_AFTER'
+          gh api --paginate "repos/$GH_REPO/actions/artifacts?per_page=100" --jq '.artifacts[] | {id,name,size_in_bytes,expired,run_id:.workflow_run.id}'
+          echo 'CACHE_USAGE_AFTER'
+          gh api "repos/$GH_REPO/actions/cache/usage"
