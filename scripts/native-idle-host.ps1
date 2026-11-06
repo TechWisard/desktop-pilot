@@ -11,6 +11,7 @@ public static class IdleDesktopFixture {
     [StructLayout(LayoutKind.Sequential)]
     public struct LastInput { public uint Size; public uint Tick; }
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LastInput input);
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int key);
     [DllImport("kernel32.dll")] public static extern uint GetTickCount();
@@ -18,12 +19,13 @@ public static class IdleDesktopFixture {
         var input = new LastInput { Size = (uint)Marshal.SizeOf(typeof(LastInput)) };
         return GetLastInputInfo(ref input) ? (long)unchecked(GetTickCount() - input.Tick) : -1;
     }
-    public static bool KeyHeld() {
-        for (int key = 1; key <= 254; key++) if (GetAsyncKeyState(key) < 0) return true;
-        return false;
+    public static int HeldKey() {
+        for (int key = 1; key <= 254; key++) if (GetAsyncKeyState(key) < 0) return key;
+        return 0;
     }
 }
 '@
+Write-Host "Disposable desktop: session=$((Get-Process -Id $PID).SessionId) interactive=$([Environment]::UserInteractive)"
 $form = [Windows.Forms.Form]::new()
 $form.Text = 'Desktop Pilot native acceptance fixture'
 $form.ClientSize = [Drawing.Size]::new(460, 160)
@@ -35,21 +37,30 @@ $label.Text = 'Isolated acceptance session. No user files or settings are change
 $label.AutoSize = $false
 $label.Dock = [Windows.Forms.DockStyle]::Fill
 $form.Controls.Add($label)
-$form.Add_Shown({ $form.Activate() })
+$form.Add_Shown({
+    $form.TopMost = $true
+    $form.Activate()
+    $activated = [IdleDesktopFixture]::SetForegroundWindow($form.Handle)
+    $form.TopMost = $false
+    Write-Host "Fixture activation: $activated; handle=$($form.Handle)"
+})
 $started = [Diagnostics.Stopwatch]::StartNew()
 $timer = [Windows.Forms.Timer]::new()
-$timer.Interval = 100
+$timer.Interval = 1000
 $timer.Add_Tick({
     if ((Test-Path -LiteralPath $StopPath) -or $started.Elapsed.TotalSeconds -gt 180) {
         $form.Close()
         return
     }
     $idle = [IdleDesktopFixture]::IdleMilliseconds()
-    if (-not (Test-Path -LiteralPath $ReadyPath) -and
-        [IdleDesktopFixture]::GetForegroundWindow() -eq $form.Handle -and
-        $idle -ge 16000 -and -not [IdleDesktopFixture]::KeyHeld()) {
-        @{foreground_fixture=$true; idle_milliseconds=$idle; held_keys=$false; fullscreen=$false} |
-            ConvertTo-Json | Set-Content -LiteralPath $ReadyPath -Encoding utf8
+    $foreground = [IdleDesktopFixture]::GetForegroundWindow()
+    $key = [IdleDesktopFixture]::HeldKey()
+    $state = @{session=(Get-Process -Id $PID).SessionId; foreground=$foreground.ToInt64(); fixture=$form.Handle.ToInt64(); idle_milliseconds=$idle; held_key=$key; elapsed_seconds=[int]$started.Elapsed.TotalSeconds}
+    $json = $state | ConvertTo-Json -Compress
+    [IO.File]::WriteAllText("$ReadyPath.status.json", $json)
+    if ([int]$started.Elapsed.TotalSeconds % 5 -eq 0) { Write-Host $json }
+    if (-not (Test-Path -LiteralPath $ReadyPath) -and $foreground -eq $form.Handle -and $idle -ge 16000 -and $key -eq 0) {
+        [IO.File]::WriteAllText($ReadyPath, $json)
     }
 })
 try {

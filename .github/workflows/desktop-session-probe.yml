@@ -1,0 +1,37 @@
+name: Disposable desktop session probe
+on:
+  push:
+    branches: [integration/desktop-pilot-completion-20261106]
+    paths: [scripts/native-idle-host.ps1, .github/workflows/desktop-session-probe.yml]
+permissions:
+  contents: read
+jobs:
+  session:
+    runs-on: windows-11-arm
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Inspect actual foreground and idle state
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP ('test-idle-' + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory $root | Out-Null
+          $ready = Join-Path $root 'ready.json'
+          $stop = Join-Path $root 'stop'
+          $info = [Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path)
+          $info.UseShellExecute = $false
+          foreach ($arg in @('-NoProfile', '-STA', '-File', (Join-Path $pwd 'scripts/native-idle-host.ps1'), '-ReadyPath', $ready, '-StopPath', $stop)) { $info.ArgumentList.Add($arg) }
+          $process = [Diagnostics.Process]::Start($info)
+          try {
+            Start-Sleep -Seconds 45
+            if (Test-Path "$ready.status.json") { Get-Content "$ready.status.json" }
+            if (-not (Test-Path $ready)) { throw 'No real idle foreground was established' }
+            Get-Content $ready
+          } finally {
+            [IO.File]::WriteAllText($stop, 'stop')
+            if (-not $process.WaitForExit(5000)) { $process.Kill($true) }
+            Remove-Item $root -Recurse -Force
+          }
