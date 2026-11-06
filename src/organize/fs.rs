@@ -18,6 +18,8 @@ use windows::Win32::{
     },
 };
 
+pub(super) mod cloud_visibility;
+
 const UNSAFE_ATTRIBUTES: u32 = 0x2 | 0x4 | 0x400 | 0x1000 | 0x40000 | 0x400000;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -70,6 +72,7 @@ pub(super) fn directory(path: &Path) -> Result<File> {
 }
 
 pub(super) fn stamp(file: &mut File, hash_content: bool) -> Result<Stamp> {
+    let _cloud = cloud_visibility::expose()?;
     let before = file.metadata()?;
     ensure!(
         before.is_file() && before.file_attributes() & UNSAFE_ATTRIBUTES == 0,
@@ -103,12 +106,18 @@ pub(super) fn stamp(file: &mut File, hash_content: bool) -> Result<Stamp> {
     })
 }
 
-pub(super) fn inspect(path: &Path, shortcut: bool) -> Result<Stamp> {
+fn check_file_attributes(path: &Path) -> Result<()> {
     let metadata = path.symlink_metadata()?;
     ensure!(
         metadata.is_file() && metadata.file_attributes() & UNSAFE_ATTRIBUTES == 0,
         "Protected, cloud-placeholder and filesystem-link objects are left in place"
     );
+    Ok(())
+}
+
+pub(super) fn inspect(path: &Path, shortcut: bool) -> Result<Stamp> {
+    let _cloud = cloud_visibility::expose()?;
+    check_file_attributes(path)?;
     let mut file = OpenOptions::new()
         .read(true)
         .share_mode(1)
@@ -118,6 +127,7 @@ pub(super) fn inspect(path: &Path, shortcut: bool) -> Result<Stamp> {
 }
 
 pub(super) fn matches_id(path: &Path, expected: &str) -> Result<bool> {
+    let _cloud = cloud_visibility::expose()?;
     match OpenOptions::new()
         .access_mode(0x80)
         .share_mode(7)
@@ -151,6 +161,8 @@ pub(super) fn rename_file(
     apply: bool,
 ) -> Result<()> {
     leaf(target_name)?;
+    let _cloud = cloud_visibility::expose()?;
+    check_file_attributes(source)?;
     let mut file = OpenOptions::new()
         .read(true)
         .access_mode(0x8000_0000 | 0x0001_0000)

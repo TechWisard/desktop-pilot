@@ -73,6 +73,28 @@ unsafe extern "system" {
         path: *const u16,
     ) -> HRESULT;
 }
+#[link(name = "ntdll")]
+unsafe extern "system" {
+    fn RtlSetThreadPlaceholderCompatibilityMode(mode: i8) -> i8;
+    fn RtlQueryThreadPlaceholderCompatibilityMode() -> i8;
+}
+struct TestMode(i8);
+impl TestMode {
+    fn set(mode: i8) -> Result<Self> {
+        let previous = unsafe { RtlSetThreadPlaceholderCompatibilityMode(mode) };
+        ensure!(previous >= 0, "Cannot establish placeholder test mode");
+        Ok(Self(previous))
+    }
+}
+impl Drop for TestMode {
+    fn drop(&mut self) {
+        unsafe { RtlSetThreadPlaceholderCompatibilityMode(self.0) };
+    }
+}
+fn exposed_attributes(path: &Path) -> Result<u32> {
+    let _visible = TestMode::set(2)?;
+    Ok(path.symlink_metadata()?.file_attributes())
+}
 fn wide(path: &Path) -> Vec<u16> {
     path.as_os_str().encode_wide().chain(Some(0)).collect()
 }
@@ -221,12 +243,26 @@ fn real_cloud_placeholder_and_redirected_desktop_preserve_local_choices() -> Res
     ensure!(processed == 1, "No real cloud placeholder was created");
     let remote_path = desktop.join("Remote.url");
     let remote_id = placeholder_identity(&remote_path)?;
-    let attributes = remote_path.symlink_metadata()?.file_attributes();
+    let attributes = exposed_attributes(&remote_path)?;
     ensure!(
         attributes & 0x400 != 0,
-        "Expected a Cloud Files reparse object"
+        "Expected an exposed Cloud Files reparse object"
     );
-    ensure!(fs::inspect(&remote_path, true).is_err());
+    // A disguised placeholder looks ordinary to unprepared applications.
+    // Exercise the actual production checks in BOTH Windows compatibility
+    // modes, and require the explicit protected-object result before any read.
+    for mode in [1, 2] {
+        let _mode = TestMode::set(mode)?;
+        for hash_content in [false, true] {
+            let error = fs::inspect(&remote_path, hash_content).unwrap_err();
+            ensure!(error.to_string().contains("cloud-placeholder"), "{error:#}");
+            ensure!(unsafe { RtlQueryThreadPlaceholderCompatibilityMode() } == mode);
+        }
+        ensure!(!fs::matches_id(&remote_path, &remote_id)?);
+        ensure!(unsafe { RtlQueryThreadPlaceholderCompatibilityMode() } == mode);
+    }
+    let _disguised = TestMode::set(1)?;
+    ensure!(remote_path.symlink_metadata()?.file_attributes() & 0x400 == 0);
     let mut originals = Vec::new();
     for name in ["Alpha", "Beta", "RareImportant"] {
         let path = desktop.join(format!("{name}.url"));
@@ -240,10 +276,15 @@ fn real_cloud_placeholder_and_redirected_desktop_preserve_local_choices() -> Res
             store.policy(&app.id, Policy::Always)?;
         }
         originals.push((path.clone(), fs::inspect(&path, true)?));
+        ensure!(unsafe { RtlQueryThreadPlaceholderCompatibilityMode() } == 1);
     }
     let plan = analyze(&store, Options::default(), &config, &AtomicBool::new(false))?;
     ensure!(plan.summary() == (2, 1, 1), "Unexpected local proposals");
-    ensure!(plan.skipped.iter().any(|item| item.name == "Remote.url"));
+    ensure!(
+        plan.skipped
+            .iter()
+            .any(|item| item.name == "Remote.url" && item.reason.contains("cloud-placeholder"))
+    );
     ensure!(apply(&store, &plan, &AtomicBool::new(false))?.moved == 2);
     let operation = status(&store)?.undo.context("Missing local Undo")?;
     drop(store);
@@ -256,7 +297,8 @@ fn real_cloud_placeholder_and_redirected_desktop_preserve_local_choices() -> Res
         );
     }
     ensure!(placeholder_identity(&remote_path)? == remote_id);
-    ensure!(remote_path.symlink_metadata()?.file_attributes() == attributes);
+    ensure!(exposed_attributes(&remote_path)? == attributes);
+    ensure!(unsafe { RtlQueryThreadPlaceholderCompatibilityMode() } == 1);
     ensure!(store.get::<bool>("background_disabled")?);
     ensure!(!status(&store)?.pending);
     // No sync provider was connected and no data was ever supplied, so a
@@ -267,7 +309,7 @@ fn real_cloud_placeholder_and_redirected_desktop_preserve_local_choices() -> Res
     drop(store);
     disk::remove_dir_all(&home)?;
     println!(
-        "CLOUD_ACCEPTANCE: real dehydrated placeholder untouched; two local moves/Undo; Known Folder restored; no account or network"
+        "CLOUD_ACCEPTANCE: real dehydrated placeholder protected in both modes; two local moves/Undo; Known Folder and thread mode restored; no account or network"
     );
     Ok(())
 }
