@@ -1,4 +1,4 @@
-use crate::model::{App, Point, hash, norm};
+use crate::model::{App, Point, hash, norm_literal_path};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -746,7 +746,7 @@ pub fn position_many(positions: &[(String, Point)]) -> Result<()> {
     for (path, point) in positions {
         let matching: Vec<_> = entries
             .iter()
-            .filter(|(i, _)| norm(&i.path) == norm(path))
+            .filter(|(i, _)| norm_literal_path(&i.path) == norm_literal_path(path))
             .collect();
         ensure!(
             matching.len() == 1,
@@ -771,7 +771,7 @@ pub fn position_many(positions: &[(String, Point)]) -> Result<()> {
         let item = actual
             .items
             .iter()
-            .find(|i| norm(&i.path) == norm(path))
+            .find(|i| norm_literal_path(&i.path) == norm_literal_path(path))
             .context("Потерян объект после позиционирования")?;
         ensure!(
             (i64::from(item.position.x) - i64::from(point.x)).abs() <= 1
@@ -1133,7 +1133,7 @@ fn command_belongs_to_home(command: &str, home: &Path) -> bool {
     let Ok(args) = command_line_args(command) else {
         return false;
     };
-    let target = norm(&home.to_string_lossy());
+    let target = norm_literal_path(&home.to_string_lossy());
     // A legacy Run entry may use either spelling accepted by the launcher.
     // A conflicting or incomplete --home is not proof of ownership: never
     // remove another profile's startup registration on that basis.
@@ -1155,11 +1155,11 @@ fn command_belongs_to_home(command: &str, home: &Path) -> bool {
         explicit = Some(value);
     }
     if let Some(value) = explicit {
-        return norm(value) == target;
+        return norm_literal_path(value) == target;
     }
     args.first()
         .and_then(|value| Path::new(value).parent())
-        .is_some_and(|parent| norm(&parent.to_string_lossy()) == target)
+        .is_some_and(|parent| norm_literal_path(&parent.to_string_lossy()) == target)
 }
 
 fn startup_value(name: &str) -> Result<Option<String>> {
@@ -1214,7 +1214,7 @@ pub fn autostart(exe: &Path, home: &Path, enable: bool) -> Result<()> {
         let key = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
         let profile = format!(
             "DesktopPilot-{}",
-            &hash(norm(&home.to_string_lossy()).as_bytes())[..12]
+            &hash(norm_literal_path(&home.to_string_lossy()).as_bytes())[..12]
         );
         let name = wide(&profile);
         let legacy = startup_value("DesktopPilot")?
@@ -1304,7 +1304,7 @@ pub fn exclusive(name: &str, home: &Path) -> Result<Lock> {
 fn lock_name(name: &str, home: &Path) -> String {
     format!(
         "Local\\DesktopPilot-{name}-{}",
-        &hash(norm(&home.to_string_lossy()).as_bytes())[..12]
+        &hash(norm_literal_path(&home.to_string_lossy()).as_bytes())[..12]
     )
 }
 
@@ -1415,6 +1415,38 @@ mod tests {
         assert!(!interaction_key_held(|key| key == 0 || key == 0xFF));
     }
     #[test]
+    fn literal_percent_named_profiles_never_share_locks_or_startup_ownership() {
+        let username = std::env::var("USERNAME").expect("Windows user name is required");
+        assert!(!username.is_empty());
+        let actual = PathBuf::from(r"C:\Users\Pilot-Test").join(&username);
+        let literal = PathBuf::from(r"C:\Users\Pilot-Test").join("%USERNAME%");
+        assert_ne!(
+            norm_literal_path(&actual.to_string_lossy()),
+            norm_literal_path(&literal.to_string_lossy())
+        );
+        assert_ne!(
+            lock_name("changes", &actual),
+            lock_name("changes", &literal)
+        );
+
+        // A profile's legacy startup entry must not be claimed by a different
+        // profile just because a literal directory resembles an environment key.
+        let command = format!(
+            r#""C:\Tools\desktop-pilot.exe" --background --home "{}""#,
+            literal.display()
+        );
+        assert!(command_belongs_to_home(&command, &literal));
+        assert!(!command_belongs_to_home(&command, &actual));
+        assert_eq!(
+            lock_name("changes", &actual),
+            lock_name(
+                "changes",
+                &PathBuf::from(actual.to_string_lossy().to_uppercase())
+            )
+        );
+    }
+
+    #[test]
     fn desktop_namespace_children_keep_their_absolute_parsing_identity() {
         let _com = Com::new().unwrap();
         let expected = "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
@@ -1434,7 +1466,7 @@ mod tests {
             CoTaskMemFree(Some(absolute.cast()));
             item.unwrap()
         };
-        assert_eq!(norm(&item.path), norm(expected));
+        assert_eq!(norm_literal_path(&item.path), norm_literal_path(expected));
         assert!(!item.name.is_empty());
         assert_eq!(item.position.x, -100);
         assert_eq!(item.position.y, 42);
@@ -1482,7 +1514,10 @@ mod tests {
                 CoTaskMemFree(Some(absolute.cast()));
                 item.unwrap()
             };
-            assert_eq!(norm(&resolved.path), norm(&path.to_string_lossy()));
+            assert_eq!(
+                norm_literal_path(&resolved.path),
+                norm_literal_path(&path.to_string_lossy())
+            );
             assert!(resolved.name.contains("Общий файл"));
             assert_eq!(resolved.position.x, index as i32);
             assert_eq!(resolved.position.y, 42);
