@@ -82,6 +82,10 @@ pub(super) fn classify(path: &Path, options: &Options) -> Result<(Group, Option<
 #[derive(Default)]
 pub(super) struct Dependencies {
     paths: HashSet<String>,
+    // Only an opt-in file pass probes known local launch/icon paths. Exact
+    // string equality misses 8.3, dot-segment and extended-path aliases.
+    protected_local_ids: HashSet<String>,
+    checked_local_paths: HashSet<String>,
     arguments: HashSet<String>,
     sidecar_objects: HashSet<String>,
     // Avoid repeatedly opening the same local working-directory alias.
@@ -96,6 +100,30 @@ impl Dependencies {
             let path = Path::new(&expanded);
             if path.is_absolute() {
                 self.paths.insert(norm(&expanded));
+            }
+        }
+        if check_working_directory {
+            for value in [&app.target, &app.icon] {
+                let expanded = crate::model::expand_env(value);
+                if !self.checked_local_paths.insert(norm(&expanded)) {
+                    continue;
+                }
+                let path = crate::profile::ordinary_path(PathBuf::from(&expanded));
+                if !path.is_absolute() || reject_network_root(&path).is_err() {
+                    continue;
+                }
+                // Never identify a desktop dependency by file ID alone:
+                // another directory can contain a hard link to the same file.
+                // Only the actual personal Desktop parent can be disrupted by
+                // moving a Desktop directory entry.
+                let same_parent = path
+                    .parent()
+                    .and_then(|parent| fs::directory(parent).ok())
+                    .and_then(|parent| fs::identity(&parent).ok())
+                    .is_some_and(|id| id == root_id);
+                if same_parent && let Ok(stamp) = fs::inspect(&path, false) {
+                    self.protected_local_ids.insert(stamp.id);
+                }
             }
         }
         if !app.arguments.trim().is_empty() {
@@ -125,14 +153,14 @@ impl Dependencies {
             }
         }
     }
-    pub(super) fn check(&self, path: &Path, shortcut: bool) -> Result<()> {
+    pub(super) fn check(&self, path: &Path, shortcut: bool, file_id: &str) -> Result<()> {
         let normalized = norm(&path.to_string_lossy());
         ensure!(
             !self.sidecar_objects.contains(&normalized),
             "Associated file set: left in place"
         );
         ensure!(
-            !self.paths.contains(&normalized),
+            !self.paths.contains(&normalized) && !self.protected_local_ids.contains(file_id),
             "Another known shortcut depends on this object: left in place"
         );
         let name = path
@@ -340,7 +368,7 @@ pub fn analyze(
                 !manual_paths.contains(&normalized),
                 "Manual shortcut rule: left in place"
             );
-            dependencies.check(&path, shortcut)?;
+            dependencies.check(&path, shortcut, &stamp.id)?;
             let (group, launch) = classify(&path, &plan.options)?;
             let position = source_position(&positions, &aliases, &path, &plan.root_id, &stamp.id);
             Ok(Item {
