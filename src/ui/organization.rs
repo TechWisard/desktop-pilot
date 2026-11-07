@@ -322,29 +322,34 @@ impl Settings {
             "desktop-organization",
             760.0,
             |ui| {
-                ui.horizontal_wrapped(|ui| {
+                // Put the exit control beside the title at every zoom level.
+                // The single Apply/Remember action gets its own fixed row so
+                // neither control can wrap unpredictably in a long preview.
+                ui.horizontal(|ui| {
                     ui.heading(t("Навести порядок", "Organize desktop"));
-                    if let Some((moves, rejected)) = preview_action
-                        && primary(
-                            ui,
-                            available && (moves > 0 || rejected),
-                            if moves > 0 {
-                                t("Применить выбранное", "Apply selected moves")
-                            } else {
-                                t("Запомнить исключения", "Remember keep choices")
-                            },
-                        )
-                        .clicked()
-                    {
-                        apply = true;
-                    }
-                    if ui
-                        .add_enabled(available, egui::Button::new(t("Закрыть", "Close")))
-                        .clicked()
-                    {
-                        close = true;
-                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add_enabled(available, egui::Button::new(t("Закрыть", "Close")))
+                            .clicked()
+                        {
+                            close = true;
+                        }
+                    });
                 });
+                if let Some((moves, rejected)) = preview_action
+                    && primary(
+                        ui,
+                        available && (moves > 0 || rejected),
+                        if moves > 0 {
+                            t("Применить выбранное", "Apply selected moves")
+                        } else {
+                            t("Запомнить исключения", "Remember keep choices")
+                        },
+                    )
+                    .clicked()
+                {
+                    apply = true;
+                }
                 if let Some(label) = running {
                     ui.horizontal_wrapped(|ui| {
                         ui.spinner();

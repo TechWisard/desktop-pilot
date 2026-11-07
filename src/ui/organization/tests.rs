@@ -402,6 +402,79 @@ fn organization_modal_keeps_close_feedback_and_progress_inside_scaled_viewports(
 }
 
 #[test]
+fn title_close_and_one_confirmation_stay_visible_at_normal_and_double_scale() {
+    let mut f = Fixture::new();
+    f.analyze();
+    for language in ["ru", "en"] {
+        for scale in [1.0, 2.0] {
+            let ctx = egui::Context::default();
+            configure_style(&ctx);
+            ctx.set_zoom_factor(scale);
+            i18n::set(language);
+            f.app.config.language = language.into();
+            f.app.organization_open = true;
+            let viewport = egui::vec2(960.0 / scale, 720.0 / scale);
+            settle(&ctx, &mut f.app, viewport);
+            let output = render(&ctx, &mut f.app, viewport, Vec::new());
+            let painted = rendered_text(&output);
+            let find = |value: &str| {
+                painted
+                    .iter()
+                    .find(|(text, _)| text == value)
+                    .map(|(_, rect)| *rect)
+                    .unwrap_or_else(|| panic!("Missing visible header control {value} at {scale}x"))
+            };
+            let title = find(if language == "ru" {
+                "Навести порядок"
+            } else {
+                "Organize desktop"
+            });
+            let close = find(if language == "ru" { "Закрыть" } else { "Close" });
+            let action = find(if language == "ru" {
+                "Применить выбранное"
+            } else {
+                "Apply selected moves"
+            });
+            for rect in [title, close, action] {
+                assert!(
+                    ctx.screen_rect().contains_rect(rect),
+                    "{language} at {scale}x: header control outside viewport: {rect:?}"
+                );
+            }
+            assert!(
+                close.min.x > title.max.x,
+                "{language} at {scale}x: Close overlaps title horizontally"
+            );
+            assert!(
+                title.max.y >= close.min.y && close.max.y >= title.min.y,
+                "{language} at {scale}x: Close slipped onto another row"
+            );
+            assert!(
+                action.min.y >= title.max.y,
+                "{language} at {scale}x: Apply should have its own fixed row"
+            );
+            assert_eq!(
+                painted
+                    .iter()
+                    .filter(|(text, _)| text == if language == "ru" {
+                        "Применить выбранное"
+                    } else {
+                        "Apply selected moves"
+                    })
+                    .count(),
+                1,
+                "only one confirmation may be visible"
+            );
+            click(&ctx, &mut f.app, viewport, close.center());
+            assert!(!f.app.organization_open);
+            assert!(f.app.job.is_none());
+            assert!(f.desktop.join("Alpha.url").is_file());
+            assert!(f.desktop.join("Beta.url").is_file());
+        }
+    }
+}
+
+#[test]
 fn completed_operation_with_warnings_is_not_presented_as_unqualified_success() {
     let mut f = Fixture::new();
     f.app.inform(
