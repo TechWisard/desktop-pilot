@@ -111,7 +111,7 @@ impl CatalogCache {
                 .and_then(|_| entered_url.get(scheme.len()..))?;
             let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
             (!authority.is_empty() && !entered_url.chars().any(char::is_whitespace))
-                .then(|| target_identity(entered_url))
+                .then(|| web_lookup_identity(entered_url))
         });
         let words: Vec<_> = query_lower
             .split_whitespace()
@@ -139,7 +139,7 @@ impl CatalogCache {
                         source == path || target == path
                     }
                 } else if let Some(url) = exact_web_url.as_deref() {
-                    target_identity(&app.target) == url
+                    web_lookup_identity(&app.target) == url
                 } else {
                     absolute_path.map_or_else(
                         || words.iter().all(|word| self.search[*index].contains(word)),
@@ -362,6 +362,24 @@ fn pasted_path(value: &str) -> &str {
                 .and_then(|body| body.strip_suffix('\''))
         })
         .unwrap_or(trimmed)
+}
+
+// HTTP root URLs with an omitted path and an explicit "/" refer to the same
+// resource (RFC 9110, 4.2.3). Normalize only for catalog lookup: saved
+// shortcut identities and distinct manual policies must remain unchanged.
+fn web_lookup_identity(url: &str) -> String {
+    let identity = target_identity(url);
+    let Some((scheme, rest)) = identity.split_once("://") else {
+        return identity;
+    };
+    if scheme != "http" && scheme != "https" {
+        return identity;
+    }
+    let boundary = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    if rest[boundary..].starts_with('/') {
+        return identity;
+    }
+    format!("{scheme}://{}/{}", &rest[..boundary], &rest[boundary..])
 }
 
 fn shortcut_paths(value: &str) -> Result<Vec<PathBuf>> {
@@ -4885,6 +4903,91 @@ mod tests {
         }
         cache.update(&apps, &[], "Personal", 0, 0, &recent);
         assert_eq!(cache.indices, [0]);
+    }
+
+    #[test]
+    fn copied_web_root_urls_find_saved_profiles_without_broad_note_matches() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SERIAL: AtomicU64 = AtomicU64::new(0);
+        let home = std::env::temp_dir().join(format!(
+            "desktop-pilot-web-root-search-{}-{}",
+            std::process::id(),
+            SERIAL.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&home).unwrap();
+        let store = Store::open(&home).unwrap();
+        let make = |name: &str, target: &str, policy: Policy, note: &str| {
+            let path = home.join(format!("{name}.url"));
+            let contents = format!("[InternetShortcut]\\r\\nURL={target}\\r\\n");
+            std::fs::write(&path, contents.as_bytes()).unwrap();
+            let mut app = native::read_link(&path).unwrap();
+            app.policy = policy;
+            app.note = note.into();
+            store.put_app(&app).unwrap();
+            (app, path, contents)
+        };
+        let (work, work_path, work_bytes) = make(
+            "Work", "https://EXAMPLE.invalid?view=Work", Policy::Always, ""
+        );
+        let (project, project_path, project_bytes) = make(
+            "Project", "https://example.invalid/#Project", Policy::Never, ""
+        );
+        let (other, other_path, other_bytes) = make(
+            "Unrelated", "https://other.invalid/path", Policy::Auto,
+            "https://example.invalid/?view=Work"
+        );
+        let (http, http_path, http_bytes) = make(
+            "Insecure", "http://example.invalid/", Policy::Auto, ""
+        );
+        let saved = store.apps().unwrap();
+        let mut cache = CatalogCache::default();
+        cache.rebuild(&saved, &[]);
+        let none = HashSet::new();
+        let query = |cache: &mut CatalogCache, address: &str, filter: usize| {
+            cache.update(&saved, &[], address, filter, 0, &none);
+            cache.indices.iter().map(|&i| saved[i].id.clone()).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            query(&mut cache, "https://example.invalid/?view=Work", 0),
+            [work.id.clone()]
+        );
+        assert_eq!(
+            query(&mut cache, "https://EXAMPLE.invalid?view=Work", 2),
+            [work.id.clone()]
+        );
+        assert_eq!(
+            query(&mut cache, "https://example.invalid#Project", 3),
+            [project.id.clone()]
+        );
+        assert_eq!(
+            query(&mut cache, "https://example.invalid/#Project", 2),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            query(&mut cache, "http://EXAMPLE.invalid", 0),
+            [http.id.clone()]
+        );
+        assert!(query(&mut cache, "https://example.invalid/other", 0).is_empty());
+        assert!(query(&mut cache, "https://example.invalid/?view=work", 0).is_empty());
+        assert_ne!(work.id, project.id);
+        assert_ne!(work.id, other.id);
+        for (path, bytes) in [
+            (work_path, work_bytes),
+            (project_path, project_bytes),
+            (other_path, other_bytes),
+            (http_path, http_bytes),
+        ] {
+            assert_eq!(std::fs::read(path).unwrap(), bytes.as_bytes());
+        }
+        assert_eq!(store.apps().unwrap().len(), 4);
+        drop(store);
+        for attempt in 0..5 {
+            match std::fs::remove_dir_all(&home) {
+                Ok(()) => break,
+                Err(_) if attempt < 4 => std::thread::sleep(Duration::from_millis(50)),
+                Err(error) => panic!("cannot remove isolated test profile: {error}"),
+            }
+        }
     }
 
     #[test]
