@@ -684,10 +684,7 @@ fn long_preview_uses_the_modal_wheel_at_normal_and_double_scale() {
                 ],
             );
             let painted = rendered_text(&output);
-            if painted
-                .iter()
-                .any(|(text, _)| text.contains(&last_on_page))
-            {
+            if painted.iter().any(|(text, _)| text.contains(&last_on_page)) {
                 let (_, action) = painted
                     .iter()
                     .find(|(text, _)| text == "Apply selected moves")
