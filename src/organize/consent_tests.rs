@@ -164,9 +164,9 @@ fn literal_percent_shortcut_argument_keeps_the_exact_document_during_organizatio
 
     let plan = f.plan(true);
     assert!(
-        plan.skipped.iter().any(|item| {
-            item.name == name && item.reason.contains("Shortcut launch arguments")
-        }),
+        plan.skipped
+            .iter()
+            .any(|item| { item.name == name && item.reason.contains("Shortcut launch arguments") }),
         "the actual analyzer must explain why this exact file stays"
     );
     assert!(!plan.items.iter().any(|item| item.name == name));
