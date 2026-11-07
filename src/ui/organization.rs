@@ -518,7 +518,7 @@ impl Settings {
                                     "A suitable quick-shortcut area is not confirmed yet. Refresh the layout after organizing; reduce the shortcut count if necessary.",
                                 ));
                             }
-                            ui.label(t("Поиск по всему плану", "Search the entire plan"));
+                            ui.label(t("Поиск по имени или папке", "Search by name or folder"));
                             if ui
                                 .add(
                                     egui::TextEdit::singleline(&mut self.organization_query)
@@ -550,7 +550,9 @@ impl Settings {
                                 .iter()
                                 .enumerate()
                                 .filter(|(_, item)| {
-                                    query.is_empty() || item.name.to_lowercase().contains(&query)
+                                    query.is_empty()
+                                        || item.name.to_lowercase().contains(&query)
+                                        || plan.destination(item).to_lowercase().contains(&query)
                                 })
                                 .map(|(index, _)| index)
                                 .collect();
