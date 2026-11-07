@@ -221,3 +221,95 @@ fn copied_batch_launch_paths_identify_only_the_saved_target_and_policy() {
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn copied_windows_command_paths_keep_saved_profiles_and_manual_rules_distinct() {
+    // Windows' default PATHEXT includes more than .exe, .cmd and .bat.
+    // Exercise the real saved SQLite catalog; none of these fixtures is run.
+    let root = std::env::temp_dir().join(format!(
+        "desktop-pilot-command-target-search-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let folder = root.join("Rare Admin Tools");
+    std::fs::create_dir_all(&folder).unwrap();
+    let store = Store::open(&root.join("profile")).unwrap();
+    let extensions = ["com", "vbs", "vbe", "js", "jse", "wsf", "wsh", "msc"];
+    for &extension in &extensions {
+        let target = folder.join(format!("Inspect.{extension}"));
+        let unrelated = folder.join(format!("Inspect.{extension}.backup"));
+        std::fs::write(&target, b"synthetic command fixture").unwrap();
+        std::fs::write(&unrelated, b"unrelated backup").unwrap();
+        store
+            .put_app(&App {
+                id: format!("direct-{extension}"),
+                name: format!("Selected {extension} profile"),
+                source: format!(r"C:\Shortcuts\direct-{extension}.lnk"),
+                target: target.to_string_lossy().into_owned(),
+                policy: Policy::Always,
+                valid: true,
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .put_app(&App {
+                id: format!("note-{extension}"),
+                name: format!("Other {extension} profile"),
+                source: format!(r"C:\Shortcuts\note-{extension}.lnk"),
+                target: r"C:\Other\Unrelated.exe".into(),
+                note: target.to_string_lossy().into_owned(),
+                policy: Policy::Never,
+                valid: true,
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .put_app(&App {
+                id: format!("backup-{extension}"),
+                name: format!("Backup {extension} profile"),
+                source: format!(r"C:\Shortcuts\backup-{extension}.lnk"),
+                target: unrelated.to_string_lossy().into_owned(),
+                policy: Policy::Never,
+                valid: true,
+                ..Default::default()
+            })
+            .unwrap();
+    }
+
+    let apps = store.apps().unwrap();
+    let ranking = rank(&apps, &store.days().unwrap(), &Config::default(), now());
+    let mut catalog = CatalogCache::default();
+    catalog.rebuild(&apps, &ranking);
+    let recent = HashSet::new();
+    let mut matches = |query: &str, filter| {
+        catalog.update(&apps, &ranking, query, filter, 0, &recent);
+        catalog
+            .indices
+            .iter()
+            .map(|&index| apps[index].id.clone())
+            .collect::<Vec<_>>()
+    };
+    for &extension in &extensions {
+        let target = folder.join(format!("Inspect.{extension}"));
+        let quoted = format!(r#""{}""#, target.display());
+        let expected = vec![format!("direct-{extension}")];
+        assert_eq!(matches(&quoted, 0), expected, "quoted {extension}");
+        assert_eq!(matches(&quoted, 2), expected, "Always {extension}");
+        assert!(matches(&quoted, 3).is_empty(), "Never {extension}");
+        let slashes = target.to_string_lossy().replace('\\', "/");
+        assert_eq!(matches(&slashes, 0), expected, "slash {extension}");
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"synthetic command fixture",
+            "source bytes {extension}"
+        );
+    }
+    // Search by a word still finds both actual targets and documented notes.
+    assert!(matches("profile", 0).len() >= extensions.len() * 3);
+    assert_eq!(store.apps().unwrap(), apps);
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}

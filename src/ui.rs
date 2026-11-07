@@ -76,7 +76,7 @@ impl CatalogCache {
             || (normalized_query.as_bytes().get(1) == Some(&b':')
                 && normalized_query.as_bytes().get(2) == Some(&b'/')))
         .then_some(normalized_query.as_str());
-        // A complete copied shortcut or launch-script path identifies its exact source, not a
+        // A complete copied shortcut or Windows command target identifies its exact source, not a
         // backup name, an arbitrary note, or part of a different launch profile.
         // Keep partial directory searches intentionally broad. Several launch
         // profiles may legitimately share one executable target.
@@ -84,9 +84,17 @@ impl CatalogCache {
             path.rsplit('/').next().is_some_and(|leaf| {
                 leaf.ends_with(".lnk")
                     || leaf.ends_with(".url")
+                    || leaf.ends_with(".com")
                     || leaf.ends_with(".exe")
-                    || leaf.ends_with(".cmd")
                     || leaf.ends_with(".bat")
+                    || leaf.ends_with(".cmd")
+                    || leaf.ends_with(".vbs")
+                    || leaf.ends_with(".vbe")
+                    || leaf.ends_with(".js")
+                    || leaf.ends_with(".jse")
+                    || leaf.ends_with(".wsf")
+                    || leaf.ends_with(".wsh")
+                    || leaf.ends_with(".msc")
             })
         });
         // Ordinary and extended Win32 drive/UNC names share one file identity.
