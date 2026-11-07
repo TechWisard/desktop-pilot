@@ -1,0 +1,373 @@
+//! Actual Windows Cloud Files placeholders; never a user cloud account.
+use crate::organize::*;
+use std::{
+    ffi::c_void,
+    fs::{self as disk, OpenOptions},
+    os::windows::{ffi::OsStrExt, fs::MetadataExt, fs::OpenOptionsExt},
+};
+use windows::{
+    Win32::{Storage::FileSystem::FILE_BASIC_INFO, UI::Shell::FOLDERID_Desktop},
+    core::{GUID, HRESULT},
+};
+
+// cfapi.h uses USHORT wrappers for the two policy pairs. These declarations
+// are test-only and follow the Windows SDK ABI; no cloud API enters the app.
+#[repr(C)]
+struct Registration {
+    size: u32,
+    name: *const u16,
+    version: *const u16,
+    root_identity: *const c_void,
+    root_length: u32,
+    file_identity: *const c_void,
+    file_length: u32,
+    provider: GUID,
+}
+#[repr(C)]
+struct Policies {
+    size: u32,
+    hydration: [u16; 2],
+    population: [u16; 2],
+    in_sync: u32,
+    hard_links: u32,
+    management: u32,
+}
+#[repr(C)]
+struct Metadata {
+    basic: FILE_BASIC_INFO,
+    size: i64,
+}
+#[repr(C)]
+struct Placeholder {
+    name: *const u16,
+    metadata: Metadata,
+    identity: *const c_void,
+    identity_length: u32,
+    flags: u32,
+    result: HRESULT,
+    usn: i64,
+}
+#[link(name = "CldApi")]
+unsafe extern "system" {
+    fn CfRegisterSyncRoot(
+        path: *const u16,
+        registration: *const Registration,
+        policies: *const Policies,
+        flags: u32,
+    ) -> HRESULT;
+    fn CfUnregisterSyncRoot(path: *const u16) -> HRESULT;
+    fn CfCreatePlaceholders(
+        path: *const u16,
+        items: *mut Placeholder,
+        count: u32,
+        flags: u32,
+        processed: *mut u32,
+    ) -> HRESULT;
+}
+#[link(name = "Shell32")]
+unsafe extern "system" {
+    fn SHSetKnownFolderPath(
+        folder: *const GUID,
+        flags: u32,
+        token: *mut c_void,
+        path: *const u16,
+    ) -> HRESULT;
+}
+#[link(name = "ntdll")]
+unsafe extern "system" {
+    fn RtlSetThreadPlaceholderCompatibilityMode(mode: i8) -> i8;
+    fn RtlQueryThreadPlaceholderCompatibilityMode() -> i8;
+}
+struct TestMode(i8);
+impl TestMode {
+    fn set(mode: i8) -> Result<Self> {
+        let previous = unsafe { RtlSetThreadPlaceholderCompatibilityMode(mode) };
+        ensure!(previous >= 0, "Cannot establish placeholder test mode");
+        Ok(Self(previous))
+    }
+}
+impl Drop for TestMode {
+    fn drop(&mut self) {
+        unsafe { RtlSetThreadPlaceholderCompatibilityMode(self.0) };
+    }
+}
+fn exposed_attributes(path: &Path) -> Result<u32> {
+    let _visible = TestMode::set(2)?;
+    Ok(path.symlink_metadata()?.file_attributes())
+}
+fn wide(path: &Path) -> Vec<u16> {
+    path.as_os_str().encode_wide().chain(Some(0)).collect()
+}
+struct Cleanup {
+    home: PathBuf,
+    registered: Option<Vec<u16>>,
+    old_desktop: Option<Vec<u16>>,
+}
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        unsafe {
+            if let Some(path) = &self.old_desktop {
+                let _ =
+                    SHSetKnownFolderPath(&FOLDERID_Desktop, 0, std::ptr::null_mut(), path.as_ptr());
+            }
+            if let Some(path) = &self.registered {
+                let _ = CfUnregisterSyncRoot(path.as_ptr());
+            }
+        }
+        let _ = disk::remove_dir_all(&self.home);
+    }
+}
+fn placeholder_identity(path: &Path) -> Result<String> {
+    // Metadata-only handle; never request cloud hydration to inspect identity.
+    let handle = OpenOptions::new()
+        .access_mode(0x80)
+        .share_mode(7)
+        .custom_flags(0x0020_0000)
+        .open(path)?;
+    fs::identity(&handle)
+}
+
+#[test]
+#[ignore = "requires the explicit disposable Windows Cloud Files acceptance job"]
+fn real_cloud_placeholder_and_redirected_desktop_preserve_local_choices() -> Result<()> {
+    ensure!(
+        std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true")
+            && std::env::var("RUNNER_ENVIRONMENT").as_deref() == Ok("github-hosted")
+            && std::env::var("DESKTOP_PILOT_DISPOSABLE_DESKTOP").as_deref() == Ok("1"),
+        "Cloud acceptance requires a disposable hosted desktop"
+    );
+    let _com = native::Com::new()?;
+    let home = std::env::temp_dir().join(format!("test-cloud-organizer-{}", fs::operation_id()?));
+    disk::create_dir_all(home.join("SyncRoot").join("Desktop"))?;
+    // Hosted TEMP can contain an 8.3 parent alias. Compare the same real
+    // directory, not a short spelling against the organizer's canonical path.
+    let home = crate::profile::ordinary_path(disk::canonicalize(home)?);
+    let desktop = home.join("SyncRoot").join("Desktop");
+    let mut cleanup = Cleanup {
+        home: home.clone(),
+        registered: None,
+        old_desktop: None,
+    };
+    let store = Store::open(&home)?;
+    let old = native::desktop()?;
+    cleanup.old_desktop = Some(wide(&old));
+    unsafe {
+        SHSetKnownFolderPath(
+            &FOLDERID_Desktop,
+            0,
+            std::ptr::null_mut(),
+            wide(&desktop).as_ptr(),
+        )
+        .ok()?;
+    }
+    // Resolve the actual per-user Known Folder, without a test path override.
+    let resolved = root(&store)?;
+    let expected_id = fs::identity(&fs::directory(&desktop)?)?;
+    let resolved_id = fs::identity(&fs::directory(&resolved)?)?;
+    ensure!(
+        resolved_id == expected_id,
+        "Redirected Desktop differs: expected {}, resolved {}",
+        desktop.display(),
+        resolved.display()
+    );
+    unsafe {
+        SHSetKnownFolderPath(
+            &FOLDERID_Desktop,
+            0,
+            std::ptr::null_mut(),
+            wide(&old).as_ptr(),
+        )
+        .ok()?;
+    }
+    cleanup.old_desktop = None;
+    ensure!(native::desktop()? == old, "Known Folder restoration failed");
+
+    // The filesystem/cloud scenario is isolated from Explorer icon geometry;
+    // the separate live Explorer test covers the real view and positions.
+    store.set("test_desktop", &desktop.to_string_lossy())?;
+    store.set("setup_complete", &true)?;
+    store.set("background_disabled", &true)?;
+    let config = Config {
+        collect: false,
+        autostart: false,
+        learning_enabled: false,
+        respect_taskbar_pins: false,
+        ..Default::default()
+    };
+    store.set("config", &config)?;
+    let sync_root = wide(desktop.parent().unwrap());
+    let provider = wide(Path::new("Isolated organizer acceptance"));
+    let version = wide(Path::new("1"));
+    let registration = Registration {
+        size: std::mem::size_of::<Registration>() as u32,
+        name: provider.as_ptr(),
+        version: version.as_ptr(),
+        root_identity: std::ptr::null(),
+        root_length: 0,
+        file_identity: std::ptr::null(),
+        file_length: 0,
+        provider: GUID::from_u128(0x7cb3a7f1_fef4_495a_92dd_63b9df91fd62),
+    };
+    let policies = Policies {
+        size: std::mem::size_of::<Policies>() as u32,
+        hydration: [2, 0],  // FULL permits a dehydrated file.
+        population: [3, 0], // Namespace is already complete; no provider callback.
+        in_sync: 0,
+        hard_links: 0,
+        management: 0,
+    };
+    unsafe { CfRegisterSyncRoot(sync_root.as_ptr(), &registration, &policies, 2).ok()? };
+    cleanup.registered = Some(sync_root);
+    let remote_name = wide(Path::new("Remote.url"));
+    let identity = b"isolated-remote-shortcut";
+    let mut remote = Placeholder {
+        name: remote_name.as_ptr(),
+        metadata: Metadata {
+            basic: FILE_BASIC_INFO {
+                FileAttributes: 0x80,
+                ..Default::default()
+            },
+            size: 128,
+        },
+        identity: identity.as_ptr().cast(),
+        identity_length: identity.len() as u32,
+        flags: 2, // MARK_IN_SYNC, but deliberately not hydrated.
+        result: HRESULT(0),
+        usn: 0,
+    };
+    let mut processed = 0;
+    unsafe {
+        CfCreatePlaceholders(wide(&desktop).as_ptr(), &mut remote, 1, 1, &mut processed).ok()?;
+    }
+    remote.result.ok()?;
+    ensure!(processed == 1, "No real cloud placeholder was created");
+    let remote_path = desktop.join("Remote.url");
+    let remote_id = placeholder_identity(&remote_path)?;
+    let attributes = exposed_attributes(&remote_path)?;
+    ensure!(
+        attributes & 0x400 != 0,
+        "Expected an exposed Cloud Files reparse object"
+    );
+    // A disguised placeholder looks ordinary to unprepared applications.
+    // Exercise the actual production checks in BOTH Windows compatibility
+    // modes, and require the explicit protected-object result before any read.
+    for mode in [1, 2] {
+        let _mode = TestMode::set(mode)?;
+        for hash_content in [false, true] {
+            let error = fs::inspect(&remote_path, hash_content).unwrap_err();
+            ensure!(error.to_string().contains("cloud-placeholder"), "{error:#}");
+            ensure!(unsafe { RtlQueryThreadPlaceholderCompatibilityMode() } == mode);
+        }
+        ensure!(!fs::matches_id(&remote_path, &remote_id)?);
+        ensure!(unsafe { RtlQueryThreadPlaceholderCompatibilityMode() } == mode);
+    }
+    let _disguised = TestMode::set(1)?;
+    ensure!(remote_path.symlink_metadata()?.file_attributes() & 0x400 == 0);
+    let mut originals = Vec::new();
+    for name in ["Alpha", "Beta", "RareImportant"] {
+        let path = desktop.join(format!("{name}.url"));
+        disk::write(
+            &path,
+            format!("[InternetShortcut]\r\nURL=https://example.invalid/{name}\r\n"),
+        )?;
+        let app = native::read_link(&path)?;
+        store.put_app(&app)?;
+        if name == "RareImportant" {
+            store.policy(&app.id, Policy::Always)?;
+        }
+        originals.push((path.clone(), fs::inspect(&path, true)?));
+        ensure!(unsafe { RtlQueryThreadPlaceholderCompatibilityMode() } == 1);
+    }
+    let plan = analyze(&store, Options::default(), &config, &AtomicBool::new(false))?;
+    ensure!(plan.summary() == (2, 1, 1), "Unexpected local proposals");
+    ensure!(
+        plan.skipped
+            .iter()
+            .any(|item| item.name == "Remote.url" && item.reason.contains("cloud-placeholder"))
+    );
+    ensure!(apply(&store, &plan, &AtomicBool::new(false))?.moved == 2);
+    let operation = status(&store)?.undo.context("Missing local Undo")?;
+    drop(store);
+    let store = Store::open(&home)?;
+    ensure!(undo(&store, &operation)?.restored == 2);
+    for (path, expected) in originals {
+        ensure!(
+            fs::inspect(&path, true)? == expected,
+            "Local original changed"
+        );
+    }
+    ensure!(placeholder_identity(&remote_path)? == remote_id);
+    ensure!(exposed_attributes(&remote_path)? == attributes);
+    ensure!(unsafe { RtlQueryThreadPlaceholderCompatibilityMode() } == 1);
+    ensure!(store.get::<bool>("background_disabled")?);
+    ensure!(!status(&store)?.pending);
+    // A cloud placeholder may also be a directory. In disguised mode it must
+    // never be accepted as a destination or removed by cleanup.
+    let cloud_folder_name = wide(Path::new("CloudFolder"));
+    let cloud_folder_identity = b"isolated-directory";
+    let mut cloud_folder = Placeholder {
+        name: cloud_folder_name.as_ptr(),
+        metadata: Metadata {
+            basic: FILE_BASIC_INFO {
+                FileAttributes: 0x10,
+                ..Default::default()
+            },
+            size: 0,
+        },
+        identity: cloud_folder_identity.as_ptr().cast(),
+        identity_length: cloud_folder_identity.len() as u32,
+        flags: 3, // Disable on-demand population and mark in sync.
+        result: HRESULT(0),
+        usn: 0,
+    };
+    let mut directories_created = 0;
+    unsafe {
+        CfCreatePlaceholders(
+            wide(&desktop).as_ptr(),
+            &mut cloud_folder,
+            1,
+            1,
+            &mut directories_created,
+        )
+        .ok()?;
+    }
+    cloud_folder.result.ok()?;
+    ensure!(directories_created == 1, "Cloud folder was not created");
+    let cloud_folder_path = desktop.join("CloudFolder");
+    ensure!(exposed_attributes(&cloud_folder_path)? & 0x400 != 0);
+    let original_folder_id = fs::identity(
+        &OpenOptions::new()
+            .access_mode(0x80)
+            .share_mode(7)
+            .custom_flags(0x0200_0000 | 0x0020_0000)
+            .open(&cloud_folder_path)?,
+    )?;
+    for mode in [1, 2] {
+        let _mode = TestMode::set(mode)?;
+        ensure!(
+            fs::directory(&cloud_folder_path).is_err(),
+            "Cloud folder was accepted as a destination in mode {mode}"
+        );
+        ensure!(
+            fs::remove_empty_directory(&cloud_folder_path, &original_folder_id).is_err(),
+            "Cloud folder was removed in mode {mode}"
+        );
+        ensure!(unsafe { RtlQueryThreadPlaceholderCompatibilityMode() } == mode);
+    }
+    ensure!(
+        exposed_attributes(&cloud_folder_path)? & 0x400 != 0,
+        "Cloud folder lost its placeholder identity"
+    );
+    disk::remove_dir(&cloud_folder_path)?;
+    // No sync provider was connected and no data was ever supplied, so a
+    // hydration-dependent code path could not have completed successfully.
+    disk::remove_file(&remote_path)?;
+    unsafe { CfUnregisterSyncRoot(cleanup.registered.as_ref().unwrap().as_ptr()).ok()? };
+    cleanup.registered = None;
+    drop(store);
+    disk::remove_dir_all(&home)?;
+    println!(
+        "CLOUD_ACCEPTANCE: real dehydrated placeholder protected in both modes; two local moves/Undo; Known Folder and thread mode restored; no account or network"
+    );
+    Ok(())
+}

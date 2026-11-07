@@ -4334,18 +4334,18 @@ mod tests {
                 .unwrap();
 
             // A corrected clock must permit exactly one normal quiet review.
-            assert!(automatic_review(store, true).unwrap());
+            assert!(automatic_review_with_boundary(store, true, || {}).unwrap());
             let after: State = store.get("state").unwrap();
             assert!(after.last_review >= baseline && after.last_review <= now());
             assert!(after.owned.is_empty());
-            assert!(!automatic_review(store, true).unwrap());
+            assert!(!automatic_review_with_boundary(store, true, || {}).unwrap());
 
             // Small clock adjustments and a busy desktop are not a reason
             // to override the requested seven-day review interval.
             let mut future = after.clone();
             future.last_review = now() + 30;
             store.set("state", &future).unwrap();
-            assert!(!automatic_review(store, true).unwrap());
+            assert!(!automatic_review_with_boundary(store, true, || {}).unwrap());
 
             future.last_review = now() + 14 * 86400;
             store.set("state", &future).unwrap();
@@ -4423,7 +4423,7 @@ mod tests {
             let mut pending = original.clone();
             pending.last_review = future;
             store.set("state", &pending).unwrap();
-            assert!(!automatic_review(store, true).unwrap());
+            assert!(!automatic_review_with_boundary(store, true, || {}).unwrap());
             assert_eq!(store.get::<State>("state").unwrap().last_review, future);
 
             // Permission to adapt without collecting does not permit a
@@ -4431,7 +4431,7 @@ mod tests {
             // mode allows a later quiet review.
             config.automatic = true;
             store.set("config", &config).unwrap();
-            assert!(!automatic_review(store, true).unwrap());
+            assert!(!automatic_review_with_boundary(store, true, || {}).unwrap());
             assert_eq!(store.get::<State>("state").unwrap().last_review, future);
 
             config.collect = true;
@@ -4439,13 +4439,13 @@ mod tests {
             assert!(!automatic_review(store, false).unwrap());
             assert_eq!(store.get::<State>("state").unwrap().last_review, future);
 
-            assert!(automatic_review(store, true).unwrap());
+            assert!(automatic_review_with_boundary(store, true, || {}).unwrap());
             let after: State = store.get("state").unwrap();
             assert_eq!(after.owned.len(), 1);
             assert_eq!(after.owned[0].path, shortcut.path);
             assert_eq!(after.owned[0].file_id, shortcut.file_id);
             assert_eq!(std::fs::read(&shortcut.path).unwrap(), bytes);
-            assert!(!automatic_review(store, true).unwrap());
+            assert!(!automatic_review_with_boundary(store, true, || {}).unwrap());
         });
     }
 

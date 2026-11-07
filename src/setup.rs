@@ -108,6 +108,58 @@ pub fn stop_background(home: &Path) -> Result<()> {
     store.set("shutdown", &true)
 }
 
+/// Run a user-confirmed desktop organization while holding both the startup
+/// and background locks. No worker or auto-start may race the filesystem move.
+/// The previous worker is restarted only after the journal is fully resolved.
+pub(crate) fn with_organization_paused<T>(
+    home: &Path,
+    action: impl FnOnce(&Store) -> Result<T>,
+) -> Result<(T, Option<String>)> {
+    let _starting = native::exclusive("startup", home)?;
+    let store = Store::open(home)?;
+    let was_running = native::is_running("background", home)?;
+    let stopped = stop_for_change(&store)?;
+    let result = action(&store);
+    drop(stopped);
+    let warning = if was_running {
+        match crate::organize::status(&store) {
+            Ok(status) if status.pending => Some(
+                "Desktop organization needs recovery. Background work remains stopped until then."
+                    .to_owned(),
+            ),
+            Ok(_) if store.get::<bool>("background_disabled")? => None,
+            Ok(_) => start_background_locked(&store).err().map(|error| {
+                if result.is_ok() {
+                    format!("Changes are saved, but background work could not restart: {error:#}")
+                } else {
+                    format!(
+                        "Background work could not restart after a failed desktop operation: {error:#}"
+                    )
+                }
+            }),
+            Err(error) => Some(format!(
+                "Could not verify organization recovery status. Background work remains stopped: {error:#}"
+            )),
+        }
+    } else {
+        None
+    };
+    organization_result_with_warning(result, warning)
+}
+
+fn organization_result_with_warning<T>(
+    result: Result<T>,
+    warning: Option<String>,
+) -> Result<(T, Option<String>)> {
+    match result {
+        Ok(value) => Ok((value, warning)),
+        Err(error) => match warning {
+            Some(warning) => Err(error.context(warning)),
+            None => Err(error),
+        },
+    }
+}
+
 fn install_current(store: &Store) -> Result<PathBuf> {
     install_from(store, &std::env::current_exe()?)
 }
@@ -380,6 +432,10 @@ pub(crate) fn with_background_start_permission(
 }
 
 fn start_installed(store: &Store, exe: &Path) -> Result<()> {
+    ensure!(
+        !crate::organize::status(store)?.pending,
+        "Desktop organization needs recovery. Open Organize desktop in Settings before starting background work."
+    );
     let home = &store.home;
     if native::is_running("background", home)? {
         if store.get::<bool>("shutdown")? {
@@ -662,6 +718,77 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ))
+    }
+
+    #[test]
+    fn interrupted_desktop_organization_blocks_background_start_without_changing_permissions() {
+        let root = test_home("organization-startup");
+        let store = Store::open(&root).unwrap();
+        store
+            .set("organization.active.v1", &Some("123-456".to_owned()))
+            .unwrap();
+        let previous: bool = store.get("background_disabled").unwrap();
+        let error = start_installed(&store, &installed_exe(&root)).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("organization needs recovery"),
+            "{error:#}"
+        );
+        assert_eq!(store.get::<bool>("background_disabled").unwrap(), previous);
+        assert!(!native::is_running("background", &root).unwrap());
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn organizer_serialization_keeps_an_idle_profile_stopped_and_propagates_failures() {
+        let root = test_home("organization-serialization");
+        let store = Store::open(&root).unwrap();
+        store.set("setup_complete", &true).unwrap();
+        let (value, warning) = with_organization_paused(&root, |profile| {
+            profile.set("organizer_test_marker", &"safe")?;
+            Ok(7839)
+        })
+        .unwrap();
+        assert_eq!(value, 7839);
+        assert!(warning.is_none());
+        assert_eq!(
+            store.get::<String>("organizer_test_marker").unwrap(),
+            "safe"
+        );
+        let failure: Result<(usize, Option<String>)> =
+            with_organization_paused(&root, |_| anyhow::bail!("injected organizer error"));
+        assert!(
+            failure
+                .unwrap_err()
+                .to_string()
+                .contains("injected organizer error")
+        );
+        assert!(!native::is_running("background", &root).unwrap());
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_organization_keeps_original_error_and_background_recovery_warning() {
+        let failed: Result<(usize, Option<String>)> = organization_result_with_warning(
+            Err(anyhow::anyhow!("Move aborted after a source changed")),
+            Some("Background work remains stopped until recovery".into()),
+        );
+        let details = format!("{:#}", failed.unwrap_err());
+        assert!(
+            details.contains("Move aborted after a source changed"),
+            "{details}"
+        );
+        assert!(
+            details.contains("Background work remains stopped until recovery"),
+            "{details}"
+        );
+        let unchanged: Result<(usize, Option<String>)> =
+            organization_result_with_warning(Err(anyhow::anyhow!("Original failure")), None);
+        assert!(format!("{:#}", unchanged.unwrap_err()).contains("Original failure"));
+        let success =
+            organization_result_with_warning(Ok(7), Some("Restart warning".into())).unwrap();
+        assert_eq!(success, (7, Some("Restart warning".into())));
     }
 
     #[test]

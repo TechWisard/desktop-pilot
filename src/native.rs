@@ -6,6 +6,7 @@ use std::{
     mem::size_of,
     path::{Path, PathBuf},
     ptr::null_mut,
+    time::{Duration, Instant},
 };
 use windows::{
     Win32::{
@@ -522,6 +523,38 @@ pub struct Layout {
 fn default_icon_size() -> i32 {
     32
 }
+// Explorer can invalidate a child PIDL between Item and GetItemPosition.
+// E_FAIL is retryable only at that specific boundary, never for arbitrary COM calls.
+#[derive(Debug)]
+pub(crate) struct ExplorerPositionUnstable;
+
+impl std::fmt::Display for ExplorerPositionUnstable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Explorer icon position changed during enumeration")
+    }
+}
+impl std::error::Error for ExplorerPositionUnstable {}
+
+pub(crate) fn unstable_explorer_view(error: &anyhow::Error) -> bool {
+    error.is::<ExplorerPositionUnstable>()
+        || error
+            .downcast_ref::<windows::core::Error>()
+            .is_some_and(|error| error.code() == E_BOUNDS)
+}
+
+pub(crate) fn retry_desktop_view<T>(
+    mut read: impl FnMut() -> Result<T>,
+    mut pause: impl FnMut() -> bool,
+) -> Result<T> {
+    loop {
+        match read() {
+            Ok(value) => return Ok(value),
+            Err(error) if unstable_explorer_view(&error) && pause() => continue,
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 struct Desktop {
     view: IFolderView,
     view2: IFolderView2,
@@ -551,6 +584,22 @@ impl Desktop {
         }
     }
     fn items(&self) -> Result<Vec<(Item, Vec<u8>)>> {
+        // Read the entire view again instead of dropping an icon whose position
+        // was briefly unavailable. This also protects normal layout snapshots
+        // and the final position verification, not only organizer Undo polling.
+        let deadline = Instant::now() + Duration::from_millis(400);
+        retry_desktop_view(
+            || self.read_items(),
+            || {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(40));
+                true
+            },
+        )
+    }
+    fn read_items(&self) -> Result<Vec<(Item, Vec<u8>)>> {
         unsafe {
             let n = self.view.ItemCount(SVGIO_ALLVIEW)?;
             ensure!(
@@ -560,10 +609,24 @@ impl Desktop {
             let folder: IShellFolder = self.view.GetFolder()?;
             let mut out = Vec::new();
             for i in 0..n {
-                let p = self.view.Item(i)?;
+                let p = self.view.Item(i).with_context(|| {
+                    format!("Explorer view changed during enumeration at item {i}/{n}")
+                })?;
                 let result = (|| -> Result<_> {
                     ensure!(!p.is_null(), "Explorer returned an empty item identifier");
-                    let pos = self.view.GetItemPosition(p)?;
+                    let pos = self
+                        .view
+                        .GetItemPosition(p)
+                        .map_err(|error| {
+                            if error.code() == E_FAIL {
+                                anyhow::Error::new(error).context(ExplorerPositionUnstable)
+                            } else {
+                                error.into()
+                            }
+                        })
+                        .with_context(|| {
+                            format!("Explorer could not read desktop icon position at item {i}/{n}")
+                        })?;
                     // The view can reorder between COM calls. Resolve names
                     // from the exact child PIDL used for its position, never
                     // from a second lookup of the now potentially stale index.
@@ -759,12 +822,14 @@ pub fn position_many(positions: &[(String, Point)]) -> Result<()> {
         });
     }
     unsafe {
-        d.view.SelectAndPositionItems(
-            pointers.len() as u32,
-            pointers.as_ptr(),
-            Some(points.as_ptr()),
-            SVSI_POSITIONITEM.0 as u32,
-        )?;
+        d.view
+            .SelectAndPositionItems(
+                pointers.len() as u32,
+                pointers.as_ptr(),
+                Some(points.as_ptr()),
+                SVSI_POSITIONITEM.0 as u32,
+            )
+            .context("Explorer rejected positioning the selected desktop icons")?;
     }
     let actual = layout()?;
     for (path, point) in positions {
