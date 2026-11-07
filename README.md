@@ -22,6 +22,12 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It lear
 
 Installation is per user, by default in `%LOCALAPPDATA%\DesktopPilot`; no administrator access is required. Settings are available from the tray icon and the Start menu. This preview executable is unsigned; download only from this repository's Releases and verify the supplied SHA-256 checksum.
 
+## Improvements in 0.2.125
+
+**Pasting a complete path to an uncommon Windows command target now selects the correct saved launch profile.** Full paths to .com, .vbs, .vbe, .js, .jse, .wsf, .wsh and .msc now use the same exact target matching as .exe, .cmd and .bat. This prevents misleading matches from unrelated notes and backup filenames, including under **Always** / **Never** filters. Ordinary word searches remain broad. No application is executed during search, and existing files, policies, history and desktop positions are unchanged. [Production catalog and SQLite regression](docs/research/2026-11-07-windows-command-target-lookup.md).
+
+The separate **Organize desktop** feature is still under acceptance in [PR #211](https://github.com/TechWisard/desktop-pilot/pull/211) and is **not** included in this release.
+
 ## Improvements in 0.2.124
 
 **Pasting a full `.cmd` or `.bat` launch path now finds the correct saved shortcut and policy.** Previously a complete path was treated as general text and could also match another shortcut mentioning that path in its note or having a longer filename. Exact Windows batch-launcher lookup now respects the same rules as `.exe` paths, including **Always** and **Never** filters, while ordinary name/folder search stays broad. Saved shortcuts, launch settings, desktop positions and usage history remain unchanged. [Reproducible Windows/SQLite scenario](docs/research/2026-11-07-copied-batch-targets.md).
