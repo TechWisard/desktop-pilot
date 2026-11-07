@@ -1,17 +1,34 @@
+use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+// The shared default remains available to background threads that have not
+// selected a language. Each Settings/tray/UI thread keeps its own selection,
+// so a concurrent window cannot switch its labels between paint operations.
 static RUSSIAN: AtomicBool = AtomicBool::new(false);
+thread_local! {
+    static LOCAL_RUSSIAN: Cell<Option<bool>> = const { Cell::new(None) };
+}
 pub fn set(language: &str) {
-    RUSSIAN.store(language == "ru", Ordering::Relaxed);
+    let russian = language == "ru";
+    RUSSIAN.store(russian, Ordering::Relaxed);
+    LOCAL_RUSSIAN.with(|local| local.set(Some(russian)));
+}
+fn is_russian() -> bool {
+    LOCAL_RUSSIAN.with(|local| {
+        local
+            .get()
+            .unwrap_or_else(|| RUSSIAN.load(Ordering::Relaxed))
+    })
 }
 pub fn text<'a>(ru: &'a str, en: &'a str) -> &'a str {
-    if RUSSIAN.load(Ordering::Relaxed) {
+    if is_russian() {
         ru
     } else {
         en
     }
 }
 pub fn runtime(value: &str) -> String {
-    translate(value, RUSSIAN.load(Ordering::Relaxed))
+    translate(value, is_russian())
 }
 fn translate(value: &str, russian: bool) -> String {
     // Keep instructions in older history entries aligned with the current UI.
@@ -1073,5 +1090,34 @@ mod evidence_reason_translation_tests {
             assert_eq!(translate(ru, false), en);
             assert_eq!(translate(en, true), ru);
         }
+    }
+}
+
+#[cfg(test)]
+mod language_isolation_tests {
+    use super::{runtime, set, text};
+    use std::sync::{Arc, Barrier};
+
+    #[test]
+    fn simultaneous_windows_keep_their_own_visible_language() {
+        // Both UI threads have finished selecting their language before either
+        // paints. A single process-wide flag cannot satisfy both assertions.
+        let boundary = Arc::new(Barrier::new(2));
+        let first = Arc::clone(&boundary);
+        let second = Arc::clone(&boundary);
+        let russian = std::thread::spawn(move || {
+            set("ru");
+            first.wait();
+            assert_eq!(text("Русский", "English"), "Русский");
+            assert_eq!(runtime("Settings saved."), "Настройки сохранены.");
+        });
+        let english = std::thread::spawn(move || {
+            set("en");
+            second.wait();
+            assert_eq!(text("Русский", "English"), "English");
+            assert_eq!(runtime("Настройки сохранены."), "Settings saved.");
+        });
+        russian.join().unwrap();
+        english.join().unwrap();
     }
 }
