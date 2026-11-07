@@ -13,6 +13,16 @@ pub fn now() -> i64 {
 pub fn norm(s: &str) -> String {
     norm_literal_path(&expand_env(s))
 }
+/// A saved absolute target or working directory is a literal filesystem
+/// location, even if one component happens to look like %USERNAME%.
+/// Only relative launch templates explicitly need environment expansion.
+pub fn path_identity(s: &str) -> String {
+    if std::path::Path::new(s).is_absolute() {
+        norm_literal_path(s)
+    } else {
+        norm(s)
+    }
+}
 /// Normalize an already literal Windows path without interpreting filename
 /// components that happen to look like environment-variable references.
 /// Expansion, when wanted, belongs at the input boundary before this call.
@@ -80,7 +90,7 @@ pub fn target_identity(target: &str) -> String {
         };
         return format!("{}://{authority}{suffix}", scheme.to_ascii_lowercase());
     }
-    norm(target)
+    path_identity(target)
 }
 pub fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -234,7 +244,7 @@ impl App {
             "{}\n{}\n{}",
             target_identity(&self.target),
             self.arguments.trim(),
-            norm(&self.cwd)
+            path_identity(&self.cwd)
         )
     }
     pub fn assign_id(&mut self) {
@@ -1508,3 +1518,6 @@ mod offline_explicit_choice_tests;
 
 #[cfg(test)]
 mod manual_slot_conflict_tests;
+
+#[cfg(test)]
+mod literal_percent_tests;

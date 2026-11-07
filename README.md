@@ -16,9 +16,21 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It has 
 
 To update an existing installation, open the executable from the new archive. Your local profile, rules and history are retained. The executable is unsigned; verify its source and checksum before opening it.
 
-**Development branch:** The desktop organization feature described below is not included in the currently published 0.2.124 download. It is undergoing final acceptance here.
+**Development branch:** The desktop organization feature described below is not included in the currently published 0.2.126 download. It is undergoing final acceptance here.
 
 ## Stable shortcut search fixes retained in this branch
+
+## Improvements in 0.2.126
+
+**Full Windows launch paths now preserve the right shortcut, not another project's lookalike.** If a folder is literally named `%USERNAME%`, it is distinct from the account-name folder. Previously these different application targets and their working directories could be assigned the same identity; native availability checks could also inspect the wrong file. The fix preserves separate **Always** / **Never** choices and correctly recognizes offline and restored targets. Relative `%SystemRoot%` launch templates continue to work. Existing shortcuts, layout, profiles and usage history are not rewritten. [Filesystem, SQLite and selection regression](docs/research/2026-11-07-absolute-target-identity.md).
+
+The desktop organization feature remains under acceptance in [PR #211](https://github.com/TechWisard/desktop-pilot/pull/211); this release does **not** include it.
+
+## Improvements in 0.2.125
+
+**Pasting a complete path to an uncommon Windows command target now selects the correct saved launch profile.** Full paths to .com, .vbs, .vbe, .js, .jse, .wsf, .wsh and .msc now use the same exact target matching as .exe, .cmd and .bat. This prevents misleading matches from unrelated notes and backup filenames, including under **Always** / **Never** filters. Ordinary word searches remain broad. No application is executed during search, and existing files, policies, history and desktop positions are unchanged. [Production catalog and SQLite regression](docs/research/2026-11-07-windows-command-target-lookup.md).
+
+The separate **Organize desktop** feature is still under acceptance in [PR #211](https://github.com/TechWisard/desktop-pilot/pull/211) and is **not** included in this release.
 
 ## Improvements in 0.2.124
 

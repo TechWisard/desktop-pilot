@@ -386,8 +386,18 @@ pub fn valid_target(a: &App) -> bool {
             )
         } == ERROR_SUCCESS;
     }
-    Path::new(&crate::model::expand_env(target)).exists()
-        && (a.cwd.is_empty() || Path::new(&crate::model::expand_env(&a.cwd)).is_dir())
+    // The raw target of a .lnk may contain either a template or a literal
+    // absolute directory named like an environment variable. Never redirect
+    // the latter to another user's folder while checking availability.
+    let resolve = |path: &str| {
+        if Path::new(path).is_absolute() {
+            path.to_owned()
+        } else {
+            crate::model::expand_env(path)
+        }
+    };
+    Path::new(&resolve(target)).exists()
+        && (a.cwd.is_empty() || Path::new(&resolve(&a.cwd)).is_dir())
 }
 pub fn make_link(
     path: &Path,
