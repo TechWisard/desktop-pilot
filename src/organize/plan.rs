@@ -163,7 +163,13 @@ impl Dependencies {
             // execute or reinterpret them as a shell command. A literal path
             // or filename is enough evidence to preserve a possible dependency;
             // false positives are preferable to breaking a saved launch.
-            self.arguments.insert(norm(&app.arguments).replace('"', ""));
+            // Shortcut arguments may refer to an existing file whose name
+            // literally contains %NAME%, or to an intentional environment
+            // template. A protected Desktop dependency must survive either
+            // interpretation. Do not execute or parse the argument grammar.
+            for argument in [norm_literal_path(&app.arguments), norm(&app.arguments)] {
+                self.arguments.insert(argument.replace('"', ""));
+            }
         }
         if check_working_directory && !self.desktop_working_directory && !app.cwd.is_empty() {
             let expanded = crate::model::expand_env(&app.cwd);

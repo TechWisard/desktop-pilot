@@ -127,6 +127,70 @@ fn explicit_shortcut_argument_keeps_its_document_out_of_the_plan() {
 }
 
 #[test]
+fn literal_percent_shortcut_argument_keeps_the_exact_document_during_organization() {
+    let f = Fixture::new();
+    let name = "Important%SystemRoot%.txt";
+    let document = f.desktop.join(name);
+    let original = b"important user document";
+    disk::write(&document, original).unwrap();
+    for other in ["Independent 1.txt", "Independent 2.txt"] {
+        disk::write(f.desktop.join(other), b"independent user document").unwrap();
+    }
+    let older_preview = f.plan(true);
+    assert!(older_preview.items.iter().any(|item| item.name == name));
+
+    // This is a real Shell link with a saved command-line argument, not a
+    // synthetic dependency model. The filename itself is already literal.
+    f.argument_link(&format!(r#"--open="{}""#, document.display()));
+    let link = f.desktop.join("Open document.lnk");
+    let link_bytes = disk::read(&link).unwrap();
+    assert!(
+        native::read_link(&link)
+            .unwrap()
+            .arguments
+            .contains("%SystemRoot%")
+    );
+    assert_ne!(
+        norm(&document.to_string_lossy()),
+        norm_literal_path(&document.to_string_lossy()),
+        "this fixture must distinguish a literal file from an environment template"
+    );
+
+    // A previously generated plan must not bypass the newly discovered
+    // dependency even if the user has not refreshed the preview yet.
+    assert!(apply(&f.store, &older_preview, &AtomicBool::new(false)).is_err());
+    assert_eq!(disk::read(&document).unwrap(), original);
+    assert!(!status(&f.store).unwrap().pending);
+
+    let plan = f.plan(true);
+    assert!(
+        plan.skipped.iter().any(|item| {
+            item.name == name && item.reason.contains("Shortcut launch arguments")
+        }),
+        "the actual analyzer must explain why this exact file stays"
+    );
+    assert!(!plan.items.iter().any(|item| item.name == name));
+    assert_eq!(plan.summary(), (2, 1, 1));
+    let before = f.store.apps().unwrap();
+    let outcome = apply(&f.store, &plan, &AtomicBool::new(false)).unwrap();
+    assert_eq!(outcome.moved, 2);
+    assert_eq!(disk::read(&document).unwrap(), original);
+    assert_eq!(disk::read(&link).unwrap(), link_bytes);
+    assert!(f.desktop.join("Documents/Independent 1.txt").is_file());
+    assert!(f.desktop.join("Documents/Independent 2.txt").is_file());
+
+    undo(&f.store, &status(&f.store).unwrap().undo.unwrap()).unwrap();
+    assert_eq!(disk::read(&document).unwrap(), original);
+    assert_eq!(disk::read(&link).unwrap(), link_bytes);
+    for other in ["Independent 1.txt", "Independent 2.txt"] {
+        assert!(f.desktop.join(other).is_file());
+    }
+    assert!(!f.desktop.join("Documents").exists());
+    assert!(!status(&f.store).unwrap().pending);
+    assert_eq!(f.store.apps().unwrap(), before);
+}
+
+#[test]
 fn aliased_desktop_working_directory_protects_opt_in_files_at_preview_and_apply() {
     let f = Fixture::new();
     for name in ["Important.txt", "Other.pdf"] {
