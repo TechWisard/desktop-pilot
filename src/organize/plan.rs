@@ -124,11 +124,14 @@ impl Dependencies {
         {
             self.catalog_source_alias_ids.insert(stamp.id);
         }
+        // Link targets, working directories and custom icons may name files
+        // whose actual filename contains %NAME%. Preserve both the literal
+        // spelling and an intentional environment-template interpretation.
         for value in [&app.target, &app.cwd, &app.icon] {
-            let expanded = crate::model::expand_env(value);
-            let path = Path::new(&expanded);
-            if path.is_absolute() {
-                self.paths.insert(norm_literal_path(&expanded));
+            for spelling in [value.to_string(), crate::model::expand_env(value)] {
+                if Path::new(&spelling).is_absolute() {
+                    self.paths.insert(norm_literal_path(&spelling));
+                }
             }
         }
         if check_working_directory {

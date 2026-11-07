@@ -191,6 +191,85 @@ fn literal_percent_shortcut_argument_keeps_the_exact_document_during_organizatio
 }
 
 #[test]
+fn literal_percent_custom_shortcut_icon_stays_with_its_link_after_organization() {
+    let f = Fixture::new();
+    let icon = f.desktop.join("Cover%SystemRoot%.png");
+    let original = b"custom icon bytes";
+    disk::write(&icon, original).unwrap();
+    for name in ["Independent 1.png", "Independent 2.png"] {
+        disk::write(f.desktop.join(name), b"independent image").unwrap();
+    }
+    let older = f.plan(true);
+    assert_eq!(older.summary(), (3, 1, 2));
+
+    // Store and reread a real Shell link rather than substituting a synthetic
+    // dependency. Custom icon paths are separate from the executable target.
+    let tools = f.store.home.join("Tools");
+    disk::create_dir_all(&tools).unwrap();
+    let executable = tools.join("Viewer.exe");
+    disk::write(&executable, b"inert fixture; never execute").unwrap();
+    let link = f.desktop.join("Viewer.lnk");
+    native::make_link(
+        &link,
+        &executable,
+        "",
+        &icon.to_string_lossy(),
+        0,
+        "custom icon fixture",
+    )
+    .unwrap();
+    let saved = native::read_link(&link).unwrap();
+    assert!(
+        saved.icon.contains("%SystemRoot%"),
+        "Shell link must retain the literal-percent icon path"
+    );
+    assert_ne!(
+        norm(&saved.icon),
+        norm_literal_path(&saved.icon),
+        "the fixture must distinguish the literal and expanded paths"
+    );
+    f.store.put_app(&saved).unwrap();
+    let link_bytes = disk::read(&link).unwrap();
+    let apps_before = f.store.apps().unwrap();
+
+    // A prior preview must be revalidated against the saved link before any
+    // file is moved. The protected icon remains on the original Desktop.
+    assert!(apply(&f.store, &older, &AtomicBool::new(false)).is_err());
+    assert_eq!(disk::read(&icon).unwrap(), original);
+    assert!(!status(&f.store).unwrap().pending);
+
+    let plan = f.plan(true);
+    assert!(plan.skipped.iter().any(|item| {
+        item.name == "Cover%SystemRoot%.png"
+            && item.reason.contains("known shortcut depends")
+    }));
+    assert!(!plan.items.iter().any(|item| item.name == "Cover%SystemRoot%.png"));
+    assert_eq!(plan.summary(), (2, 1, 1));
+
+    assert_eq!(
+        apply(&f.store, &plan, &AtomicBool::new(false))
+            .unwrap()
+            .moved,
+        2
+    );
+    assert_eq!(disk::read(&icon).unwrap(), original);
+    assert_eq!(disk::read(&link).unwrap(), link_bytes);
+    for name in ["Independent 1.png", "Independent 2.png"] {
+        assert!(f.desktop.join("Images").join(name).is_file());
+    }
+    let operation = status(&f.store).unwrap().undo.unwrap();
+    assert_eq!(undo(&f.store, &operation).unwrap().restored, 2);
+    for name in ["Independent 1.png", "Independent 2.png"] {
+        assert!(f.desktop.join(name).is_file());
+    }
+    assert_eq!(disk::read(&icon).unwrap(), original);
+    assert_eq!(disk::read(&link).unwrap(), link_bytes);
+    assert!(!f.desktop.join("Images").exists());
+    assert_eq!(f.store.apps().unwrap(), apps_before);
+    assert!(!status(&f.store).unwrap().pending);
+}
+
+#[test]
 fn aliased_desktop_working_directory_protects_opt_in_files_at_preview_and_apply() {
     let f = Fixture::new();
     for name in ["Important.txt", "Other.pdf"] {
