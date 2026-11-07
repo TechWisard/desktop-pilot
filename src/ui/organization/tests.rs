@@ -366,7 +366,11 @@ fn searching_destination_folders_bulk_reviews_every_matching_page() {
     f.finish_job();
     let plan = f.app.organization_plan.as_ref().unwrap();
     assert_eq!(plan.items.len(), 47);
-    assert!(plan.items.iter().all(|item| plan.destination(item) == "Sites"));
+    assert!(
+        plan.items
+            .iter()
+            .all(|item| plan.destination(item) == "Sites")
+    );
     let ctx = egui::Context::default();
     configure_style(&ctx);
     i18n::set("en");
