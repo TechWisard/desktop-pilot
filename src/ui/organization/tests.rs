@@ -259,10 +259,12 @@ fn filtered_bulk_review_keeps_unmatched_choices_across_organizer_pages() {
         let path = f.desktop.join(format!("Match-{index:02}.url"));
         fs::write(
             &path,
-            format!("[InternetShortcut]\\r\\nURL=https://example.invalid/match/{index}\\r\\n"),
+            format!("[InternetShortcut]\r\nURL=https://example.invalid/match/{index}\r\n"),
         )
         .unwrap();
-        f.app.store.put_app(&native::read_link(&path).unwrap()).unwrap();
+        f.app.store
+            .put_app(&native::read_link(&path).unwrap())
+            .unwrap();
     }
     f.app.organization_analyze();
     f.finish_job();
@@ -305,16 +307,34 @@ fn filtered_bulk_review_keeps_unmatched_choices_across_organizer_pages() {
     f.app.organization_query = "Alpha".into();
     click_organization_button(&ctx, &mut f.app, viewport, "Deselect matches");
     let plan = f.app.organization_plan.as_ref().unwrap();
-    assert!(!plan.items.iter().find(|item| item.name == "Alpha.url").unwrap().selected);
-    assert!(plan.items.iter().find(|item| item.name == "Beta.url").unwrap().selected);
-    assert_eq!(
-        plan.items.iter().filter(|item| item.selected).count(),
-        46
+    assert!(
+        !plan
+            .items
+            .iter()
+            .find(|item| item.name == "Alpha.url")
+            .unwrap()
+            .selected
     );
+    assert!(
+        plan.items
+            .iter()
+            .find(|item| item.name == "Beta.url")
+            .unwrap()
+            .selected
+    );
+    assert_eq!(plan.items.iter().filter(|item| item.selected).count(), 46);
 
     // Existing explicit global action is still global even under a filter.
     click_organization_button(&ctx, &mut f.app, viewport, "Deselect all");
-    assert!(f.app.organization_plan.as_ref().unwrap().items.iter().all(|item| !item.selected));
+    assert!(
+        f.app
+            .organization_plan
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| !item.selected)
+    );
     f.app.organization_apply();
     f.finish_job();
     assert!(f.app.notice.as_ref().unwrap().kind == NoticeKind::Success);
