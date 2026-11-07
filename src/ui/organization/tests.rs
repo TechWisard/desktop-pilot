@@ -262,7 +262,8 @@ fn filtered_bulk_review_keeps_unmatched_choices_across_organizer_pages() {
             format!("[InternetShortcut]\r\nURL=https://example.invalid/match/{index}\r\n"),
         )
         .unwrap();
-        f.app.store
+        f.app
+            .store
             .put_app(&native::read_link(&path).unwrap())
             .unwrap();
     }
