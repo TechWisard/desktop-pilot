@@ -136,28 +136,33 @@ impl Dependencies {
         }
         if check_working_directory {
             for value in [&app.target, &app.icon] {
-                let expanded = crate::model::expand_env(value);
-                if !self
-                    .checked_local_paths
-                    .insert(norm_literal_path(&expanded))
-                {
-                    continue;
-                }
-                let path = crate::profile::ordinary_path(PathBuf::from(&expanded));
-                if !path.is_absolute() || reject_network_root(&path).is_err() {
-                    continue;
-                }
-                // Never identify a desktop dependency by file ID alone:
-                // another directory can contain a hard link to the same file.
-                // Only the actual personal Desktop parent can be disrupted by
-                // moving a Desktop directory entry.
-                let same_parent = path
-                    .parent()
-                    .and_then(|parent| fs::directory(parent).ok())
-                    .and_then(|parent| fs::identity(&parent).ok())
-                    .is_some_and(|id| id == root_id);
-                if same_parent && let Ok(stamp) = fs::inspect(&path, false) {
-                    self.protected_local_ids.insert(stamp.id);
+                // Explorer may report an 8.3 or canonical Desktop spelling
+                // different from the path recorded by the Shell link. The
+                // literal form must also be inspected by file identity:
+                // expanding %NAME% first can point to a nonexistent file.
+                for spelling in [value.to_string(), crate::model::expand_env(value)] {
+                    if !self
+                        .checked_local_paths
+                        .insert(norm_literal_path(&spelling))
+                    {
+                        continue;
+                    }
+                    let path = crate::profile::ordinary_path(PathBuf::from(&spelling));
+                    if !path.is_absolute() || reject_network_root(&path).is_err() {
+                        continue;
+                    }
+                    // Never identify a desktop dependency by file ID alone:
+                    // another directory can contain a hard link to the same file.
+                    // Only the actual personal Desktop parent can be disrupted
+                    // by moving a Desktop directory entry.
+                    let same_parent = path
+                        .parent()
+                        .and_then(|parent| fs::directory(parent).ok())
+                        .and_then(|parent| fs::identity(&parent).ok())
+                        .is_some_and(|id| id == root_id);
+                    if same_parent && let Ok(stamp) = fs::inspect(&path, false) {
+                        self.protected_local_ids.insert(stamp.id);
+                    }
                 }
             }
         }
