@@ -116,7 +116,15 @@ impl CatalogCache {
                     if path.ends_with(".lnk") || path.ends_with(".url") {
                         source == path
                     } else {
-                        source == path || norm(&app.target) == path
+                        // An absolute executable name copied from Explorer is a
+                        // concrete file path, even when a directory is literally
+                        // named %USERNAME%. Expand only saved launch templates.
+                        let target = if Path::new(&app.target).is_absolute() {
+                            norm_literal_path(&app.target)
+                        } else {
+                            norm(&app.target)
+                        };
+                        source == path || target == path
                     }
                 } else if let Some(url) = exact_web_url.as_deref() {
                     target_identity(&app.target) == url
@@ -5586,3 +5594,6 @@ mod stalled_command_tests;
 
 #[cfg(test)]
 mod manual_placement_reason_tests;
+
+#[cfg(test)]
+mod catalog_executable_path_tests;
