@@ -294,6 +294,19 @@ impl Settings {
         if self.organization_accept_for.as_deref() != pending_id {
             self.organization_accept_for = None;
         }
+        // Keep the confirmation reachable while the user reviews a long plan.
+        // The modal body scrolls independently of its header.
+        let preview_action = status
+            .as_ref()
+            .ok()
+            .filter(|current| !current.pending)
+            .and_then(|_| self.organization_plan.as_ref())
+            .filter(|plan| plan.options.include_files == self.organization_files)
+            .map(|plan| {
+                let (moves, _, _) = plan.summary();
+                let rejected = plan.items.iter().any(|item| !item.selected);
+                (moves, rejected)
+            });
         let feedback = self.organization_feedback();
         let running = self.job.as_ref().map(|job| match job.label {
             "Analyzing the desktop…" => t("Анализируем рабочий стол…", "Analyzing the desktop…"),
@@ -311,6 +324,21 @@ impl Settings {
             |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.heading(t("Навести порядок", "Organize desktop"));
+                    if let Some((moves, rejected)) = preview_action {
+                        if primary(
+                            ui,
+                            available && (moves > 0 || rejected),
+                            if moves > 0 {
+                                t("Применить выбранное", "Apply selected moves")
+                            } else {
+                                t("Запомнить исключения", "Remember keep choices")
+                            },
+                        )
+                        .clicked()
+                        {
+                            apply = true;
+                        }
+                    }
                     if ui
                         .add_enabled(available, egui::Button::new(t("Закрыть", "Close")))
                         .clicked()
@@ -485,20 +513,6 @@ impl Settings {
                                     "Подходящая область для быстрых ярлыков пока не подтверждена. После уборки обновите схему; при необходимости выберите меньше ярлыков.",
                                     "A suitable quick-shortcut area is not confirmed yet. Refresh the layout after organizing; reduce the shortcut count if necessary.",
                                 ));
-                            }
-                            let rejected = plan.items.iter().any(|item| !item.selected);
-                            if primary(
-                                ui,
-                                available && (moves > 0 || rejected),
-                                if moves > 0 {
-                                    t("Применить выбранное", "Apply selected moves")
-                                } else {
-                                    t("Запомнить исключения", "Remember keep choices")
-                                },
-                            )
-                            .clicked()
-                            {
-                                apply = true;
                             }
                             ui.label(t("Поиск по всему плану", "Search the entire plan"));
                             if ui

@@ -683,10 +683,19 @@ fn long_preview_uses_the_modal_wheel_at_normal_and_double_scale() {
                     },
                 ],
             );
-            if rendered_text(&output)
+            let painted = rendered_text(&output);
+            if painted
                 .iter()
                 .any(|(text, _)| text.contains(&last_on_page))
             {
+                let (_, action) = painted
+                    .iter()
+                    .find(|(text, _)| text == "Apply selected moves")
+                    .expect("Apply must stay visible while reviewing the last preview row");
+                assert!(
+                    ctx.screen_rect().contains_rect(*action),
+                    "Apply is clipped after scrolling at {scale}x: {action:?}"
+                );
                 reached = true;
                 break;
             }
