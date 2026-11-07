@@ -229,6 +229,13 @@ fn literal_percent_custom_shortcut_icon_stays_with_its_link_after_organization()
         "the fixture must distinguish the literal and expanded paths"
     );
     f.store.put_app(&saved).unwrap();
+    assert_eq!(
+        norm_literal_path(&saved.icon),
+        norm_literal_path(&icon.to_string_lossy()),
+        "actual Shell link icon path differs from the saved Desktop path: {:?} vs {:?}",
+        saved.icon,
+        icon
+    );
     let link_bytes = disk::read(&link).unwrap();
     let apps_before = f.store.apps().unwrap();
 
@@ -240,10 +247,14 @@ fn literal_percent_custom_shortcut_icon_stays_with_its_link_after_organization()
 
     let plan = f.plan(true);
     assert!(plan.skipped.iter().any(|item| {
-        item.name == "Cover%SystemRoot%.png"
-            && item.reason.contains("known shortcut depends")
+        item.name == "Cover%SystemRoot%.png" && item.reason.contains("known shortcut depends")
     }));
-    assert!(!plan.items.iter().any(|item| item.name == "Cover%SystemRoot%.png"));
+    assert!(
+        !plan
+            .items
+            .iter()
+            .any(|item| item.name == "Cover%SystemRoot%.png")
+    );
     assert_eq!(plan.summary(), (2, 1, 1));
 
     assert_eq!(
