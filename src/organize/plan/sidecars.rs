@@ -38,6 +38,9 @@ pub(super) fn protected(paths: &[PathBuf]) -> HashSet<String> {
         if !matches!(
             extension.as_str(),
             "xmp"
+                | "acr"
+                | "thm"
+                | "lrv"
                 | "dtdata"
                 | "aae"
                 | "pp3"
@@ -57,6 +60,22 @@ pub(super) fn protected(paths: &[PathBuf]) -> HashSet<String> {
             continue;
         };
         let stem = stem.to_string_lossy().to_lowercase();
+        // GoPro high-resolution clips are named GH/GX + six digits, whereas
+        // the low-resolution companion can be GL + the same six digits.
+        // Match an actual adjacent MP4/MOV, never a merely similar prefix.
+        if extension == "lrv"
+            && stem.len() == 8
+            && stem.starts_with("gl")
+            && stem[2..].bytes().all(|byte| byte.is_ascii_digit())
+        {
+            for prefix in ["gh", "gx"] {
+                for video_ext in ["mp4", "mov"] {
+                    if let Some(key) = by_name.get(&format!("{prefix}{}.{video_ext}", &stem[2..])) {
+                        protected.insert(key.clone());
+                    }
+                }
+            }
+        }
         let mut candidate = stem.as_str();
         loop {
             // Both Photo.jpg.xmp and Photo.xmp are in common use. Caption
@@ -113,6 +132,40 @@ mod tests {
             .into_iter()
             .map(String::from)
             .collect();
+        assert_eq!(protected(&paths), expected);
+    }
+
+    #[test]
+    fn camera_and_editor_sidecars_keep_only_their_existing_companions() {
+        let paths: Vec<_> = [
+            "Edited.JPG",
+            "Edited.acr",
+            "Edited.jpg.XMP",
+            "GX012345.MP4",
+            "GX012345.THM",
+            "GL012345.LRV",
+            "GH018765.mp4",
+            "GL018765.lrv",
+            "Clip.mov",
+            "Clip.lrv",
+            "Standalone.jpg",
+            "Unrelated.mp4",
+            "Orphan.acr",
+            "GL999999.lrv",
+            "GL-unrelated.lrv",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+        let expected: HashSet<_> = [
+            "edited.jpg",
+            "gx012345.mp4",
+            "gh018765.mp4",
+            "clip.mov",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
         assert_eq!(protected(&paths), expected);
     }
 

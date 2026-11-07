@@ -208,6 +208,65 @@ fn literal_percent_names_keep_photo_and_its_xmp_sidecar_together() {
 }
 
 #[test]
+fn optional_media_organization_keeps_editor_and_camera_companions_in_place() {
+    let f = Fixture::new();
+    let entries = [
+        ("Edited.jpg", "photograph"),
+        ("Edited.acr", "Lightroom editing adjustments"),
+        ("GX012345.mp4", "camera master"),
+        ("GX012345.thm", "camera thumbnail"),
+        ("GL012345.lrv", "camera preview"),
+        ("Standalone 1.jpg", "independent image one"),
+        ("Standalone 2.jpg", "independent image two"),
+        ("Independent 1.mp4", "independent video one"),
+        ("Independent 2.mp4", "independent video two"),
+    ];
+    for (name, contents) in entries {
+        disk::write(f.desktop.join(name), contents).unwrap();
+    }
+
+    // The ordinary-file pass is deliberately opt-in. The production analyzer
+    // must never split a master and adjacent edits/previews.
+    let default_plan = f.plan(false);
+    assert!(default_plan.items.is_empty());
+    let plan = f.plan(true);
+    for protected in ["Edited.jpg", "GX012345.mp4"] {
+        assert!(
+            plan.skipped.iter().any(|item| {
+                item.name == protected && item.reason.contains("Associated file set")
+            }),
+            "{protected} should stay beside its companion"
+        );
+        assert!(!plan.items.iter().any(|item| item.name == protected));
+    }
+    assert_eq!(plan.summary(), (4, 2, 2));
+    let outcome = f.apply(&plan);
+    assert_eq!(outcome.moved, 4);
+    for (name, contents) in entries {
+        let path = f.desktop.join(name);
+        if name.starts_with("Standalone") || name.starts_with("Independent") {
+            assert!(!path.exists());
+        } else {
+            assert_eq!(disk::read(path).unwrap(), contents.as_bytes());
+        }
+    }
+    for name in ["Standalone 1.jpg", "Standalone 2.jpg"] {
+        assert!(f.desktop.join("Images").join(name).is_file());
+    }
+    for name in ["Independent 1.mp4", "Independent 2.mp4"] {
+        assert!(f.desktop.join("Media").join(name).is_file());
+    }
+
+    undo(&f.store, &f.last()).unwrap();
+    for (name, contents) in entries {
+        assert_eq!(disk::read(f.desktop.join(name)).unwrap(), contents.as_bytes());
+    }
+    assert!(!f.desktop.join("Images").exists());
+    assert!(!f.desktop.join("Media").exists());
+    assert!(!status(&f.store).unwrap().pending);
+}
+
+#[test]
 fn opt_in_files_are_renamed_not_copied_and_same_file_edits_survive_undo() {
     let f = Fixture::new();
     for name in ["one.txt", "two.pdf"] {
