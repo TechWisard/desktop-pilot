@@ -22,6 +22,12 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It lear
 
 Installation is per user, by default in `%LOCALAPPDATA%\DesktopPilot`; no administrator access is required. Settings are available from the tray icon and the Start menu. This preview executable is unsigned; download only from this repository's Releases and verify the supplied SHA-256 checksum.
 
+## Improvements in 0.2.127
+
+**Saved web shortcuts are easier to find when a copied website address has an optional root slash.** For an existing launcher pointing to `https://example.invalid?view=Work`, pasting `https://example.invalid/?view=Work` now finds the same saved profile, and vice versa. Exact search still distinguishes HTTPS from HTTP, different hosts and case-sensitive query values; mentioning a URL in another shortcut's note is not enough to match. Existing **Always** / **Never** choices, source files, launch targets and usage history remain unchanged. [Real shortcut, SQLite and search regression](docs/research/2026-11-07-http-root-lookup.md).
+
+Desktop organization is separately under acceptance in [PR #211](https://github.com/TechWisard/desktop-pilot/pull/211), and is **not** part of this release.
+
 ## Improvements in 0.2.126
 
 **Full Windows launch paths now preserve the right shortcut, not another project's lookalike.** If a folder is literally named `%USERNAME%`, it is distinct from the account-name folder. Previously these different application targets and their working directories could be assigned the same identity; native availability checks could also inspect the wrong file. The fix preserves separate **Always** / **Never** choices and correctly recognizes offline and restored targets. Relative `%SystemRoot%` launch templates continue to work. Existing shortcuts, layout, profiles and usage history are not rewritten. [Filesystem, SQLite and selection regression](docs/research/2026-11-07-absolute-target-identity.md).
