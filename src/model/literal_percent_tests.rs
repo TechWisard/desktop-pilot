@@ -58,6 +58,12 @@ fn literal_absolute_launch_targets_keep_saved_manual_rules_independent() {
     std::fs::create_dir_all(expanded.parent().unwrap()).unwrap();
     std::fs::write(&expanded, b"expanded fixture").unwrap();
     assert!(native::valid_target(&expanded_app));
+    // A different valid expanded profile must not make a deleted literal
+    // target appear available. Restoring it must recover only that profile.
+    std::fs::remove_file(&literal).unwrap();
+    assert!(!native::valid_target(&literal_app));
+    std::fs::write(&literal, b"literal fixture").unwrap();
+    assert!(native::valid_target(&literal_app));
 
     literal_app.assign_id();
     expanded_app.assign_id();
