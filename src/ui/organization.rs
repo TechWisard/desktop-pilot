@@ -554,6 +554,56 @@ impl Settings {
                                 })
                                 .map(|(index, _)| index)
                                 .collect();
+                            // Keep the original full-plan controls above, but let a person
+                            // review one searched set across every page without silently
+                            // changing other selected desktop objects.
+                            if !query.is_empty() {
+                                let selected_matches = filtered
+                                    .iter()
+                                    .filter(|&&index| plan.items[index].selected)
+                                    .count();
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(format!(
+                                        "{}: {selected_matches} / {}",
+                                        t("Отмечено среди найденных", "Selected matches"),
+                                        filtered.len(),
+                                    ));
+                                    if ui
+                                        .add_enabled(
+                                            available && selected_matches < filtered.len(),
+                                            egui::Button::new(t(
+                                                "Отметить найденные",
+                                                "Select matches",
+                                            ))
+                                            .min_size(egui::vec2(150.0, 40.0)),
+                                        )
+                                        .clicked()
+                                    {
+                                        for &index in &filtered {
+                                            plan.items[index].selected = true;
+                                        }
+                                    }
+                                    if ui
+                                        .add_enabled(
+                                            available && selected_matches > 0,
+                                            egui::Button::new(t(
+                                                "Снять отметки с найденных",
+                                                "Deselect matches",
+                                            ))
+                                            .min_size(egui::vec2(180.0, 40.0)),
+                                        )
+                                        .clicked()
+                                    {
+                                        for &index in &filtered {
+                                            plan.items[index].selected = false;
+                                        }
+                                    }
+                                });
+                                ui.small(t(
+                                    "Действует на все найденные строки, включая другие страницы. Остальные объекты не меняются.",
+                                    "Affects every match across pages. Other objects stay unchanged.",
+                                ));
+                            }
                             let (start, end) =
                                 organization_pages(ui, &mut self.organization_page, filtered.len());
                             let rows: Vec<_> = filtered[start..end]
