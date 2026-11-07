@@ -4959,24 +4959,24 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(
-            query(&mut cache, "https://example.invalid/?view=Work", 0),
-            [work.id.clone()]
+            query(&mut cache, "https://example.invalid/?view=Work", 0).as_slice().as_slice().as_slice(),
+            std::slice::from_ref(&work.id)
         );
         assert_eq!(
-            query(&mut cache, "https://EXAMPLE.invalid?view=Work", 2),
-            [work.id.clone()]
+            query(&mut cache, "https://EXAMPLE.invalid?view=Work", 2).as_slice().as_slice().as_slice(),
+            std::slice::from_ref(&work.id)
         );
         assert_eq!(
-            query(&mut cache, "https://example.invalid#Project", 3),
-            [project.id.clone()]
+            query(&mut cache, "https://example.invalid#Project", 3).as_slice().as_slice().as_slice(),
+            std::slice::from_ref(&project.id)
         );
         assert_eq!(
             query(&mut cache, "https://example.invalid/#Project", 2),
             Vec::<String>::new()
         );
         assert_eq!(
-            query(&mut cache, "http://EXAMPLE.invalid", 0),
-            [http.id.clone()]
+            query(&mut cache, "http://EXAMPLE.invalid", 0).as_slice().as_slice().as_slice(),
+            std::slice::from_ref(&http.id)
         );
         assert!(query(&mut cache, "https://example.invalid/other", 0).is_empty());
         assert!(query(&mut cache, "https://example.invalid/?view=work", 0).is_empty());
