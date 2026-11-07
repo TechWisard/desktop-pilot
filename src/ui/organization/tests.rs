@@ -251,6 +251,80 @@ fn one_bulk_choice_changes_the_entire_real_plan_even_with_hidden_rows() {
 }
 
 #[test]
+fn filtered_bulk_review_keeps_unmatched_choices_across_organizer_pages() {
+    let mut f = Fixture::new();
+    // More than one preview page of real Windows Internet Shortcut files.
+    // The two original entries deliberately do not match the later search.
+    for index in 0..45 {
+        let path = f.desktop.join(format!("Match-{index:02}.url"));
+        fs::write(
+            &path,
+            format!("[InternetShortcut]\\r\\nURL=https://example.invalid/match/{index}\\r\\n"),
+        )
+        .unwrap();
+        f.app.store.put_app(&native::read_link(&path).unwrap()).unwrap();
+    }
+    f.app.organization_analyze();
+    f.finish_job();
+    assert_eq!(f.app.organization_plan.as_ref().unwrap().items.len(), 47);
+
+    let ctx = egui::Context::default();
+    configure_style(&ctx);
+    i18n::set("en");
+    f.app.config.language = "en".into();
+    let viewport = egui::vec2(1200.0, 900.0);
+    f.app.organization_query = "match-".into();
+    click_organization_button(&ctx, &mut f.app, viewport, "Deselect matches");
+    let plan = f.app.organization_plan.as_ref().unwrap();
+    assert_eq!(
+        plan.items
+            .iter()
+            .filter(|item| item.name.starts_with("Match-") && !item.selected)
+            .count(),
+        45,
+    );
+    assert_eq!(plan.items.iter().filter(|item| item.selected).count(), 2);
+    assert!(f.desktop.join("Match-00.url").is_file());
+    assert!(f.desktop.join("Alpha.url").is_file());
+    assert!(f.app.job.is_none());
+
+    // Selecting matches includes the five results on page two, without
+    // affecting either hidden original shortcut.
+    click_organization_button(&ctx, &mut f.app, viewport, "Select matches");
+    assert_eq!(
+        f.app
+            .organization_plan
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .filter(|item| item.selected)
+            .count(),
+        47,
+    );
+    f.app.organization_query = "Alpha".into();
+    click_organization_button(&ctx, &mut f.app, viewport, "Deselect matches");
+    let plan = f.app.organization_plan.as_ref().unwrap();
+    assert!(!plan.items.iter().find(|item| item.name == "Alpha.url").unwrap().selected);
+    assert!(plan.items.iter().find(|item| item.name == "Beta.url").unwrap().selected);
+    assert_eq!(
+        plan.items.iter().filter(|item| item.selected).count(),
+        46
+    );
+
+    // Existing explicit global action is still global even under a filter.
+    click_organization_button(&ctx, &mut f.app, viewport, "Deselect all");
+    assert!(f.app.organization_plan.as_ref().unwrap().items.iter().all(|item| !item.selected));
+    f.app.organization_apply();
+    f.finish_job();
+    assert!(f.app.notice.as_ref().unwrap().kind == NoticeKind::Success);
+    assert!(f.desktop.join("Alpha.url").is_file());
+    assert!(f.desktop.join("Beta.url").is_file());
+    assert!(f.desktop.join("Match-44.url").is_file());
+    assert!(organize::status(&f.app.store).unwrap().undo.is_none());
+}
+
+#[test]
 fn all_six_thousand_preview_and_skipped_items_remain_accessible() {
     for count in [0usize, 1, 39, 40, 41, 60, 61, 5999, 6000] {
         let pages = count.div_ceil(ORGANIZATION_PAGE_SIZE).max(1);
