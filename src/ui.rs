@@ -63,7 +63,15 @@ impl CatalogCache {
         // PowerShell also uses single quotes around paths; Windows paths can
         // start with environment variables rather than explicit drive names.
         let path = pasted_path(&query_lower);
-        let normalized_query = norm(path).replace('\\', "/");
+        // Copied absolute paths are concrete filesystem names. A directory
+        // literally called %USERNAME% must not resolve to the user's folder.
+        // Keep expansion for an explicitly entered relative %SystemRoot% root.
+        let normalized_query = if Path::new(path).is_absolute() {
+            norm_literal_path(path)
+        } else {
+            norm(path)
+        }
+        .replace('\\', "/");
         // A copied absolute path is one continuous location. Splitting a
         // directory like "Team Alpha" into separate search words can also
         // match a different profile using fragments from unrelated fields.
@@ -71,17 +79,21 @@ impl CatalogCache {
             || (normalized_query.as_bytes().get(1) == Some(&b':')
                 && normalized_query.as_bytes().get(2) == Some(&b'/')))
         .then_some(normalized_query.as_str());
-        // A complete copied shortcut path identifies its exact source, not a
+        // A complete copied shortcut or launch-script path identifies its exact source, not a
         // backup name, an arbitrary note, or part of a different launch profile.
         // Keep partial directory searches intentionally broad. Several launch
         // profiles may legitimately share one executable target.
         let full_file_path = absolute_path.filter(|path| {
             path.rsplit('/').next().is_some_and(|leaf| {
-                leaf.ends_with(".lnk") || leaf.ends_with(".url") || leaf.ends_with(".exe")
+                leaf.ends_with(".lnk")
+                    || leaf.ends_with(".url")
+                    || leaf.ends_with(".exe")
+                    || leaf.ends_with(".cmd")
+                    || leaf.ends_with(".bat")
             })
         });
         // Ordinary and extended Win32 drive/UNC names share one file identity.
-        let normalized_file_path = full_file_path.map(norm);
+        let normalized_file_path = full_file_path.map(norm_literal_path);
         // A copied web address identifies a shortcut's launch destination,
         // not a note mentioning that address or a longer, unrelated URL.
         // Keep the entered path/query case: only the HTTP(S) host is
@@ -107,11 +119,19 @@ impl CatalogCache {
             .enumerate()
             .filter(|(index, app)| {
                 let matches = if let Some(path) = normalized_file_path.as_deref() {
-                    let source = norm(&app.source);
+                    let source = norm_literal_path(&app.source);
                     if path.ends_with(".lnk") || path.ends_with(".url") {
                         source == path
                     } else {
-                        source == path || norm(&app.target) == path
+                        // An absolute executable name copied from Explorer is a
+                        // concrete file path, even when a directory is literally
+                        // named %USERNAME%. Expand only saved launch templates.
+                        let target = if Path::new(&app.target).is_absolute() {
+                            norm_literal_path(&app.target)
+                        } else {
+                            norm(&app.target)
+                        };
+                        source == path || target == path
                     }
                 } else if let Some(url) = exact_web_url.as_deref() {
                     target_identity(&app.target) == url
@@ -5703,3 +5723,6 @@ mod stalled_command_tests;
 
 #[cfg(test)]
 mod manual_placement_reason_tests;
+
+#[cfg(test)]
+mod catalog_executable_path_tests;

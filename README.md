@@ -16,6 +16,19 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It has 
 
 To update an existing installation, open the executable from the new archive. Your local profile, rules and history are retained. The executable is unsigned; verify its source and checksum before opening it.
 
+**Development branch:** The desktop organization feature described below is not included in the currently published 0.2.124 download. It is undergoing final acceptance here.
+
+## Stable shortcut search fixes retained in this branch
+
+## Improvements in 0.2.124
+
+**Pasting a full `.cmd` or `.bat` launch path now finds the correct saved shortcut and policy.** Previously a complete path was treated as general text and could also match another shortcut mentioning that path in its note or having a longer filename. Exact Windows batch-launcher lookup now respects the same rules as `.exe` paths, including **Always** and **Never** filters, while ordinary name/folder search stays broad. Saved shortcuts, launch settings, desktop positions and usage history remain unchanged. [Reproducible Windows/SQLite scenario](docs/research/2026-11-07-copied-batch-targets.md).
+
+
+## Improvements in 0.2.123
+
+**A copied full shortcut path now selects the correct app and its saved rule.** Different folders can contain same-named shortcuts, including a folder literally called `%USERNAME%` and one named after the Windows account. In Apps search, actual absolute filenames are no longer expanded a second time, which could display both saved entries instead of the one selected in Explorer. Existing **Always** and **Never** rules stay distinct; abbreviated `%SystemRoot%` queries still work. Shortcuts, history, layout and preferences are not modified. [Real shortcut and SQLite regression](docs/research/2026-11-06-literal-copied-path-search.md).
+
 ## Organize the desktop deliberately
 
 The organizer first produces a read-only preview. By default it proposes groups for ordinary `.lnk` and `.url` shortcuts, not documents, projects or folders. Ordinary file categories require a separate opt-in. Groups with only one item do not create unnecessary folders.
