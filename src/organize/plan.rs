@@ -180,21 +180,31 @@ impl Dependencies {
             }
         }
         if check_working_directory && !self.desktop_working_directory && !app.cwd.is_empty() {
-            let expanded = crate::model::expand_env(&app.cwd);
-            let normalized = norm_literal_path(&expanded);
-            if normalized == norm_literal_path(&root.to_string_lossy()) {
-                self.desktop_working_directory = true;
-            } else if self.checked_working_directories.insert(normalized) {
+            // A saved working directory may contain literal %NAME% in a real
+            // Desktop folder name, not just an environment template. Either
+            // interpretation pointing to this Desktop must protect its files.
+            for spelling in [app.cwd.clone(), crate::model::expand_env(&app.cwd)] {
+                let normalized = norm_literal_path(&spelling);
+                if normalized == norm_literal_path(&root.to_string_lossy()) {
+                    self.desktop_working_directory = true;
+                    break;
+                }
+                if !self.checked_working_directories.insert(normalized) {
+                    continue;
+                }
                 // Keep extended local drive paths, but convert extended UNC
                 // to ordinary UNC before the network-drive rejection.
-                let working = crate::profile::ordinary_path(PathBuf::from(&expanded));
+                let working = crate::profile::ordinary_path(PathBuf::from(&spelling));
                 // Short (8.3), extended and aliased local paths can designate
-                // the very same Desktop even when their strings differ. Never
-                // touch remote directories while checking this dependency.
-                if working.is_absolute() && reject_network_root(&working).is_ok() {
-                    self.desktop_working_directory = fs::directory(&working)
+                // the same Desktop. Never probe a remote working directory.
+                if working.is_absolute()
+                    && reject_network_root(&working).is_ok()
+                    && fs::directory(&working)
                         .and_then(|directory| fs::identity(&directory))
-                        .is_ok_and(|id| id == root_id);
+                        .is_ok_and(|id| id == root_id)
+                {
+                    self.desktop_working_directory = true;
+                    break;
                 }
             }
         }

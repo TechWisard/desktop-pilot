@@ -281,6 +281,70 @@ fn literal_percent_custom_shortcut_icon_stays_with_its_link_after_organization()
 }
 
 #[test]
+fn literal_percent_desktop_working_directory_preserves_opt_in_documents() {
+    let f = Fixture::new();
+    let desktop = f.desktop.join("Work%USERNAME%");
+    disk::create_dir(&desktop).unwrap();
+    f.store
+        .set("test_desktop", &desktop.to_string_lossy())
+        .unwrap();
+    for name in ["Work notes.txt", "Schedule.pdf"] {
+        disk::write(desktop.join(name), b"user document").unwrap();
+    }
+    let outdated = f.plan(true);
+    assert_eq!(outdated.summary(), (2, 1, 1));
+
+    // Create and read an actual Shell link; make_link saves the executable's
+    // parent as its working directory. The parent is a literal existing
+    // Desktop folder, not an environment-variable template.
+    let executable = desktop.join("Viewer.exe");
+    disk::write(&executable, b"inert executable fixture; never launch").unwrap();
+    let link = f.store.home.join("Viewer.lnk");
+    native::make_link(&link, &executable, "", "", 0, "working directory fixture").unwrap();
+    let saved = native::read_link(&link).unwrap();
+    assert_eq!(
+        norm_literal_path(&saved.cwd),
+        norm_literal_path(&desktop.to_string_lossy())
+    );
+    assert_ne!(
+        norm(&saved.cwd),
+        norm_literal_path(&saved.cwd),
+        "this test must exercise the literal-versus-expanded directory boundary"
+    );
+    f.store.put_app(&saved).unwrap();
+    let catalog_before = f.store.apps().unwrap();
+
+    let current = f.plan(true);
+    for name in ["Work notes.txt", "Schedule.pdf"] {
+        assert!(
+            current
+                .skipped
+                .iter()
+                .any(|item| { item.name == name && item.reason.contains("working directory") }),
+            "a saved shortcut working in this Desktop must keep its documents"
+        );
+        assert!(!current.items.iter().any(|item| item.name == name));
+    }
+    assert_eq!(current.summary(), (0, 0, 0));
+
+    // Revalidation prevents a preview prepared in another window from
+    // overriding a newly discovered working-directory dependency.
+    let error = apply(&f.store, &outdated, &AtomicBool::new(false))
+        .expect_err("a stale preview cannot relocate working-directory files");
+    assert!(
+        format!("{error:#}").contains("working directory"),
+        "{error:#}"
+    );
+    for name in ["Work notes.txt", "Schedule.pdf"] {
+        assert_eq!(disk::read(desktop.join(name)).unwrap(), b"user document");
+    }
+    assert!(!desktop.join("Documents").exists());
+    assert_eq!(f.store.apps().unwrap(), catalog_before);
+    assert!(!status(&f.store).unwrap().pending);
+    assert!(status(&f.store).unwrap().undo.is_none());
+}
+
+#[test]
 fn aliased_desktop_working_directory_protects_opt_in_files_at_preview_and_apply() {
     let f = Fixture::new();
     for name in ["Important.txt", "Other.pdf"] {
