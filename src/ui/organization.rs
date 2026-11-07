@@ -300,7 +300,7 @@ impl Settings {
             .as_ref()
             .ok()
             .filter(|current| !current.pending)
-            .and_then(|_| self.organization_plan.as_ref())
+            .and(self.organization_plan.as_ref())
             .filter(|plan| plan.options.include_files == self.organization_files)
             .map(|plan| {
                 let (moves, _, _) = plan.summary();
@@ -324,8 +324,8 @@ impl Settings {
             |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.heading(t("Навести порядок", "Organize desktop"));
-                    if let Some((moves, rejected)) = preview_action {
-                        if primary(
+                    if let Some((moves, rejected)) = preview_action
+                        && primary(
                             ui,
                             available && (moves > 0 || rejected),
                             if moves > 0 {
@@ -335,9 +335,8 @@ impl Settings {
                             },
                         )
                         .clicked()
-                        {
-                            apply = true;
-                        }
+                    {
+                        apply = true;
                     }
                     if ui
                         .add_enabled(available, egui::Button::new(t("Закрыть", "Close")))
