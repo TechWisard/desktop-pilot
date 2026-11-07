@@ -259,7 +259,10 @@ fn optional_media_organization_keeps_editor_and_camera_companions_in_place() {
 
     undo(&f.store, &f.last()).unwrap();
     for (name, contents) in entries {
-        assert_eq!(disk::read(f.desktop.join(name)).unwrap(), contents.as_bytes());
+        assert_eq!(
+            disk::read(f.desktop.join(name)).unwrap(),
+            contents.as_bytes()
+        );
     }
     assert!(!f.desktop.join("Images").exists());
     assert!(!f.desktop.join("Media").exists());

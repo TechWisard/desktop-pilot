@@ -157,15 +157,10 @@ mod tests {
         .into_iter()
         .map(PathBuf::from)
         .collect();
-        let expected: HashSet<_> = [
-            "edited.jpg",
-            "gx012345.mp4",
-            "gh018765.mp4",
-            "clip.mov",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect();
+        let expected: HashSet<_> = ["edited.jpg", "gx012345.mp4", "gh018765.mp4", "clip.mov"]
+            .into_iter()
+            .map(String::from)
+            .collect();
         assert_eq!(protected(&paths), expected);
     }
 
