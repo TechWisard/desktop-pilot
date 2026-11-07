@@ -16,9 +16,13 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It has 
 
 To update an existing installation, open the executable from the new archive. Your local profile, rules and history are retained. The executable is unsigned; verify its source and checksum before opening it.
 
-**Development branch:** The desktop organization feature described below is not included in the currently published 0.2.126 download. It is undergoing final acceptance here.
+**Development branch:** The desktop organization feature described below is not included in the currently published 0.2.127 download. It is undergoing final acceptance here.
 
 ## Stable shortcut search fixes retained in this branch
+
+## Improvements in 0.2.127
+
+**Copied web root addresses now find their saved shortcut even with an optional `/` before a query or fragment.** The lookup preserves distinct HTTPS/HTTP destinations, query spelling, source files and **Always** / **Never** rules; unrelated notes are never accepted as an exact address hit. This correction is inherited from the [published stable release](https://github.com/TechWisard/desktop-pilot/releases/tag/v0.2.127), with [real shortcut and SQLite regression](docs/research/2026-11-07-http-root-lookup.md). Desktop organization remains unreleased in this draft.
 
 ## Improvements in 0.2.126
 
