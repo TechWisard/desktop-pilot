@@ -21,11 +21,7 @@ fn is_russian() -> bool {
     })
 }
 pub fn text<'a>(ru: &'a str, en: &'a str) -> &'a str {
-    if is_russian() {
-        ru
-    } else {
-        en
-    }
+    if is_russian() { ru } else { en }
 }
 pub fn runtime(value: &str) -> String {
     translate(value, is_russian())
