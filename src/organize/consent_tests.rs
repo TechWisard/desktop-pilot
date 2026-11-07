@@ -317,9 +317,10 @@ fn literal_percent_desktop_working_directory_preserves_opt_in_documents() {
     let current = f.plan(true);
     for name in ["Work notes.txt", "Schedule.pdf"] {
         assert!(
-            current.skipped.iter().any(|item| {
-                item.name == name && item.reason.contains("working directory")
-            }),
+            current
+                .skipped
+                .iter()
+                .any(|item| { item.name == name && item.reason.contains("working directory") }),
             "a saved shortcut working in this Desktop must keep its documents"
         );
         assert!(!current.items.iter().any(|item| item.name == name));
@@ -330,7 +331,10 @@ fn literal_percent_desktop_working_directory_preserves_opt_in_documents() {
     // overriding a newly discovered working-directory dependency.
     let error = apply(&f.store, &outdated, &AtomicBool::new(false))
         .expect_err("a stale preview cannot relocate working-directory files");
-    assert!(format!("{error:#}").contains("working directory"), "{error:#}");
+    assert!(
+        format!("{error:#}").contains("working directory"),
+        "{error:#}"
+    );
     for name in ["Work notes.txt", "Schedule.pdf"] {
         assert_eq!(disk::read(desktop.join(name)).unwrap(), b"user document");
     }
