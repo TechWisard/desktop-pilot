@@ -346,6 +346,86 @@ fn filtered_bulk_review_keeps_unmatched_choices_across_organizer_pages() {
 }
 
 #[test]
+fn searching_destination_folders_bulk_reviews_every_matching_page() {
+    let mut f = Fixture::new();
+    // Real .url files are loaded through the normal Windows parser and
+    // Store. None has "Sites" in its name: that is the displayed destination.
+    for index in 0..45 {
+        let path = f.desktop.join(format!("Entry-{index:02}.url"));
+        fs::write(
+            &path,
+            format!("[InternetShortcut]\r\nURL=https://example.invalid/entry/{index}\r\n"),
+        )
+        .unwrap();
+        f.app
+            .store
+            .put_app(&native::read_link(&path).unwrap())
+            .unwrap();
+    }
+    f.app.organization_analyze();
+    f.finish_job();
+    let plan = f.app.organization_plan.as_ref().unwrap();
+    assert_eq!(plan.items.len(), 47);
+    assert!(plan.items.iter().all(|item| plan.destination(item) == "Sites"));
+    let ctx = egui::Context::default();
+    configure_style(&ctx);
+    i18n::set("en");
+    f.app.config.language = "en".into();
+    let viewport = egui::vec2(1200.0, 900.0);
+
+    f.app.organization_query = "sites".into();
+    click_organization_button(&ctx, &mut f.app, viewport, "Deselect matches");
+    let plan = f.app.organization_plan.as_ref().unwrap();
+    assert_eq!(plan.items.iter().filter(|item| item.selected).count(), 0);
+    assert_eq!(plan.summary(), (0, 0, 0));
+    assert_eq!(f.app.organization_query, "sites");
+
+    // A later project-specific search only changes that single selection.
+    f.app.organization_query = "Alpha".into();
+    click_organization_button(&ctx, &mut f.app, viewport, "Select matches");
+    assert_eq!(
+        f.app
+            .organization_plan
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .filter(|item| item.selected)
+            .count(),
+        1
+    );
+    // Restoring all the destination matches must include page two.
+    f.app.organization_query = "Sites".into();
+    click_organization_button(&ctx, &mut f.app, viewport, "Select matches");
+    assert_eq!(
+        f.app
+            .organization_plan
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .filter(|item| item.selected)
+            .count(),
+        47
+    );
+    click_organization_button(&ctx, &mut f.app, viewport, "Deselect matches");
+    f.app.organization_apply();
+    f.finish_job();
+    assert!(f.app.notice.as_ref().unwrap().kind == NoticeKind::Success);
+    assert!(f.desktop.join("Alpha.url").is_file());
+    assert!(f.desktop.join("Beta.url").is_file());
+    assert!(f.desktop.join("Entry-44.url").is_file());
+    assert!(!f.desktop.join("Sites").exists());
+    assert!(organize::status(&f.app.store).unwrap().undo.is_none());
+
+    f.app.organization_analyze();
+    f.finish_job();
+    let again = f.app.organization_plan.as_ref().unwrap();
+    assert!(again.items.is_empty());
+    assert_eq!(again.skipped.len(), 47);
+}
+
+#[test]
 fn all_six_thousand_preview_and_skipped_items_remain_accessible() {
     for count in [0usize, 1, 39, 40, 41, 60, 61, 5999, 6000] {
         let pages = count.div_ceil(ORGANIZATION_PAGE_SIZE).max(1);
