@@ -22,6 +22,12 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It lear
 
 Installation is per user, by default in `%LOCALAPPDATA%\DesktopPilot`; no administrator access is required. Settings are available from the tray icon and the Start menu. This preview executable is unsigned; download only from this repository's Releases and verify the supplied SHA-256 checksum.
 
+## Improvements in 0.2.124
+
+**Pasting a full `.cmd` or `.bat` launch path now finds the correct saved shortcut and policy.** Previously a complete path was treated as general text and could also match another shortcut mentioning that path in its note or having a longer filename. Exact Windows batch-launcher lookup now respects the same rules as `.exe` paths, including **Always** and **Never** filters, while ordinary name/folder search stays broad. Saved shortcuts, launch settings, desktop positions and usage history remain unchanged. [Reproducible Windows/SQLite scenario](docs/research/2026-11-07-copied-batch-targets.md).
+
+The separate desktop organization feature remains under acceptance in PR #211 and is not part of this update.
+
 ## Improvements in 0.2.123
 
 **A copied full shortcut path now selects the correct app and its saved rule.** Different folders can contain same-named shortcuts, including a folder literally called `%USERNAME%` and one named after the Windows account. In Apps search, actual absolute filenames are no longer expanded a second time, which could display both saved entries instead of the one selected in Explorer. Existing **Always** and **Never** rules stay distinct; abbreviated `%SystemRoot%` queries still work. Shortcuts, history, layout and preferences are not modified. [Real shortcut and SQLite regression](docs/research/2026-11-06-literal-copied-path-search.md).

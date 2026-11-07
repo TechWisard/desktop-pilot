@@ -112,3 +112,112 @@ fn copied_executable_path_keeps_literal_percent_directories_and_rules_distinct()
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn copied_batch_launch_paths_identify_only_the_saved_target_and_policy() {
+    // Full Explorer paths should not match unrelated notes or longer names.
+    // Use real, distinct local files and the actual SQLite catalog/search.
+    let root = std::env::temp_dir().join(format!(
+        "desktop-pilot-batch-search-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let cmd = root.join("Team Alpha").join("Launch.cmd");
+    let longer = root.join("Team Alpha").join("Launch.cmd.backup");
+    let bat = root.join("Maintenance").join("Deploy.bat");
+    std::fs::create_dir_all(cmd.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(bat.parent().unwrap()).unwrap();
+    std::fs::write(&cmd, b"@echo off\r\nrem first command\r\n").unwrap();
+    std::fs::write(&longer, b"unrelated backup\r\n").unwrap();
+    std::fs::write(&bat, b"@echo off\r\nrem other batch\r\n").unwrap();
+    let store = Store::open(&root.join("profile")).unwrap();
+    for (id, target, policy, note) in [
+        (
+            "cmd",
+            cmd.to_string_lossy().into_owned(),
+            Policy::Never,
+            String::new(),
+        ),
+        (
+            "longer",
+            longer.to_string_lossy().into_owned(),
+            Policy::Auto,
+            String::new(),
+        ),
+        (
+            "cmd-note",
+            r"C:\Different\Unrelated.exe".into(),
+            Policy::Always,
+            cmd.to_string_lossy().into_owned(),
+        ),
+        (
+            "bat",
+            bat.to_string_lossy().into_owned(),
+            Policy::Always,
+            String::new(),
+        ),
+        (
+            "bat-note",
+            r"C:\Different\Other.exe".into(),
+            Policy::Never,
+            bat.to_string_lossy().into_owned(),
+        ),
+    ] {
+        store
+            .put_app(&App {
+                id: id.into(),
+                name: format!("Launcher {id}"),
+                source: format!(r"C:\Shortcuts\{id}.lnk"),
+                target,
+                policy,
+                note,
+                valid: true,
+                ..Default::default()
+            })
+            .unwrap();
+    }
+    let apps = store.apps().unwrap();
+    let ranking = rank(&apps, &store.days().unwrap(), &Config::default(), now());
+    let mut cache = CatalogCache::default();
+    cache.rebuild(&apps, &ranking);
+    let recent = HashSet::new();
+    let mut matches = |query: &str, filter| {
+        cache.update(&apps, &ranking, query, filter, 0, &recent);
+        cache
+            .indices
+            .iter()
+            .map(|&i| apps[i].id.as_str())
+            .collect::<Vec<_>>()
+    };
+
+    let cmd_query = format!(r#""{}""#, cmd.display());
+    assert_eq!(matches(&cmd_query, 0), ["cmd"]);
+    assert_eq!(matches(&cmd_query, 3), ["cmd"]);
+    assert!(matches(&cmd_query, 2).is_empty());
+    assert_eq!(
+        matches(&cmd.to_string_lossy().replace('\\', "/"), 0),
+        ["cmd"]
+    );
+
+    let bat_query = format!("'{}'", bat.display());
+    assert_eq!(matches(&bat_query, 0), ["bat"]);
+    assert_eq!(matches(&bat_query, 2), ["bat"]);
+    assert!(matches(&bat_query, 3).is_empty());
+
+    // Ordinary word searches remain intentionally broad.
+    assert!(matches("launcher", 0).len() >= 5);
+    assert_eq!(store.apps().unwrap(), apps);
+    assert_eq!(
+        std::fs::read(&cmd).unwrap(),
+        b"@echo off\r\nrem first command\r\n"
+    );
+    assert_eq!(
+        std::fs::read(&bat).unwrap(),
+        b"@echo off\r\nrem other batch\r\n"
+    );
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
