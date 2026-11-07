@@ -429,7 +429,11 @@ fn title_close_and_one_confirmation_stay_visible_at_normal_and_double_scale() {
             } else {
                 "Organize desktop"
             });
-            let close = find(if language == "ru" { "Закрыть" } else { "Close" });
+            let close = find(if language == "ru" {
+                "Закрыть"
+            } else {
+                "Close"
+            });
             let action = find(if language == "ru" {
                 "Применить выбранное"
             } else {
@@ -456,11 +460,12 @@ fn title_close_and_one_confirmation_stay_visible_at_normal_and_double_scale() {
             assert_eq!(
                 painted
                     .iter()
-                    .filter(|(text, _)| text == if language == "ru" {
-                        "Применить выбранное"
-                    } else {
-                        "Apply selected moves"
-                    })
+                    .filter(|(text, _)| text
+                        == if language == "ru" {
+                            "Применить выбранное"
+                        } else {
+                            "Apply selected moves"
+                        })
                     .count(),
                 1,
                 "only one confirmation may be visible"
