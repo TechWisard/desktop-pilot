@@ -5586,3 +5586,6 @@ mod stalled_command_tests;
 
 #[cfg(test)]
 mod manual_placement_reason_tests;
+
+#[cfg(test)]
+mod catalog_executable_path_tests;
