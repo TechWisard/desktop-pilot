@@ -172,18 +172,18 @@ fn click_organization_button(
     ctx: &egui::Context,
     app: &mut Settings,
     viewport: egui::Vec2,
-    label: &str,
+    labels: &[&str],
 ) {
     settle(ctx, app, viewport);
     let output = render(ctx, app, viewport, Vec::new());
     let painted = rendered_text(&output);
     let at = painted
         .iter()
-        .find(|(text, _)| text == label)
+        .find(|(text, _)| labels.contains(&text.as_str()))
         .map(|(_, rect)| rect.center())
         .unwrap_or_else(|| {
             panic!(
-                "Missing visible organizer control '{label}': {:?}",
+                "Missing visible organizer control {labels:?}: {:?}",
                 painted.iter().map(|(text, _)| text).collect::<Vec<_>>()
             )
         });
@@ -196,8 +196,6 @@ fn one_bulk_choice_changes_the_entire_real_plan_even_with_hidden_rows() {
     f.analyze();
     let ctx = egui::Context::default();
     configure_style(&ctx);
-    i18n::set("en");
-    f.app.config.language = "en".into();
     let viewport = egui::vec2(1200.0, 900.0);
     let original_sources: Vec<_> = ["Alpha.url", "Beta.url"]
         .iter()
@@ -207,14 +205,14 @@ fn one_bulk_choice_changes_the_entire_real_plan_even_with_hidden_rows() {
     // Search hides both rows, yet the global action must update both, not
     // just the visible page/filter. No filesystem mutation occurs on selection.
     f.app.organization_query = "unmatched".into();
-    click_organization_button(&ctx, &mut f.app, viewport, "Deselect all");
+    click_organization_button(&ctx, &mut f.app, viewport, &["Deselect all", "Снять все отметки"]);
     let plan = f.app.organization_plan.as_ref().unwrap();
     assert_eq!(plan.items.len(), 2);
     assert!(plan.items.iter().all(|item| !item.selected));
     assert_eq!(plan.summary(), (0, 0, 0));
     assert_eq!(f.app.organization_query, "unmatched");
 
-    click_organization_button(&ctx, &mut f.app, viewport, "Select all");
+    click_organization_button(&ctx, &mut f.app, viewport, &["Select all", "Отметить все"]);
     let plan = f.app.organization_plan.as_ref().unwrap();
     assert!(plan.items.iter().all(|item| item.selected));
     assert_eq!(plan.summary(), (2, 1, 1));
@@ -222,7 +220,7 @@ fn one_bulk_choice_changes_the_entire_real_plan_even_with_hidden_rows() {
     // A partial filter must not allow a hidden selected row to remain when
     // the user asks to keep the whole plan on the desktop.
     f.app.organization_query = "Alpha".into();
-    click_organization_button(&ctx, &mut f.app, viewport, "Deselect all");
+    click_organization_button(&ctx, &mut f.app, viewport, &["Deselect all", "Снять все отметки"]);
     assert!(
         f.app
             .organization_plan
