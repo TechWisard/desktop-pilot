@@ -4927,25 +4927,36 @@ mod tests {
             (app, path, contents)
         };
         let (work, work_path, work_bytes) = make(
-            "Work", "https://EXAMPLE.invalid?view=Work", Policy::Always, ""
+            "Work",
+            "https://EXAMPLE.invalid?view=Work",
+            Policy::Always,
+            "",
         );
         let (project, project_path, project_bytes) = make(
-            "Project", "https://example.invalid/#Project", Policy::Never, ""
+            "Project",
+            "https://example.invalid/#Project",
+            Policy::Never,
+            "",
         );
         let (other, other_path, other_bytes) = make(
-            "Unrelated", "https://other.invalid/path", Policy::Auto,
-            "https://example.invalid/?view=Work"
+            "Unrelated",
+            "https://other.invalid/path",
+            Policy::Auto,
+            "https://example.invalid/?view=Work",
         );
-        let (http, http_path, http_bytes) = make(
-            "Insecure", "http://example.invalid/", Policy::Auto, ""
-        );
+        let (http, http_path, http_bytes) =
+            make("Insecure", "http://example.invalid/", Policy::Auto, "");
         let saved = store.apps().unwrap();
         let mut cache = CatalogCache::default();
         cache.rebuild(&saved, &[]);
         let none = HashSet::new();
         let query = |cache: &mut CatalogCache, address: &str, filter: usize| {
             cache.update(&saved, &[], address, filter, 0, &none);
-            cache.indices.iter().map(|&i| saved[i].id.clone()).collect::<Vec<_>>()
+            cache
+                .indices
+                .iter()
+                .map(|&i| saved[i].id.clone())
+                .collect::<Vec<_>>()
         };
         assert_eq!(
             query(&mut cache, "https://example.invalid/?view=Work", 0),
