@@ -4918,7 +4918,7 @@ mod tests {
         let store = Store::open(&home).unwrap();
         let make = |name: &str, target: &str, policy: Policy, note: &str| {
             let path = home.join(format!("{name}.url"));
-            let contents = format!("[InternetShortcut]\\r\\nURL={target}\\r\\n");
+            let contents = format!("[InternetShortcut]\r\nURL={target}\r\n");
             std::fs::write(&path, contents.as_bytes()).unwrap();
             let mut app = native::read_link(&path).unwrap();
             app.policy = policy;
