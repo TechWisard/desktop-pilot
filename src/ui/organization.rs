@@ -139,8 +139,9 @@ fn organization_reason(reason: &str) -> String {
 // A person's terms may describe different visible columns, e.g. an app
 // name plus the destination folder. Require every term, regardless of order.
 // This is a read-only filter: plans and saved rules never change.
+// The UI normalizes the query once per frame; do not allocate a new query
+// string for each of the thousands of possible rows in a large review.
 fn organizer_matches_query(query: &str, first: &str, second: &str) -> bool {
-    let query = query.trim().to_lowercase();
     if query.is_empty() {
         return true;
     }
@@ -152,7 +153,8 @@ fn organizer_matches_query(query: &str, first: &str, second: &str) -> bool {
 }
 
 fn skipped_matches_query(item: &organize::Skipped, query: &str) -> bool {
-    organizer_matches_query(query, &item.name, &organization_reason(&item.reason))
+    query.is_empty()
+        || organizer_matches_query(query, &item.name, &organization_reason(&item.reason))
 }
 
 impl Settings {
