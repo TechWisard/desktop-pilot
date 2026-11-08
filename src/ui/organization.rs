@@ -577,6 +577,26 @@ impl Settings {
                                     );
                                 });
                             }
+                            // A long filtered review must have a one-click escape
+                            // from a query with no visible candidates. Never reset
+                            // selected rows or remembered policies when clearing search.
+                            if !self.organization_query.trim().is_empty()
+                                && ui
+                                    .add_enabled(
+                                        available,
+                                        egui::Button::new(t("Очистить поиск", "Clear search")),
+                                    )
+                                    .clicked()
+                            {
+                                self.organization_query.clear();
+                                self.organization_page = 0;
+                                ctx.data_mut(|data| {
+                                    data.insert_temp(
+                                        egui::Id::new("organize-skipped-page"),
+                                        0usize,
+                                    );
+                                });
+                            }
                             ui.small(t(
                                 "Снимите галочку, чтобы оставить объект на столе. Можно запомнить исключения без перемещения других файлов.",
                                 "Uncheck an object to leave it on the desktop. You can remember exclusions without moving other files.",
@@ -602,6 +622,12 @@ impl Settings {
                                 })
                                 .map(|(index, _)| index)
                                 .collect();
+                            if !query.is_empty() && filtered.is_empty() {
+                                ui.small(t(
+                                    "Среди предлагаемых объектов совпадений нет. Проверьте список оставленных на месте ниже или очистите поиск.",
+                                    "No proposed items match. Check the left-in-place list below or clear the search.",
+                                ));
+                            }
                             // Keep the original full-plan controls above, but let a person
                             // review one searched set across every page without silently
                             // changing other selected desktop objects.
