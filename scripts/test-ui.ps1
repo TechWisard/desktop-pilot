@@ -86,11 +86,12 @@ try {
     }
     foreach ($language in @('ru', 'en')) {
         foreach ($scale in @(1, 2)) {
-            foreach ($view in @('organization', 'organization-filtered', 'organization-files', 'organization-warning')) {
+            foreach ($view in @('organization', 'organization-filtered', 'organization-files', 'organization-warning', 'organization-kept')) {
                 foreach ($bottom in @($false, $true)) {
                     if ($bottom -and $scale -ne 2) { continue }
                     $suffix = if ($bottom) { '-bottom' } else { '' }
                     $name = "$language-$($scale * 100)-$view$suffix"
+                    $captureView = if ($view -eq 'organization-kept') { 'organization' } else { $view }
                     $profileHome = Join-Path $fixtureRoot "test-$name"
                     [IO.Directory]::CreateDirectory($profileHome) | Out-Null
                     $seed = Join-Path $profileHome 'seed.json'
@@ -114,7 +115,8 @@ with sqlite3.connect(str(databases[0])) as db:
     config = json.loads(db.execute("SELECT v FROM kv WHERE k='config'").fetchone()[0])
     config.update(language=language, collect=False, autostart=False)
     values = {'config': config, 'setup_complete': True, 'background_disabled': True,
-              'test_desktop': str(desktop), 'test_view': view, 'test_search': 'Project Alpha',
+              'test_desktop': str(desktop), 'test_view': 'organization' if view == 'organization-kept' else view,
+              'test_singleton_review': view == 'organization-kept', 'test_search': 'Project Alpha',
               'test_scroll_bottom': bottom,
               'ui_scale': scale, 'test_viewport': [1120.0, 820.0],
               'test_layout': {'items': [], 'spacing': {'x': 80, 'y': 100}, 'origin': {'x': 0, 'y': 0},
@@ -122,22 +124,30 @@ with sqlite3.connect(str(databases[0])) as db:
     db.executemany('INSERT OR REPLACE INTO kv(k,v) VALUES (?,?)', [(k, json.dumps(v)) for k, v in values.items()])
 '@ | python - $profileHome $language $scale $view $bottom
                     if ($LASTEXITCODE) { throw "Fixture setup failed: $name" }
+                    $beforeFiles = @{}
+                    foreach ($file in Get-ChildItem -LiteralPath (Join-Path $profileHome 'Desktop') -File) {
+                        $beforeFiles[$file.Name] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+                    }
                     $destination = Join-Path $report $name
                     $scrollMessages = Invoke-Fixture -Label $name -ScrollBottom:$bottom -Arguments @('--ui-smoke', $destination, '--home', $profileHome)
-                    $image = Join-Path $destination "dialog-$view.png"
+                    $image = Join-Path $destination "dialog-$captureView.png"
                     if (-not (Test-Path -LiteralPath $image) -or (Get-Item -LiteralPath $image).Length -lt 4096) { throw "Native screenshot is missing or empty: $name" }
                     foreach ($leaf in @('Project Alpha.url', 'Project Beta.url', 'Reference notes.url', 'Notes one.txt', 'Notes two.txt', 'Existing project')) {
                         if (-not (Test-Path -LiteralPath (Join-Path (Join-Path $profileHome 'Desktop') $leaf))) { throw "UI capture changed a fixture: $leaf" }
                     }
                     if (@(Get-ChildItem -LiteralPath (Join-Path $profileHome 'Desktop')).Count -ne 6) { throw 'UI capture created an unexpected desktop object' }
-                    $records.Add(@{view=$view; language=$language; scale=$scale; scrolled=$bottom; scroll_messages=$scrollMessages; image="$name/dialog-$view.png"; sha256=(Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash.ToLowerInvariant(); exit_code=0})
+                    foreach ($leaf in $beforeFiles.Keys) {
+                        $afterHash = (Get-FileHash -LiteralPath (Join-Path (Join-Path $profileHome 'Desktop') $leaf) -Algorithm SHA256).Hash
+                        if ($afterHash -ne $beforeFiles[$leaf]) { throw "UI capture modified fixture bytes: $leaf" }
+                    }
+                    $records.Add(@{view=$view; language=$language; scale=$scale; scrolled=$bottom; scroll_messages=$scrollMessages; image="$name/dialog-$captureView.png"; sha256=(Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash.ToLowerInvariant(); exit_code=0; unchanged_fixture_files=$beforeFiles.Count})
                     Write-Host "PASS native UI: $name (scroll messages: $scrollMessages)"
                 }
             }
         }
     }
     @{os=(Get-CimInstance Win32_OperatingSystem).Caption; renderer=$renderer; executable_sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant(); captures=@($records)} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $report 'manifest.json') -Encoding utf8
-    Write-Host "Native UI: $($records.Count) captures verified; no desktop fixtures moved"
+    Write-Host "Native UI: $($records.Count) captures verified; no desktop fixtures moved or modified"
 } catch {
     $primaryFailure = $_
     [IO.File]::WriteAllText((Join-Path $report 'failure.txt'), $_.ToString() + "`n" + $_.ScriptStackTrace)

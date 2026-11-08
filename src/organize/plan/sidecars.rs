@@ -1,10 +1,12 @@
-//! Keep recognized media/sidecar sets in place rather than splitting them.
+//! Keep recognized associated file sets in place rather than splitting them.
 //! Names are evidence of a possible dependency, not proof of file contents.
 use super::{Group, norm_literal_path, plain_group};
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
 };
+
+mod archives;
 
 pub(super) fn protected(paths: &[PathBuf]) -> HashSet<String> {
     let mut by_name = HashMap::new();
@@ -28,7 +30,7 @@ pub(super) fn protected(paths: &[PathBuf]) -> HashSet<String> {
             .or_default()
             .push(key);
     }
-    let mut protected = HashSet::new();
+    let mut protected = archives::protected(paths);
     for path in paths {
         let extension = path
             .extension()

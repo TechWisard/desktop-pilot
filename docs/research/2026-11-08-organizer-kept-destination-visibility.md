@@ -16,6 +16,18 @@ Keep the existing short moving-row label `Shortcut » Destination`. For a row th
 
 **Before:** the checked-to-singleton transition hides the searchable candidate destination on 2 of 2 rows. **After:** it is visible and explicitly marked as not moving on 2 of 2 rows, while actual filesystem moves stay at zero. Synthetic rendering and correctness checks do not measure user productivity. The existing 1×/2× screenshot and complete Windows CI checks must pass on the exact proposed commit.
 
+## Completing native acceptance of the changed state
+
+Continue the existing #246 history, reconciled with the independently merged multipart archive guard #247. Preserve both parents, stable main and all existing tests. The previously successful #246 run 42486718140 is historical evidence, not validation of the combined head.
+
+The former screenshot driver only captured fully selected plans, filtered plans, optional files and an error. None showed the changed kept-row label. The `organization-kept` scenario now prepares a real analyzed plan with one selected site shortcut and two unchecked site shortcuts. All three stay on the desktop; the native UI must show both unchecked and selected-singleton labels, the candidate folder and one Remember action. The driver captures this state in both languages at 100% and 200%, including a bottom-scrolled 200% view. This adds six captures, not a new product setting or renderer. Its `test_singleton_review` value is read only after the existing explicit-capture and isolated-profile directory guards.
+
+`src/ui/smoke/kept_tests.rs` checks the actual native shortcut parser and SQLite analyzer: ordinary capture still proposes all three moves; the singleton capture proposes none without changing catalog, an important Always rule, usage history, files or the connection's SQLite change count. A deficient one-item fixture must fail rather than silently produce an irrelevant screenshot. The existing real egui regression still checks the visible text and searchable destination.
+
+The native screenshot driver now compares SHA-256 for all five fixture files before and after **every** scene, in addition to the existing directory membership/count and process checks. A screenshot is not accepted merely because the original filenames still exist. Test fixtures remain synthetic and do not open URLs or operate on a person's desktop.
+
+Record final head, actual CI outcomes, screenshot review and artifact backup verification in the PR discussion. This document does not predeclare passing results. The proposed additional native scenes specifically address the missing visual evidence; they are not physical keyboard or hardware-DPI acceptance.
+
 ## Release boundary
 
 Keep this correction on the unreleased 0.3.0 organizer draft until physical Windows 11 multi-monitor/DPI, active OneDrive redirection, keyboard accessibility and interrupted-power acceptance are independently verified. Do not promote this isolated rendering fix into a release by itself.
