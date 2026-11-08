@@ -7,9 +7,11 @@ $bytes = [Text.Encoding]::UTF8.GetBytes('synthetic verified renderer')
 $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
 try {
     $script:attempts = 0
+    $script:uris = @()
     $successOnThird = {
         param([string]$Url, [string]$OutFile)
         $script:attempts++
+        $script:uris += $Url
         if ($script:attempts -gt 1 -and (Test-Path -LiteralPath $OutFile)) { throw 'Partial archive was reused' }
         if ($script:attempts -lt 3) {
             [IO.File]::WriteAllText($OutFile, 'partial response')
@@ -17,7 +19,8 @@ try {
         }
         [IO.File]::WriteAllBytes($OutFile, $bytes)
     }
-    Invoke-VerifiedUiRendererDownload -Uri 'https://example.invalid/renderer' -Destination $archive -ExpectedSha256 $hash -Transfer $successOnThird -RetryDelayMilliseconds 0
+    Invoke-VerifiedUiRendererDownload -Uri 'https://example.invalid/renderer' -AlternateUri 'https://api.github.com/repos/test/release/assets/123' -Destination $archive -ExpectedSha256 $hash -Transfer $successOnThird -RetryDelayMilliseconds 0
+    if ($script:uris.Count -ne 3 -or $script:uris[0] -ne 'https://example.invalid/renderer' -or $script:uris[1] -ne 'https://api.github.com/repos/test/release/assets/123' -or $script:uris[2] -ne 'https://api.github.com/repos/test/release/assets/123') { throw 'Fallback did not use the pinned alternate route' }
     if ($script:attempts -ne 3) { throw "Expected 3 transfer attempts: $script:attempts" }
     if (-not (Test-Path -LiteralPath $archive) -or (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $hash) { throw 'Verified archive not retained' }
 
