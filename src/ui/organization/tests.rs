@@ -1322,3 +1322,80 @@ fn long_preview_uses_the_modal_wheel_at_normal_and_double_scale() {
         );
     }
 }
+
+#[test]
+fn empty_organizer_search_is_explained_and_can_be_cleared_without_losing_choices() {
+    let mut f = Fixture::new();
+    f.analyze();
+    let original: Vec<_> = ["Alpha.url", "Beta.url"]
+        .iter()
+        .map(|name| fs::read(f.desktop.join(name)).unwrap())
+        .collect();
+    let plan = f.app.organization_plan.as_mut().unwrap();
+    plan.items
+        .iter_mut()
+        .find(|item| item.name == "Alpha.url")
+        .unwrap()
+        .selected = false;
+    let chosen: Vec<_> = plan.items.iter().map(|item| item.selected).collect();
+    let ctx = egui::Context::default();
+    configure_style(&ctx);
+    i18n::set("en");
+    f.app.config.language = "en".into();
+    let viewport = egui::vec2(1400.0, 1100.0);
+
+    // A search with no proposed results must not look like an empty desktop.
+    // An excluded-item match, if any, is a separate section below.
+    f.app.organization_query = "not-a-real-shortcut".into();
+    settle(&ctx, &mut f.app, viewport);
+    let labels = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+    assert!(
+        labels
+            .iter()
+            .any(|(label, _)| { label.contains("No proposed items match") })
+    );
+    assert!(labels.iter().any(|(label, _)| label == "Clear search"));
+
+    // Click the production egui control. Clearing a filter is never consent
+    // to change selections, keep policies, original shortcuts or the journal.
+    click_organization_button(&ctx, &mut f.app, viewport, "Clear search");
+    assert_eq!(f.app.organization_query, "");
+    assert_eq!(f.app.organization_page, 0);
+    let plan = f.app.organization_plan.as_ref().unwrap();
+    assert_eq!(
+        plan.items
+            .iter()
+            .map(|item| item.selected)
+            .collect::<Vec<_>>(),
+        chosen
+    );
+    assert_eq!(plan.items.len(), 2);
+    assert_eq!(plan.summary(), (0, 0, 0));
+    assert!(
+        f.app
+            .store
+            .get::<Vec<String>>("organization.keep.v1")
+            .unwrap()
+            .is_empty()
+    );
+    assert!(organize::status(&f.app.store).unwrap().undo.is_none());
+    assert_eq!(fs::read(f.desktop.join("Alpha.url")).unwrap(), original[0]);
+    assert_eq!(fs::read(f.desktop.join("Beta.url")).unwrap(), original[1]);
+
+    for language in ["en", "ru"] {
+        f.app.config.language = language.into();
+        i18n::set(language);
+        f.app.organization_query = "no-match-two".into();
+        let ctx = egui::Context::default();
+        configure_style(&ctx);
+        settle(&ctx, &mut f.app, viewport);
+        let labels = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+        assert!(labels.iter().any(|(label, _)| {
+            if language == "ru" {
+                label.contains("Среди предлагаемых объектов совпадений нет")
+            } else {
+                label.contains("No proposed items match")
+            }
+        }));
+    }
+}
