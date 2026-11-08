@@ -8,7 +8,7 @@ This is a verified source/UI-state inconsistency, not a claim that anybody has l
 
 ## Narrow correction
 
-When **at least one item is checked** but the actual production plan reports **zero moves**, explain that a new folder requires two checked items from the same group. Do not show a misleading Apply action or change selection automatically. Keep the normal global and filtered selection controls, one-operation recovery, protected items, manual rules, and remembered exclusions untouched. No new modal or settings.
+When **at least one item is checked** but the actual production plan reports **zero moves**, explain that a new folder requires two checked items from the same group. Display **Remember keep choices** only when at least one unchecked item can actually be remembered, and **Apply selected moves** only when at least one movement exists. Suppress the previously visible, disabled no-op confirmation for an all-checked singleton review. Do not change any selection automatically. Keep the normal global and filtered selection controls, one-operation recovery, protected items, manual rules, and remembered exclusions untouched. No new modal or settings.
 
 ## Reproducible combined sequence
 
