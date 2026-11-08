@@ -191,6 +191,70 @@ fn click_organization_button(
 }
 
 #[test]
+fn zero_move_review_explains_singletons_without_moving_or_forgetting_user_choices() {
+    let mut f = Fixture::new();
+    f.analyze();
+    let original: Vec<_> = ["Alpha.url", "Beta.url"]
+        .iter()
+        .map(|name| fs::read(f.desktop.join(name)).unwrap())
+        .collect();
+    let ctx = egui::Context::default();
+    configure_style(&ctx);
+    i18n::set("en");
+    f.app.config.language = "en".into();
+    let viewport = egui::vec2(1200.0, 900.0);
+
+    // Two real web shortcuts initially make one usable folder. Unchecking
+    // one removes the only possible move, even though the other remains
+    // checked. The review must explain that before offering Keep.
+    let plan = f.app.organization_plan.as_mut().unwrap();
+    plan.items
+        .iter_mut()
+        .find(|item| item.name == "Alpha.url")
+        .unwrap()
+        .selected = false;
+    assert_eq!(plan.summary(), (0, 0, 0));
+    settle(&ctx, &mut f.app, viewport);
+    let visible = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+    assert!(visible.iter().any(|(label, _)| {
+        label.contains("Nothing will move yet: a new folder needs at least two checked items")
+    }));
+    assert!(visible.iter().any(|(label, _)| label == "Remember keep choices"));
+    assert!(!visible.iter().any(|(label, _)| label == "Apply selected moves"));
+
+    click_organization_button(&ctx, &mut f.app, viewport, "Remember keep choices");
+    f.finish_job();
+    assert_eq!(
+        f.app
+            .store
+            .get::<Vec<String>>("organization.keep.v1")
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(organize::status(&f.app.store).unwrap().undo.is_none());
+    assert_eq!(fs::read(f.desktop.join("Alpha.url")).unwrap(), original[0]);
+    assert_eq!(fs::read(f.desktop.join("Beta.url")).unwrap(), original[1]);
+
+    // Reopen a fresh production plan after the remembered exclusion. The
+    // remaining checked singleton is still not a move and should not offer
+    // a misleading Apply action or create a fake Undo transaction.
+    f.app.organization_analyze();
+    f.finish_job();
+    let plan = f.app.organization_plan.as_ref().unwrap();
+    assert_eq!(plan.items.len(), 1);
+    assert_eq!(plan.summary(), (0, 0, 0));
+    assert!(plan.items[0].selected);
+    let visible = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+    assert!(visible.iter().any(|(label, _)| {
+        label.contains("Nothing will move yet: a new folder needs at least two checked items")
+    }));
+    assert!(!visible.iter().any(|(label, _)| label == "Apply selected moves"));
+    assert!(!visible.iter().any(|(label, _)| label == "Remember keep choices"));
+    assert_eq!(fs::read(f.desktop.join("Beta.url")).unwrap(), original[1]);
+}
+
+#[test]
 fn one_bulk_choice_changes_the_entire_real_plan_even_with_hidden_rows() {
     let mut f = Fixture::new();
     f.analyze();
