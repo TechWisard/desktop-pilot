@@ -7,6 +7,7 @@ use std::{
 };
 
 mod archives;
+mod document_locks;
 
 pub(super) fn protected(paths: &[PathBuf]) -> HashSet<String> {
     let mut by_name = HashMap::new();
@@ -31,6 +32,7 @@ pub(super) fn protected(paths: &[PathBuf]) -> HashSet<String> {
             .push(key);
     }
     let mut protected = archives::protected(paths);
+    protected.extend(document_locks::protected(paths));
     for path in paths {
         let extension = path
             .extension()
