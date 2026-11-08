@@ -739,9 +739,14 @@ impl Settings {
                                         skipped.len(),
                                     ),
                                 )
-                                // Search should reveal matching exclusions on the first
-                                // visit without another hidden disclosure click. Subsequent
-                                // manual collapse/expand choices remain respected.
+                                // Keep filtered and unfiltered disclosure state separate.
+                                // Even a search matching every excluded item should open
+                                // the results once; later manual collapse remains respected.
+                                .id_salt(if query.is_empty() {
+                                    "organize-skipped-unfiltered"
+                                } else {
+                                    "organize-skipped-filtered"
+                                })
                                 .default_open(!query.is_empty())
                                 .show(ui, |ui| {
                                     let id = egui::Id::new("organize-skipped-page");

@@ -659,7 +659,6 @@ fn searching_exclusion_reasons_finds_saved_manual_rules_across_pages_and_locales
     assert!(organize::status(&f.app.store).unwrap().undo.is_none());
 }
 
-
 #[test]
 fn searching_only_excluded_objects_reveals_matches_and_distinguishes_no_results() {
     let mut f = Fixture::new();
@@ -674,7 +673,10 @@ fn searching_only_excluded_objects_reveals_matches_and_distinguishes_no_results(
     let plan = f.app.organization_plan.as_ref().unwrap();
     assert_eq!(plan.items.len(), 1);
     assert_eq!(plan.skipped.len(), 1);
-    assert_eq!(plan.skipped[0].reason, "Manual shortcut rule: left in place");
+    assert_eq!(
+        plan.skipped[0].reason,
+        "Manual shortcut rule: left in place"
+    );
 
     let viewport = egui::vec2(1400.0, 1200.0);
     for (language, query, reason, empty) in [
@@ -693,9 +695,13 @@ fn searching_only_excluded_objects_reveals_matches_and_distinguishes_no_results(
     ] {
         i18n::set(language);
         f.app.config.language = language.into();
-        f.app.organization_query = query.into();
         let ctx = egui::Context::default();
         configure_style(&ctx);
+        // The unfiltered disclosure has the exact same item count as this
+        // search. Its earlier collapsed state must not hide search results.
+        f.app.organization_query.clear();
+        settle(&ctx, &mut f.app, viewport);
+        f.app.organization_query = query.into();
         settle(&ctx, &mut f.app, viewport);
         let labels = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
         assert!(
@@ -705,8 +711,10 @@ fn searching_only_excluded_objects_reveals_matches_and_distinguishes_no_results(
             "Matching saved exclusion must be visible without another click ({language}): {labels:?}"
         );
         assert!(
-            labels.iter().any(|(text, _)| text.contains("Matching left-in-place")
-                || text.contains("Найденные оставленные на месте")),
+            labels
+                .iter()
+                .any(|(text, _)| text.contains("Matching left-in-place")
+                    || text.contains("Найденные оставленные на месте")),
             "Excluded-only search must not claim a fully empty review: {labels:?}"
         );
 
@@ -718,8 +726,10 @@ fn searching_only_excluded_objects_reveals_matches_and_distinguishes_no_results(
             "Fully unmatched query needs explicit recovery ({language}): {labels:?}"
         );
         assert!(
-            !labels.iter().any(|(text, _)| text.contains("Matching left-in-place")
-                || text.contains("Найденные оставленные на месте"))
+            !labels
+                .iter()
+                .any(|(text, _)| text.contains("Matching left-in-place")
+                    || text.contains("Найденные оставленные на месте"))
         );
     }
 
@@ -728,7 +738,10 @@ fn searching_only_excluded_objects_reveals_matches_and_distinguishes_no_results(
     assert_eq!(fs::read(beta).unwrap(), beta_bytes);
     assert!(organize::status(&f.app.store).unwrap().undo.is_none());
     assert_eq!(
-        f.app.store.get::<Vec<String>>("organization.keep.v1").unwrap(),
+        f.app
+            .store
+            .get::<Vec<String>>("organization.keep.v1")
+            .unwrap(),
         Vec::<String>::new()
     );
 }
@@ -1418,15 +1431,15 @@ fn empty_organizer_search_is_explained_and_can_be_cleared_without_losing_choices
     f.app.config.language = "en".into();
     let viewport = egui::vec2(1400.0, 1100.0);
 
-    // A search with no proposed results must not look like an empty desktop.
-    // An excluded-item match, if any, is a separate section below.
+    // A query with neither proposed nor excluded matches must not imply
+    // that a hidden excluded-results section contains an answer.
     f.app.organization_query = "not-a-real-shortcut".into();
     settle(&ctx, &mut f.app, viewport);
     let labels = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
     assert!(
         labels
             .iter()
-            .any(|(label, _)| { label.contains("No proposed items match") })
+            .any(|(label, _)| { label.contains("No items in this review match") })
     );
     assert!(labels.iter().any(|(label, _)| label == "Clear search"));
 
@@ -1466,9 +1479,9 @@ fn empty_organizer_search_is_explained_and_can_be_cleared_without_losing_choices
         let labels = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
         assert!(labels.iter().any(|(label, _)| {
             if language == "ru" {
-                label.contains("Среди предлагаемых объектов совпадений нет")
+                label.contains("Ничего не найдено в этом плане")
             } else {
-                label.contains("No proposed items match")
+                label.contains("No items in this review match")
             }
         }));
     }
