@@ -1742,3 +1742,74 @@ fn reanalyzing_from_the_dialog_resets_the_old_excluded_results_page() {
     assert!(!f.desktop.join("Sites").exists());
     assert!(organize::status(&f.app.store).unwrap().undo.is_none());
 }
+
+#[test]
+fn filtered_review_discloses_checked_objects_outside_search_without_changing_choices() {
+    let mut f = Fixture::new();
+    f.analyze();
+    let alpha = fs::read(f.desktop.join("Alpha.url")).unwrap();
+    let beta = fs::read(f.desktop.join("Beta.url")).unwrap();
+    for (language, text) in [
+        ("en", "Selected outside search: 1"),
+        ("ru", "Отмечено вне поиска: 1"),
+    ] {
+        for scale in [1.0, 2.0] {
+            let ctx = egui::Context::default();
+            configure_style(&ctx);
+            ctx.set_zoom_factor(scale);
+            i18n::set(language);
+            f.app.config.language = language.into();
+            f.app.organization_query = "Alpha".into();
+            let viewport = egui::vec2(1120.0 / scale, 820.0 / scale);
+            settle(&ctx, &mut f.app, viewport);
+            let before = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+            let (_, position) = before
+                .iter()
+                .find(|(value, _)| value == text)
+                .unwrap_or_else(|| panic!("{language} at {scale}x: {before:?}"));
+            assert!(ctx.screen_rect().contains_rect(*position));
+            assert_eq!(
+                f.app.organization_plan.as_ref().unwrap().summary(),
+                (2, 1, 1)
+            );
+
+            // The filter does not revoke a hidden choice. When the person
+            // explicitly unchecks that second shortcut, the scope warning
+            // disappears and the remaining singleton cannot move.
+            f.app
+                .organization_plan
+                .as_mut()
+                .unwrap()
+                .items
+                .iter_mut()
+                .find(|item| item.name == "Beta.url")
+                .unwrap()
+                .selected = false;
+            assert_eq!(
+                f.app.organization_plan.as_ref().unwrap().summary(),
+                (0, 0, 0)
+            );
+            let keeping = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+            assert!(!keeping.iter().any(|(value, _)| value.contains(text)));
+            f.app
+                .organization_plan
+                .as_mut()
+                .unwrap()
+                .items
+                .iter_mut()
+                .find(|item| item.name == "Beta.url")
+                .unwrap()
+                .selected = true;
+            let again = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+            assert!(again.iter().any(|(value, _)| value == text));
+
+            f.app.organization_query.clear();
+            let unfiltered = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+            assert!(!unfiltered.iter().any(|(value, _)| value.contains(text)));
+        }
+    }
+    assert_eq!(fs::read(f.desktop.join("Alpha.url")).unwrap(), alpha);
+    assert_eq!(fs::read(f.desktop.join("Beta.url")).unwrap(), beta);
+    assert!(organize::status(&f.app.store).unwrap().undo.is_none());
+    assert!(f.app.job.is_none());
+}

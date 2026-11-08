@@ -339,6 +339,23 @@ impl Settings {
             // A plan with no move and no Keep decision has no action to take.
             // Avoid displaying an inert confirmation for a checked singleton.
             .filter(|(moves, rejected)| *moves > 0 || *rejected);
+        // Searching hides rows, not their checked choices. Keep the number of
+        // checked, filtered-out rows beside the fixed Apply action, rather than
+        // relying on a message that scrolls out of view on long reviews.
+        // Don't run the extra search scan when the filter is empty.
+        let hidden_selected = match (self.organization_plan.as_ref(), preview_action) {
+            (Some(plan), Some(_)) if !self.organization_query.trim().is_empty() => {
+                let query = self.organization_query.trim().to_lowercase();
+                plan.items
+                    .iter()
+                    .filter(|item| {
+                        item.selected
+                            && !organizer_matches_query(&query, &item.name, &plan.destination(item))
+                    })
+                    .count()
+            }
+            _ => 0,
+        };
         let feedback = self.organization_feedback();
         let running = self.job.as_ref().map(|job| match job.label {
             "Analyzing the desktop…" => t("Анализируем рабочий стол…", "Analyzing the desktop…"),
@@ -381,6 +398,15 @@ impl Settings {
                     .clicked()
                 {
                     apply = true;
+                }
+                if hidden_selected > 0 {
+                    ui.colored_label(
+                        WARNING,
+                        format!(
+                            "{}: {hidden_selected}",
+                            t("Отмечено вне поиска", "Selected outside search"),
+                        ),
+                    );
                 }
                 if let Some(label) = running {
                     ui.horizontal_wrapped(|ui| {
