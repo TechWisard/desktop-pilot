@@ -271,6 +271,106 @@ fn zero_move_review_explains_singletons_without_moving_or_forgetting_user_choice
 }
 
 #[test]
+fn keep_only_review_hides_irrelevant_quick_area_warning_but_preserves_real_warnings() {
+    let mut f = Fixture::new();
+    f.analyze();
+    let previous_catalog = f.app.store.apps().unwrap();
+    let originals: Vec<_> = ["Alpha.url", "Beta.url"]
+        .iter()
+        .map(|name| fs::read(f.desktop.join(name)).unwrap())
+        .collect();
+    let viewport = egui::vec2(1400.0, 1200.0);
+
+    for (language, warning, no_moves) in [
+        (
+            "en",
+            "A suitable quick-shortcut area is not confirmed yet",
+            "Nothing will move yet",
+        ),
+        (
+            "ru",
+            "Подходящая область для быстрых ярлыков",
+            "Сейчас ничего не переместится",
+        ),
+    ] {
+        i18n::set(language);
+        f.app.config.language = language.into();
+        let ctx = egui::Context::default();
+        configure_style(&ctx);
+        settle(&ctx, &mut f.app, viewport);
+
+        // The isolated test desktop has no Explorer layout snapshot. When
+        // there are actual moves, the existing safety warning must remain.
+        assert_eq!(
+            f.app.organization_plan.as_ref().unwrap().summary(),
+            (2, 1, 1)
+        );
+        let moving = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+        assert!(
+            moving.iter().any(|(text, _)| text.contains(warning)),
+            "{language}: a real planned move must retain its layout warning"
+        );
+
+        f.app
+            .organization_plan
+            .as_mut()
+            .unwrap()
+            .items
+            .iter_mut()
+            .find(|item| item.name == "Alpha.url")
+            .unwrap()
+            .selected = false;
+        assert_eq!(
+            f.app.organization_plan.as_ref().unwrap().summary(),
+            (0, 0, 0)
+        );
+        f.app.organization_projection = None;
+        settle(&ctx, &mut f.app, viewport);
+        let keeping = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+        assert!(
+            keeping.iter().any(|(text, _)| text.contains(no_moves)),
+            "{language}: keep-only preview must explain why a singleton stays"
+        );
+        assert!(
+            !keeping.iter().any(|(text, _)| text.contains(warning)),
+            "{language}: no planned move must not trigger a quick-area warning"
+        );
+        assert!(
+            f.app.organization_projection.is_none(),
+            "{language}: repainting a zero-move review must not recalculate a layout"
+        );
+        assert!(keeping.iter().any(|(text, _)| {
+            text == if language == "ru" {
+                "Запомнить исключения"
+            } else {
+                "Remember keep choices"
+            }
+        }));
+
+        // Reselecting recreates the actual move; the warning must return.
+        f.app
+            .organization_plan
+            .as_mut()
+            .unwrap()
+            .items
+            .iter_mut()
+            .find(|item| item.name == "Alpha.url")
+            .unwrap()
+            .selected = true;
+        settle(&ctx, &mut f.app, viewport);
+        let restored = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+        assert!(restored.iter().any(|(text, _)| text.contains(warning)));
+        assert!(f.app.organization_projection.is_some());
+    }
+
+    assert_eq!(fs::read(f.desktop.join("Alpha.url")).unwrap(), originals[0]);
+    assert_eq!(fs::read(f.desktop.join("Beta.url")).unwrap(), originals[1]);
+    assert_eq!(f.app.store.apps().unwrap(), previous_catalog);
+    assert!(organize::status(&f.app.store).unwrap().undo.is_none());
+    assert!(f.app.job.is_none());
+}
+
+#[test]
 fn kept_and_singleton_rows_keep_their_searchable_planned_folder_visible() {
     let mut f = Fixture::new();
     f.analyze();

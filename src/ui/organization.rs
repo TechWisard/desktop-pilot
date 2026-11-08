@@ -548,11 +548,16 @@ impl Settings {
                                 "Команды действуют на весь план, включая скрытые поиском строки и другие страницы.",
                                 "These controls affect the entire plan, including filtered-out rows and other pages.",
                             ));
-                            if !organization_projection_available(
-                                plan,
-                                &self.config,
-                                &mut self.organization_projection,
-                            ) {
+                            // When every candidate stays in place, no layout will change.
+                            // A quick-shortcut-space warning would imply a failed move
+                            // and suggest unnecessary work during a Keep-only review.
+                            if moves > 0
+                                && !organization_projection_available(
+                                    plan,
+                                    &self.config,
+                                    &mut self.organization_projection,
+                                )
+                            {
                                 ui.colored_label(WARNING, t(
                                     "Подходящая область для быстрых ярлыков пока не подтверждена. После уборки обновите схему; при необходимости выберите меньше ярлыков.",
                                     "A suitable quick-shortcut area is not confirmed yet. Refresh the layout after organizing; reduce the shortcut count if necessary.",
