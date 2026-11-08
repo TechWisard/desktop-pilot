@@ -219,8 +219,16 @@ fn zero_move_review_explains_singletons_without_moving_or_forgetting_user_choice
     assert!(visible.iter().any(|(label, _)| {
         label.contains("Nothing will move yet: a new folder needs at least two checked items")
     }));
-    assert!(visible.iter().any(|(label, _)| label == "Remember keep choices"));
-    assert!(!visible.iter().any(|(label, _)| label == "Apply selected moves"));
+    assert!(
+        visible
+            .iter()
+            .any(|(label, _)| label == "Remember keep choices")
+    );
+    assert!(
+        !visible
+            .iter()
+            .any(|(label, _)| label == "Apply selected moves")
+    );
 
     click_organization_button(&ctx, &mut f.app, viewport, "Remember keep choices");
     f.finish_job();
@@ -249,8 +257,16 @@ fn zero_move_review_explains_singletons_without_moving_or_forgetting_user_choice
     assert!(visible.iter().any(|(label, _)| {
         label.contains("Nothing will move yet: a new folder needs at least two checked items")
     }));
-    assert!(!visible.iter().any(|(label, _)| label == "Apply selected moves"));
-    assert!(!visible.iter().any(|(label, _)| label == "Remember keep choices"));
+    assert!(
+        !visible
+            .iter()
+            .any(|(label, _)| label == "Apply selected moves")
+    );
+    assert!(
+        !visible
+            .iter()
+            .any(|(label, _)| label == "Remember keep choices")
+    );
     assert_eq!(fs::read(f.desktop.join("Beta.url")).unwrap(), original[1]);
 }
 
