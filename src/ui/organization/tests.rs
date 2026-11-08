@@ -926,18 +926,8 @@ fn reopening_organizer_requires_fresh_consent_to_reset_remembered_choices() {
 
     // Exercise the actual egui checkbox and Close control rather than
     // setting the confirmation field directly.
-    click_organization_button(
-        &ctx,
-        &mut f.app,
-        viewport,
-        "Previously excluded objects",
-    );
-    click_organization_button(
-        &ctx,
-        &mut f.app,
-        viewport,
-        "Confirm resetting all exclusions",
-    );
+    click_organization_button(&ctx, &mut f.app, viewport, "Previously excluded objects");
+    click_organization_button(&ctx, &mut f.app, viewport, "Confirm resetting all exclusions");
     assert!(f.app.organization_reset_confirm);
     click_organization_button(&ctx, &mut f.app, viewport, "Close");
     assert!(!f.app.organization_open);
