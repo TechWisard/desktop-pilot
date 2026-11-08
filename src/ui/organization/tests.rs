@@ -419,14 +419,16 @@ fn searching_destination_folders_bulk_reviews_every_matching_page() {
     click_organization_button(&ctx, &mut f.app, viewport, "Deselect matches");
     let plan = f.app.organization_plan.as_ref().unwrap();
     assert_eq!(plan.items.iter().filter(|item| item.selected).count(), 2);
-    assert!(plan
-        .items
-        .iter()
-        .any(|item| item.name == "Alpha.url" && item.selected));
-    assert!(plan
-        .items
-        .iter()
-        .any(|item| item.name == "Beta.url" && item.selected));
+    assert!(
+        plan.items
+            .iter()
+            .any(|item| item.name == "Alpha.url" && item.selected)
+    );
+    assert!(
+        plan.items
+            .iter()
+            .any(|item| item.name == "Beta.url" && item.selected)
+    );
     assert_eq!(
         plan.items
             .iter()
