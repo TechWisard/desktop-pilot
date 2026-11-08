@@ -735,6 +735,9 @@ impl Settings {
         if close {
             self.organization_open = false;
             self.organization_accept_for = None;
+            // Closing a review revokes consent to clear remembered exclusions.
+            // A later visit must require a deliberate new confirmation.
+            self.organization_reset_confirm = false;
         }
         if analyze {
             self.organization_analyze();
