@@ -235,3 +235,73 @@ fn different_verified_process_roots_still_credit_the_right_profile() {
         assert_eq!(preview(store, true).unwrap().selected, vec![work.id]);
     });
 }
+
+#[test]
+fn unavailable_competing_packaged_app_alias_cannot_claim_foreground_usage() {
+    // A real parsed Windows shortcut and SQLite catalog, not a separate
+    // mock of the app-ID matcher. Neither inert executable is launched.
+    with_browser_shortcut(
+        "shell:AppsFolder\\Example.Package!App",
+        |store, _executable, work| {
+            let app_id = "example.package!app";
+            let original = std::fs::read(&work.source).unwrap();
+            assert_eq!(
+                observe_app_id(&store.apps().unwrap(), app_id),
+                Some(work.id.clone())
+            );
+
+            // A second saved launch path carries the same application ID,
+            // but its original shortcut temporarily disappears.
+            let alternate_exe = store.home.join("alternate.exe");
+            std::fs::write(&alternate_exe, b"inert second launch path").unwrap();
+            let alternate_link = store.home.join("Alternate.lnk");
+            native::make_link(
+                &alternate_link,
+                &alternate_exe,
+                "shell:AppsFolder\\Example.Package!App",
+                "",
+                0,
+                "alternate",
+            )
+            .unwrap();
+            let mut alternate = native::read_link(&alternate_link).unwrap();
+            assert_ne!(alternate.id, work.id);
+            std::fs::remove_file(&alternate_link).unwrap();
+            alternate.valid = false;
+            alternate.unavailable_since = now();
+            store.put_app(&alternate).unwrap();
+
+            let attributed = observe_app_id(&store.apps().unwrap(), app_id);
+            assert_eq!(
+                attributed, None,
+                "Offline saved launch paths still make an App ID ambiguous"
+            );
+            sample_and_store(store, attributed);
+            assert!(store.days().unwrap().is_empty());
+            assert!(preview(store, true).unwrap().selected.is_empty());
+            assert_eq!(std::fs::read(&work.source).unwrap(), original);
+
+            // Availability changing again cannot resolve identical App IDs.
+            native::make_link(
+                &alternate_link,
+                &alternate_exe,
+                "shell:AppsFolder\\Example.Package!App",
+                "",
+                0,
+                "alternate",
+            )
+            .unwrap();
+            alternate.valid = true;
+            alternate.unavailable_since = 0;
+            store.put_app(&alternate).unwrap();
+            assert_eq!(observe_app_id(&store.apps().unwrap(), app_id), None);
+
+            // An explicit exclusion also must not turn the *other* profile
+            // into a provably unique foreground launch identity.
+            store.policy(&alternate.id, Policy::Never).unwrap();
+            assert_eq!(observe_app_id(&store.apps().unwrap(), app_id), None);
+            assert_eq!(store.app(&alternate.id).unwrap().policy, Policy::Never);
+            assert_eq!(std::fs::read(&work.source).unwrap(), original);
+        },
+    );
+}
