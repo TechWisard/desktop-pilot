@@ -430,6 +430,85 @@ fn searching_destination_folders_bulk_reviews_every_matching_page() {
 }
 
 #[test]
+fn searching_exclusion_reasons_finds_saved_manual_rules_across_pages_and_locales() {
+    let mut f = Fixture::new();
+    // These 45 real Internet Shortcut files have individual explicit Never
+    // policies. Their original names do not contain either search term.
+    for index in 0..45 {
+        let path = f.desktop.join(format!("Blocked-{index:02}.url"));
+        fs::write(
+            &path,
+            format!("[InternetShortcut]\r\nURL=https://example.invalid/blocked/{index}\r\n"),
+        )
+        .unwrap();
+        let app = native::read_link(&path).unwrap();
+        f.app.store.put_app(&app).unwrap();
+        f.app.store.policy(&app.id, Policy::Never).unwrap();
+    }
+    // A different skip reason must not inflate the filtered result.
+    fs::write(f.desktop.join("Notes.txt"), "Unrelated draft").unwrap();
+    f.app.organization_analyze();
+    f.finish_job();
+    let plan = f.app.organization_plan.as_ref().unwrap();
+    assert_eq!(plan.items.len(), 2);
+    assert_eq!(plan.skipped.len(), 46);
+    assert_eq!(
+        plan.skipped
+            .iter()
+            .filter(|item| item.reason == "Manual shortcut rule: left in place")
+            .count(),
+        45,
+    );
+
+    let viewport = egui::vec2(1400.0, 1000.0);
+    for (language, query) in [("en", "manual shortcut"), ("ru", "ручное")] {
+        i18n::set(language);
+        f.app.config.language = language.into();
+        f.app.organization_query = query.into();
+        let matching = f.app
+            .organization_plan
+            .as_ref()
+            .unwrap()
+            .skipped
+            .iter()
+            .filter(|item| skipped_matches_query(item, &query.to_lowercase()))
+            .count();
+        assert_eq!(matching, 45, "Excluded reason search failed for {language}");
+        // Exercise the real egui organizer, not just a copied search rule.
+        let ctx = egui::Context::default();
+        configure_style(&ctx);
+        settle(&ctx, &mut f.app, viewport);
+        let output = render(&ctx, &mut f.app, viewport, Vec::new());
+        let labels = rendered_text(&output);
+        assert!(
+            labels.iter().any(|(text, _)| text.contains("(45)")),
+            "Filtered skipped count not painted in {language}: {labels:?}"
+        );
+    }
+
+    i18n::set("en");
+    let plan = f.app.organization_plan.as_ref().unwrap();
+    assert_eq!(
+        plan.skipped
+            .iter()
+            .filter(|item| skipped_matches_query(item, "missing term"))
+            .count(),
+        0,
+    );
+    assert_eq!(
+        plan.skipped
+            .iter()
+            .filter(|item| skipped_matches_query(item, "blocked-00"))
+            .count(),
+        1,
+    );
+    assert!(plan.items.iter().all(|item| item.selected));
+    assert!(f.desktop.join("Blocked-44.url").is_file());
+    assert!(f.desktop.join("Notes.txt").is_file());
+    assert!(organize::status(&f.app.store).unwrap().undo.is_none());
+}
+
+#[test]
 fn all_six_thousand_preview_and_skipped_items_remain_accessible() {
     for count in [0usize, 1, 39, 40, 41, 60, 61, 5999, 6000] {
         let pages = count.div_ceil(ORGANIZATION_PAGE_SIZE).max(1);
