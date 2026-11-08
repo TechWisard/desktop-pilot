@@ -16,9 +16,13 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It has 
 
 To update an existing installation, open the executable from the new archive. Your local profile, rules and history are retained. The executable is unsigned; verify its source and checksum before opening it.
 
-**Development branch:** The desktop organization feature described below is not included in the currently published 0.2.127 download. It is undergoing final acceptance here.
+**Development branch:** The desktop organization feature described below is not included in the currently published 0.2.128 download. It is undergoing final acceptance here.
 
 ## Stable shortcut search fixes retained in this branch
+
+## Improvements in 0.2.128
+
+**A temporarily missing shortcut no longer makes a shared app identity look like proof of one launch profile.** If two saved launch variants use the same packaged-app identifier, Desktop Pilot checks both variants even when one original becomes unavailable. Ambiguous foreground activity is left unattributed instead of boosting the wrong shortcut's automatic ranking. A genuinely unique, available launch remains eligible. Existing **Always** / **Never** decisions, profiles, files, history and icon positions are preserved. [Windows shortcut and SQLite regression](docs/research/2026-11-08-packaged-app-alias-attribution.md).
 
 ## Improvements in 0.2.127
 
