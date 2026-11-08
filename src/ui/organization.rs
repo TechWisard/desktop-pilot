@@ -136,14 +136,23 @@ fn organization_reason(reason: &str) -> String {
     t(russian, reason).to_owned()
 }
 
-// Search the reason already shown to people for a protected or excluded item.
-// This is a read-only filter: the plan, saved rules and desktop never change.
+// A person's terms may describe different visible columns, e.g. an app
+// name plus the destination folder. Require every term, regardless of order.
+// This is a read-only filter: plans and saved rules never change.
+fn organizer_matches_query(query: &str, first: &str, second: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return true;
+    }
+    let first = first.to_lowercase();
+    let second = second.to_lowercase();
+    query
+        .split_whitespace()
+        .all(|term| first.contains(term) || second.contains(term))
+}
+
 fn skipped_matches_query(item: &organize::Skipped, query: &str) -> bool {
-    query.is_empty()
-        || item.name.to_lowercase().contains(query)
-        || organization_reason(&item.reason)
-            .to_lowercase()
-            .contains(query)
+    organizer_matches_query(query, &item.name, &organization_reason(&item.reason))
 }
 
 impl Settings {
@@ -572,8 +581,11 @@ impl Settings {
                                 .enumerate()
                                 .filter(|(_, item)| {
                                     query.is_empty()
-                                        || item.name.to_lowercase().contains(&query)
-                                        || plan.destination(item).to_lowercase().contains(&query)
+                                        || organizer_matches_query(
+                                            &query,
+                                            &item.name,
+                                            &plan.destination(item),
+                                        )
                                 })
                                 .map(|(index, _)| index)
                                 .collect();
