@@ -806,6 +806,12 @@ impl Settings {
             self.organization_reset_confirm = false;
         }
         if analyze {
+            // A new analysis is a new review, even when a previously excluded
+            // list happens to have the same number of pages. Do not return to
+            // a later page chosen for an older desktop snapshot.
+            ctx.data_mut(|data| {
+                data.insert_temp(egui::Id::new("organize-skipped-page"), 0usize);
+            });
             self.organization_analyze();
         }
         if apply {

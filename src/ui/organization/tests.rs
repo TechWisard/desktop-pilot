@@ -1399,3 +1399,69 @@ fn empty_organizer_search_is_explained_and_can_be_cleared_without_losing_choices
         }));
     }
 }
+
+#[test]
+fn reanalyzing_from_the_dialog_resets_the_old_excluded_results_page() {
+    let mut f = Fixture::new();
+    // Use actual Windows Internet Shortcuts and the SQLite-backed keep policy.
+    // More than 40 exclusions makes the old page number meaningful.
+    for index in 0..42 {
+        let path = f.desktop.join(format!("Kept-{index:02}.url"));
+        fs::write(
+            &path,
+            format!("[InternetShortcut]\\r\\nURL=https://example.invalid/kept/{index}\\r\\n"),
+        )
+        .unwrap();
+    }
+    f.app.organization_analyze();
+    f.finish_job();
+    assert_eq!(f.app.organization_plan.as_ref().unwrap().items.len(), 44);
+    for item in &mut f.app.organization_plan.as_mut().unwrap().items {
+        item.selected = false;
+    }
+    f.app.organization_apply();
+    f.finish_job();
+    f.app.organization_analyze();
+    f.finish_job();
+    assert!(
+        f.app.organization_plan.as_ref().unwrap().skipped.len()
+            > ORGANIZATION_PAGE_SIZE
+    );
+    let original = fs::read(f.desktop.join("Alpha.url")).unwrap();
+    let keep: Vec<String> = f.app.store.get("organization.keep.v1").unwrap();
+
+    let ctx = egui::Context::default();
+    configure_style(&ctx);
+    i18n::set("en");
+    f.app.config.language = "en".into();
+    let viewport = egui::vec2(1400.0, 1100.0);
+    let skipped_page = egui::Id::new("organize-skipped-page");
+    // Simulate a previously navigated excluded-results page. The same egui
+    // context persists while the user requests a new desktop analysis.
+    ctx.data_mut(|data| data.insert_temp(skipped_page, 1usize));
+    settle(&ctx, &mut f.app, viewport);
+    assert_eq!(
+        ctx.data_mut(|data| data.get_temp::<usize>(skipped_page)),
+        Some(1)
+    );
+
+    click_organization_button(&ctx, &mut f.app, viewport, "Analyze the desktop");
+    assert_eq!(
+        ctx.data_mut(|data| data.get_temp::<usize>(skipped_page)),
+        Some(0)
+    );
+    f.finish_job();
+    assert_eq!(f.app.organization_page, 0);
+    assert!(f.app.organization_query.is_empty());
+    assert_eq!(
+        f.app.organization_plan.as_ref().unwrap().skipped.len(),
+        keep.len()
+    );
+    assert_eq!(
+        f.app.store.get::<Vec<String>>("organization.keep.v1").unwrap(),
+        keep
+    );
+    assert_eq!(fs::read(f.desktop.join("Alpha.url")).unwrap(), original);
+    assert!(!f.desktop.join("Sites").exists());
+    assert!(organize::status(&f.app.store).unwrap().undo.is_none());
+}
