@@ -419,25 +419,44 @@ fn searching_destination_folders_bulk_reviews_every_matching_page() {
     click_organization_button(&ctx, &mut f.app, viewport, "Deselect matches");
     let plan = f.app.organization_plan.as_ref().unwrap();
     assert_eq!(plan.items.iter().filter(|item| item.selected).count(), 2);
-    assert!(plan.items.iter().any(|item| item.name == "Alpha.url" && item.selected));
-    assert!(plan.items.iter().any(|item| item.name == "Beta.url" && item.selected));
+    assert!(plan
+        .items
+        .iter()
+        .any(|item| item.name == "Alpha.url" && item.selected));
+    assert!(plan
+        .items
+        .iter()
+        .any(|item| item.name == "Beta.url" && item.selected));
     assert_eq!(
-        plan.items.iter().filter(|item| item.name.starts_with("Entry-") && !item.selected).count(),
+        plan.items
+            .iter()
+            .filter(|item| item.name.starts_with("Entry-") && !item.selected)
+            .count(),
         45
     );
     f.app.organization_query = "entry- sites".into();
     click_organization_button(&ctx, &mut f.app, viewport, "Select matches");
     assert_eq!(
-        f.app.organization_plan.as_ref().unwrap().items.iter().filter(|item| item.selected).count(),
+        f.app
+            .organization_plan
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .filter(|item| item.selected)
+            .count(),
         47
     );
     // AND matching must not broaden a mixed query into a union of unrelated
     // names. The user has not changed any selections or desktop bytes.
     let plan = f.app.organization_plan.as_ref().unwrap();
     assert_eq!(
-        plan.items.iter().filter(|item| {
-            organizer_matches_query("entry- beta", &item.name, &plan.destination(item))
-        }).count(),
+        plan.items
+            .iter()
+            .filter(|item| {
+                organizer_matches_query("entry- beta", &item.name, &plan.destination(item))
+            })
+            .count(),
         0
     );
     f.app.organization_query = "Sites".into();
@@ -536,7 +555,10 @@ fn searching_exclusion_reasons_finds_saved_manual_rules_across_pages_and_locales
     // name and the already displayed explanation, in either language.
     for query in ["blocked-00 manual", "manual blocked-00"] {
         assert_eq!(
-            plan.skipped.iter().filter(|item| skipped_matches_query(item, query)).count(),
+            plan.skipped
+                .iter()
+                .filter(|item| skipped_matches_query(item, query))
+                .count(),
             1
         );
     }
