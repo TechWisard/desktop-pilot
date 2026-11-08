@@ -23,14 +23,36 @@ pub(super) fn organization(app: &mut Settings, view: &str) -> Result<()> {
     app.onboarding = false;
     app.organization_open = true;
     app.organization_files = view == "organization-files";
-    app.organization_plan = Some(organize::analyze(
+    let mut plan = organize::analyze(
         &app.store,
         organize::Options {
             include_files: app.organization_files,
         },
         &app.config,
         &AtomicBool::new(false),
-    )?);
+    )?;
+    if app.store.get::<bool>("test_singleton_review")? {
+        // A capture-only scenario, after the explicit isolated-profile guards.
+        // Use the production plan; never save an exclusion or move a file to
+        // manufacture the view. Refuse an irrelevant fixture rather than
+        // reporting a fully selected or mixed-group screenshot as this case.
+        ensure!(
+            plan.items.len() >= 2
+                && plan
+                    .items
+                    .iter()
+                    .all(|item| item.group == plan.items[0].group),
+            "The singleton review capture needs at least two items in one group"
+        );
+        for (index, item) in plan.items.iter_mut().enumerate() {
+            item.selected = index == 0;
+        }
+        ensure!(
+            plan.summary() == (0, 0, 0),
+            "The singleton review capture must not propose any moves"
+        );
+    }
+    app.organization_plan = Some(plan);
     app.organization_projection = None;
     app.organization_query = if view == "organization-filtered" {
         app.store.get("test_search")?
@@ -53,6 +75,9 @@ pub(super) fn organization(app: &mut Settings, view: &str) -> Result<()> {
 }
 
 #[cfg(test)]
+mod kept_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     #[test]
@@ -68,6 +93,7 @@ mod tests {
         let store = Store::open(&home).unwrap();
         store.set("setup_complete", &true).unwrap();
         store.set("background_disabled", &true).unwrap();
+        store.set("test_singleton_review", &true).unwrap();
         drop(store);
         let mut app = Settings::new(home.clone()).unwrap();
         app.layout_receiver = None;

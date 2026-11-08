@@ -716,7 +716,16 @@ impl Settings {
                                     // arrow glyph. Use a widely supported breadcrumb marker.
                                     format!("{}  »  {destination}", item.name)
                                 } else {
-                                    format!("{} — {}", item.name, t("Остаётся", "Stays in place"))
+                                    // Keep the proposed folder visible even for unchecked rows
+                                    // or checked singletons that cannot form a new folder.
+                                    // The review search can match this field; its meaning
+                                    // must not disappear when a checkbox changes.
+                                    format!(
+                                        "{} — {} · {}: {destination}",
+                                        item.name,
+                                        t("Остаётся", "Stays in place"),
+                                        t("Папка в плане", "Planned folder"),
+                                    )
                                 };
                                 ui.add_enabled(
                                     available,
