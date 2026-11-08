@@ -136,6 +136,14 @@ fn organization_reason(reason: &str) -> String {
     t(russian, reason).to_owned()
 }
 
+// Search the reason already shown to people for a protected or excluded item.
+// This is a read-only filter: the plan, saved rules and desktop never change.
+fn skipped_matches_query(item: &organize::Skipped, query: &str) -> bool {
+    query.is_empty()
+        || item.name.to_lowercase().contains(query)
+        || organization_reason(&item.reason).to_lowercase().contains(query)
+}
+
 impl Settings {
     fn organization_analyze(&mut self) {
         if self.busy() {
@@ -518,7 +526,10 @@ impl Settings {
                                     "A suitable quick-shortcut area is not confirmed yet. Refresh the layout after organizing; reduce the shortcut count if necessary.",
                                 ));
                             }
-                            ui.label(t("Поиск по имени или папке", "Search by name or folder"));
+                            ui.label(t(
+                                "Поиск по имени, папке или причине исключения",
+                                "Search by name, folder or exclusion reason",
+                            ));
                             if ui
                                 .add(
                                     egui::TextEdit::singleline(&mut self.organization_query)
@@ -641,7 +652,7 @@ impl Settings {
                                 .skipped
                                 .iter()
                                 .filter(|item| {
-                                    query.is_empty() || item.name.to_lowercase().contains(&query)
+                                    skipped_matches_query(item, &query)
                                 })
                                 .collect();
                             if !skipped.is_empty() {
