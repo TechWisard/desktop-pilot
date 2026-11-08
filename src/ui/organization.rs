@@ -335,7 +335,10 @@ impl Settings {
                 let (moves, _, _) = plan.summary();
                 let rejected = plan.items.iter().any(|item| !item.selected);
                 (moves, rejected)
-            });
+            })
+            // A plan with no move and no Keep decision has no action to take.
+            // Avoid displaying an inert confirmation for a checked singleton.
+            .filter(|(moves, rejected)| *moves > 0 || *rejected);
         let feedback = self.organization_feedback();
         let running = self.job.as_ref().map(|job| match job.label {
             "Analyzing the desktop…" => t("Анализируем рабочий стол…", "Analyzing the desktop…"),
@@ -502,6 +505,14 @@ impl Settings {
                             ));
                             let selected_count =
                                 plan.items.iter().filter(|item| item.selected).count();
+                            if moves == 0 && selected_count > 0 {
+                                // Checked singletons in new groups stay in place. Explain why
+                                // a still-checked row does not count as a pending move.
+                                ui.small(t(
+                                    "Сейчас ничего не переместится: новая папка создаётся только для двух и более отмеченных объектов одной группы. Чтобы переместить их, отметьте ещё один объект этой группы.",
+                                    "Nothing will move yet: a new folder needs at least two checked items in the same group. To move them, check another item in that group.",
+                                ));
+                            }
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(format!(
                                     "{}: {selected_count} / {}",
