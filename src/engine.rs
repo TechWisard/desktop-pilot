@@ -2105,24 +2105,26 @@ fn observe_app_id(apps: &[App], id: &str) -> Option<String> {
     let ids: HashSet<_> = apps
         .iter()
         .filter(|a| {
-            a.valid
-                && [&a.target, &a.arguments].into_iter().any(|value| {
-                    let value = value.trim().trim_matches('"').to_lowercase();
-                    value
-                        .strip_prefix("shell:appsfolder\\")
-                        .or_else(|| {
-                            value.strip_prefix("::{4234d49b-0245-4df3-b780-3893943456e1}\\")
-                        })
-                        .is_some_and(|suffix| suffix.eq_ignore_ascii_case(id))
-                })
+            [&a.target, &a.arguments].into_iter().any(|value| {
+                let value = value.trim().trim_matches('"').to_lowercase();
+                value
+                    .strip_prefix("shell:appsfolder\\")
+                    .or_else(|| value.strip_prefix("::{4234d49b-0245-4df3-b780-3893943456e1}\\"))
+                    .is_some_and(|suffix| suffix.eq_ignore_ascii_case(id))
+            })
         })
         .map(|a| a.id.clone())
         .collect();
-    if ids.len() == 1 {
-        ids.into_iter().next()
-    } else {
-        None
+    // An unavailable shortcut may still have launched the observed app.
+    // Include it when testing whether an App ID identifies exactly one saved
+    // launch profile; availability is checked only after disambiguation.
+    if ids.len() != 1 {
+        return None;
     }
+    let only = ids.into_iter().next()?;
+    apps.iter()
+        .find(|app| app.id == only && app.valid)
+        .map(|app| app.id.clone())
 }
 
 // A queued review must remain due under the user's *currently saved*
