@@ -1423,10 +1423,7 @@ fn reanalyzing_from_the_dialog_resets_the_old_excluded_results_page() {
     f.finish_job();
     f.app.organization_analyze();
     f.finish_job();
-    assert!(
-        f.app.organization_plan.as_ref().unwrap().skipped.len()
-            > ORGANIZATION_PAGE_SIZE
-    );
+    assert!(f.app.organization_plan.as_ref().unwrap().skipped.len() > ORGANIZATION_PAGE_SIZE);
     let original = fs::read(f.desktop.join("Alpha.url")).unwrap();
     let keep: Vec<String> = f.app.store.get("organization.keep.v1").unwrap();
 
@@ -1458,7 +1455,10 @@ fn reanalyzing_from_the_dialog_resets_the_old_excluded_results_page() {
         keep.len()
     );
     assert_eq!(
-        f.app.store.get::<Vec<String>>("organization.keep.v1").unwrap(),
+        f.app
+            .store
+            .get::<Vec<String>>("organization.keep.v1")
+            .unwrap(),
         keep
     );
     assert_eq!(fs::read(f.desktop.join("Alpha.url")).unwrap(), original);
