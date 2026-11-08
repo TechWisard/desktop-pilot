@@ -1768,7 +1768,10 @@ fn filtered_review_discloses_checked_objects_outside_search_without_changing_cho
                 .find(|(value, _)| value == text)
                 .unwrap_or_else(|| panic!("{language} at {scale}x: {before:?}"));
             assert!(ctx.screen_rect().contains_rect(*position));
-            assert_eq!(f.app.organization_plan.as_ref().unwrap().summary(), (2, 1, 1));
+            assert_eq!(
+                f.app.organization_plan.as_ref().unwrap().summary(),
+                (2, 1, 1)
+            );
 
             // The filter does not revoke a hidden choice. When the person
             // explicitly unchecks that second shortcut, the scope warning
@@ -1782,7 +1785,10 @@ fn filtered_review_discloses_checked_objects_outside_search_without_changing_cho
                 .find(|item| item.name == "Beta.url")
                 .unwrap()
                 .selected = false;
-            assert_eq!(f.app.organization_plan.as_ref().unwrap().summary(), (0, 0, 0));
+            assert_eq!(
+                f.app.organization_plan.as_ref().unwrap().summary(),
+                (0, 0, 0)
+            );
             let keeping = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
             assert!(!keeping.iter().any(|(value, _)| value.contains(text)));
             f.app

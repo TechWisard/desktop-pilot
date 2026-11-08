@@ -350,11 +350,7 @@ impl Settings {
                     .iter()
                     .filter(|item| {
                         item.selected
-                            && !organizer_matches_query(
-                                &query,
-                                &item.name,
-                                &plan.destination(item),
-                            )
+                            && !organizer_matches_query(&query, &item.name, &plan.destination(item))
                     })
                     .count()
             }

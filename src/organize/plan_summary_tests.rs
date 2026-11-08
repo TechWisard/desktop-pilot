@@ -86,7 +86,10 @@ fn large_changing_preview_summary_agrees_with_actual_movement_rules() {
             .folders
             .iter()
             .filter(|folder| {
-                folder.created && movements.iter().any(|movement| movement.folder == folder.name)
+                folder.created
+                    && movements
+                        .iter()
+                        .any(|movement| movement.folder == folder.name)
             })
             .count();
         assert_eq!(
