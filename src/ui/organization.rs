@@ -618,14 +618,28 @@ impl Settings {
                                 })
                                 .map(|(index, _)| index)
                                 .collect();
+                            // Compute both result groups before showing feedback: a query
+                            // may match only excluded objects, or neither group.
+                            let skipped: Vec<_> = plan
+                                .skipped
+                                .iter()
+                                .filter(|item| skipped_matches_query(item, &query))
+                                .collect();
                             // Use one concise status line for search, not two:
                             // an extra row hid the excluded-items section at 100% DPI.
                             if !query.is_empty() {
                                 if filtered.is_empty() {
-                                    ui.small(t(
-                                        "Среди предлагаемых объектов совпадений нет. Проверьте список оставленных на месте ниже или очистите поиск.",
-                                        "No proposed items match. Check the left-in-place list below or clear the search.",
-                                    ));
+                                    if skipped.is_empty() {
+                                        ui.small(t(
+                                            "Ничего не найдено в этом плане. Очистите поиск или измените слова.",
+                                            "No items in this review match. Clear search or try different words.",
+                                        ));
+                                    } else {
+                                        ui.small(t(
+                                            "Среди предлагаемых объектов совпадений нет. Найденные оставленные на месте объекты показаны ниже.",
+                                            "No proposed items match. Matching left-in-place objects are shown below.",
+                                        ));
+                                    }
                                 } else {
                                     ui.small(t(
                                         "Поиск скрывает только строки списка. При применении будут обработаны все отмеченные объекты, включая скрытые фильтром и находящиеся на других страницах.",
@@ -716,11 +730,6 @@ impl Settings {
                                 end,
                                 filtered.len(),
                             ));
-                            let skipped: Vec<_> = plan
-                                .skipped
-                                .iter()
-                                .filter(|item| skipped_matches_query(item, &query))
-                                .collect();
                             if !skipped.is_empty() {
                                 collapsing_header(
                                     ui,
@@ -730,6 +739,10 @@ impl Settings {
                                         skipped.len(),
                                     ),
                                 )
+                                // Search should reveal matching exclusions on the first
+                                // visit without another hidden disclosure click. Subsequent
+                                // manual collapse/expand choices remain respected.
+                                .default_open(!query.is_empty())
                                 .show(ui, |ui| {
                                     let id = egui::Id::new("organize-skipped-page");
                                     let mut page = ctx
