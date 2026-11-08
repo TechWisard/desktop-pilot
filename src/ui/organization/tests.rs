@@ -1216,6 +1216,14 @@ fn long_preview_uses_the_modal_wheel_at_normal_and_double_scale() {
             );
             let painted = rendered_text(&output);
             if painted.iter().any(|(text, _)| text.contains(&last_on_page)) {
+                // This is the real checkbox label at the scrolled end of a
+                // native plan. Avoid unsupported arrow glyphs at either scale.
+                assert!(
+                    painted
+                        .iter()
+                        .any(|(text, _)| text == &format!("{last_on_page}  »  Sites")),
+                    "Destination breadcrumb is missing at {scale}x"
+                );
                 let (_, action) = painted
                     .iter()
                     .find(|(text, _)| text == "Apply selected moves")
