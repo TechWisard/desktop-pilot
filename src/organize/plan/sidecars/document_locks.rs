@@ -17,7 +17,10 @@ pub(super) fn protected(paths: &[PathBuf]) -> HashSet<String> {
     // invalidates an earlier plan before any rename.
     let names: HashSet<String> = paths
         .iter()
-        .filter_map(|path| path.file_name().map(|name| name.to_string_lossy().to_lowercase()))
+        .filter_map(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().to_lowercase())
+        })
         .collect();
 
     paths
@@ -87,13 +90,7 @@ mod tests {
 
     #[test]
     fn ambiguous_owner_suffix_keeps_every_possible_source() {
-        let paths = [
-            "ABsame.docx",
-            "CDsame.docx",
-            "~$same.docx",
-            "Other.docx",
-        ]
-        .map(PathBuf::from);
+        let paths = ["ABsame.docx", "CDsame.docx", "~$same.docx", "Other.docx"].map(PathBuf::from);
         let expected: HashSet<_> = ["absame.docx", "cdsame.docx", "~$same.docx"]
             .into_iter()
             .map(String::from)
