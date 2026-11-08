@@ -988,9 +988,11 @@ fn pending_organization_and_new_analysis_require_new_reset_consent() {
         .unwrap();
     let pending = render(&ctx, &mut f.app, viewport, Vec::new());
     assert!(!f.app.organization_reset_confirm);
-    assert!(!rendered_text(&pending)
-        .iter()
-        .any(|(label, _)| label == "Reset remembered choices"));
+    assert!(
+        !rendered_text(&pending)
+            .iter()
+            .any(|(label, _)| label == "Reset remembered choices")
+    );
 
     // Once recovery is resolved elsewhere, the old check must not return.
     f.app
@@ -1000,7 +1002,10 @@ fn pending_organization_and_new_analysis_require_new_reset_consent() {
     let _ = render(&ctx, &mut f.app, viewport, Vec::new());
     assert!(!f.app.organization_reset_confirm);
     assert_eq!(
-        f.app.store.get::<Vec<String>>("organization.keep.v1").unwrap(),
+        f.app
+            .store
+            .get::<Vec<String>>("organization.keep.v1")
+            .unwrap(),
         remembered
     );
     assert!(f.app.job.is_none());
@@ -1017,7 +1022,10 @@ fn pending_organization_and_new_analysis_require_new_reset_consent() {
     assert!(!f.app.organization_reset_confirm);
     f.finish_job();
     assert_eq!(
-        f.app.store.get::<Vec<String>>("organization.keep.v1").unwrap(),
+        f.app
+            .store
+            .get::<Vec<String>>("organization.keep.v1")
+            .unwrap(),
         remembered
     );
     assert!(f.desktop.join("Alpha.url").is_file());
