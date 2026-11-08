@@ -278,7 +278,11 @@ fn kept_and_singleton_rows_keep_their_searchable_planned_folder_visible() {
     let beta = fs::read(f.desktop.join("Beta.url")).unwrap();
     let folder = {
         let plan = f.app.organization_plan.as_ref().unwrap();
-        let item = plan.items.iter().find(|item| item.name == "Alpha.url").unwrap();
+        let item = plan
+            .items
+            .iter()
+            .find(|item| item.name == "Alpha.url")
+            .unwrap();
         plan.destination(item)
     };
     let viewport = egui::vec2(1400.0, 1200.0);
@@ -312,7 +316,10 @@ fn kept_and_singleton_rows_keep_their_searchable_planned_folder_visible() {
             .find(|item| item.name == "Alpha.url")
             .unwrap()
             .selected = false;
-        assert_eq!(f.app.organization_plan.as_ref().unwrap().summary(), (0, 0, 0));
+        assert_eq!(
+            f.app.organization_plan.as_ref().unwrap().summary(),
+            (0, 0, 0)
+        );
         let after = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
         for name in ["Alpha.url", "Beta.url"] {
             assert!(
@@ -329,7 +336,12 @@ fn kept_and_singleton_rows_keep_their_searchable_planned_folder_visible() {
         assert!(organizer_matches_query(
             &folder.to_lowercase(),
             "Alpha.url",
-            &plan.destination(plan.items.iter().find(|item| item.name == "Alpha.url").unwrap()),
+            &plan.destination(
+                plan.items
+                    .iter()
+                    .find(|item| item.name == "Alpha.url")
+                    .unwrap()
+            ),
         ));
         f.app
             .organization_plan
