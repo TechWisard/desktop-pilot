@@ -1201,7 +1201,13 @@ fn optional_camera_pairs_stay_together_while_independent_media_moves_and_undoes(
     // filesystem, analyzer, journal and Undo rather than a toy classifier.
     assert!(f.plan(false).items.is_empty());
     let plan = f.plan(true);
-    for name in ["DSC_1001.JPG", "Live A.HEIC", "Live A.MOV", "Live B.jpeg", "Live B.mov"] {
+    for name in [
+        "DSC_1001.JPG",
+        "Live A.HEIC",
+        "Live A.MOV",
+        "Live B.jpeg",
+        "Live B.mov",
+    ] {
         assert!(
             plan.skipped.iter().any(|item| {
                 item.name == name && item.reason.contains("Associated file set")
@@ -1257,12 +1263,18 @@ fn camera_companion_arriving_after_preview_rejects_all_moves_without_a_journal()
             format!("{error:#}").contains("Associated file set"),
             "a late {companion} must invalidate the entire preview: {error:#}"
         );
-        assert_eq!(disk::read(f.desktop.join(candidate)).unwrap(), b"still image");
+        assert_eq!(
+            disk::read(f.desktop.join(candidate)).unwrap(),
+            b"still image"
+        );
         assert_eq!(
             disk::read(f.desktop.join(companion)).unwrap(),
             b"late-arriving companion"
         );
-        assert_eq!(disk::read(f.desktop.join("Independent.jpg")).unwrap(), b"unrelated image");
+        assert_eq!(
+            disk::read(f.desktop.join("Independent.jpg")).unwrap(),
+            b"unrelated image"
+        );
         for name in ["Alpha.url", "Beta.url"] {
             assert!(f.desktop.join(name).is_file());
         }
