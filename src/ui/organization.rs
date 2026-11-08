@@ -141,7 +141,9 @@ fn organization_reason(reason: &str) -> String {
 fn skipped_matches_query(item: &organize::Skipped, query: &str) -> bool {
     query.is_empty()
         || item.name.to_lowercase().contains(query)
-        || organization_reason(&item.reason).to_lowercase().contains(query)
+        || organization_reason(&item.reason)
+            .to_lowercase()
+            .contains(query)
 }
 
 impl Settings {
@@ -651,9 +653,7 @@ impl Settings {
                             let skipped: Vec<_> = plan
                                 .skipped
                                 .iter()
-                                .filter(|item| {
-                                    skipped_matches_query(item, &query)
-                                })
+                                .filter(|item| skipped_matches_query(item, &query))
                                 .collect();
                             if !skipped.is_empty() {
                                 collapsing_header(
