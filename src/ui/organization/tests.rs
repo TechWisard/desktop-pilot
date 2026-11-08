@@ -1409,7 +1409,7 @@ fn reanalyzing_from_the_dialog_resets_the_old_excluded_results_page() {
         let path = f.desktop.join(format!("Kept-{index:02}.url"));
         fs::write(
             &path,
-            format!("[InternetShortcut]\\r\\nURL=https://example.invalid/kept/{index}\\r\\n"),
+            format!("[InternetShortcut]\r\nURL=https://example.invalid/kept/{index}\r\n"),
         )
         .unwrap();
     }
