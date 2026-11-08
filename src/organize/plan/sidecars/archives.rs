@@ -32,9 +32,10 @@ pub(super) fn protected(paths: &[PathBuf]) -> HashSet<String> {
         // ZIP volumes use name.z01, name.z02, ..., name.zip. The numbered
         // parts are already ineligible ordinary files; protect the .zip too.
         // Require the exact basename, not an arbitrary prefix match.
-        let main_extension = if extension.strip_prefix('z').is_some_and(|number| {
-            digits(number, 2) && number.bytes().any(|byte| byte != b'0')
-        }) {
+        let main_extension = if extension
+            .strip_prefix('z')
+            .is_some_and(|number| digits(number, 2) && number.bytes().any(|byte| byte != b'0'))
+        {
             Some("zip")
         } else if extension
             .strip_prefix('r')
