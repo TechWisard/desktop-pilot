@@ -151,6 +151,9 @@ impl Settings {
         if self.busy() {
             return;
         }
+        // A new review is a new decision; don't retain consent for an
+        // unrelated reset operation across the refreshed desktop plan.
+        self.organization_reset_confirm = false;
         self.organization_plan = None;
         self.organization_projection = None;
         // Every successful request starts a fresh complete preview. A search
@@ -293,6 +296,11 @@ impl Settings {
         let mut close = false;
         let available = !self.busy();
         let status = organize::status(&self.store);
+        // An interrupted organization hides exclusion reset controls. A check
+        // from before recovery must not authorize a later reset after recovery.
+        if !status.as_ref().is_ok_and(|state| !state.pending) {
+            self.organization_reset_confirm = false;
+        }
         // A confirmation applies to one exact recovery journal. Another
         // Settings window may resolve that journal and start a newer operation
         // while this dialog remains open. Never carry consent to a new ID.
