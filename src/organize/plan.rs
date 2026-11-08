@@ -550,17 +550,26 @@ impl Plan {
     }
 
     pub fn summary(&self) -> (usize, usize, usize) {
-        let movements = self.movements();
-        let created = self
-            .folders
-            .iter()
-            .filter(|f| f.created && movements.iter().any(|m| m.folder == f.name))
-            .count();
-        (
-            movements.len(),
-            created,
-            movements.len().saturating_sub(created),
-        )
+        // The preview is painted on every frame, including large 6000-item
+        // reviews. Count the same eligible groups as movements() without
+        // cloning every source name, identity stamp and launch profile.
+        let mut counts = BTreeMap::<Group, usize>::new();
+        for item in self.items.iter().filter(|item| item.selected) {
+            *counts.entry(item.group).or_default() += 1;
+        }
+        let mut moved = 0usize;
+        let mut created = 0usize;
+        for (group, count) in counts {
+            if let Some(folder) = self.folders.iter().find(|folder| folder.group == group)
+                && (!folder.created || count >= 2)
+            {
+                moved += count;
+                if folder.created {
+                    created += 1;
+                }
+            }
+        }
+        (moved, created, moved.saturating_sub(created))
     }
 
     pub fn destination(&self, item: &Item) -> String {
@@ -741,3 +750,7 @@ pub fn find_free_zone(layout: &native::Layout, config: &Config) -> Option<Config
     }
     None
 }
+
+#[cfg(test)]
+#[path = "plan_summary_tests.rs"]
+mod summary_tests;
