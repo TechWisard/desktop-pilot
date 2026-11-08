@@ -119,7 +119,11 @@ fn singleton_capture_uses_the_real_plan_without_saving_exclusions_or_moving_file
             assert!(!plan.will_move(item));
             assert_eq!(plan.destination(item), folder);
         }
-        assert_eq!(f.changes(), changes, "capture preparation must be read-only");
+        assert_eq!(
+            f.changes(),
+            changes,
+            "capture preparation must be read-only"
+        );
         assert_eq!(f.files(), files);
         assert_eq!(f.app.store.app(&f.important.id).unwrap(), f.important);
         let after_days = serde_json::to_value(f.app.store.days().unwrap()).unwrap();
@@ -139,7 +143,11 @@ fn singleton_capture_rejects_a_deficient_fixture_without_changing_files_or_rules
     let files = f.files();
     let changes = f.changes();
     let error = organization(&mut f.app, "organization").unwrap_err();
-    assert!(error.to_string().contains("at least two items in one group"));
+    assert!(
+        error
+            .to_string()
+            .contains("at least two items in one group")
+    );
     assert_eq!(f.changes(), changes);
     assert_eq!(f.files(), files);
     assert_eq!(f.app.store.app(&f.important.id).unwrap(), f.important);

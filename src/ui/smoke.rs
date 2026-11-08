@@ -38,7 +38,10 @@ pub(super) fn organization(app: &mut Settings, view: &str) -> Result<()> {
         // reporting a fully selected or mixed-group screenshot as this case.
         ensure!(
             plan.items.len() >= 2
-                && plan.items.iter().all(|item| item.group == plan.items[0].group),
+                && plan
+                    .items
+                    .iter()
+                    .all(|item| item.group == plan.items[0].group),
             "The singleton review capture needs at least two items in one group"
         );
         for (index, item) in plan.items.iter_mut().enumerate() {
