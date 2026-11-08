@@ -83,8 +83,11 @@ fn multipart_archive_sets_survive_real_apply_undo_and_store_reopen() {
         f.write(name);
     }
     let important = f.desktop.join("Important.url");
-    disk::write(&important, "[InternetShortcut]\r\nURL=https://example.invalid/important\r\n")
-        .unwrap();
+    disk::write(
+        &important,
+        "[InternetShortcut]\r\nURL=https://example.invalid/important\r\n",
+    )
+    .unwrap();
     let mut app = native::read_link(&important).unwrap();
     app.policy = Policy::Always;
     app.note = "Keep the manual decision".into();
@@ -136,7 +139,10 @@ fn multipart_archive_sets_survive_real_apply_undo_and_store_reopen() {
         f.intact(name);
     }
     assert_eq!(reopened.app(&app.id).unwrap(), app);
-    assert_eq!(serde_json::to_value(reopened.days().unwrap()).unwrap(), days);
+    assert_eq!(
+        serde_json::to_value(reopened.days().unwrap()).unwrap(),
+        days
+    );
 }
 
 #[test]
@@ -195,9 +201,12 @@ fn incomplete_rar_download_and_manual_keep_survive_later_arrival_and_undo() {
     let id = status(&f.store).unwrap().undo.unwrap();
     assert_eq!(undo(&f.store, &id).unwrap().restored, 2);
     let fresh = f.plan(true);
-    assert!(fresh.skipped.iter().any(|item| {
-        item.name == "Keep.zip" && item.reason.contains("You chose to keep")
-    }));
+    assert!(
+        fresh
+            .skipped
+            .iter()
+            .any(|item| { item.name == "Keep.zip" && item.reason.contains("You chose to keep") })
+    );
     assert_eq!(fresh.summary(), (2, 1, 1));
     for name in [
         "Download.part001.rar",
