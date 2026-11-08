@@ -28,6 +28,9 @@ jobs:
       - name: Release publication guards
         shell: pwsh
         run: ./scripts/test-release-workflow.ps1
+      - name: Verified UI renderer download retry
+        shell: pwsh
+        run: ./scripts/test-ui-download.ps1
       - run: cargo fmt --check
       - run: cargo test --locked
         if: success() || failure()

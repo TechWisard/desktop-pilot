@@ -64,8 +64,8 @@ try {
         $archive = Join-Path $fixtureRoot 'mesa.7z'
         $mesaUrl = 'https://github.com/pal1000/mesa-dist-win/releases/download/26.2.4/mesa3d-26.2.4-release-msvc.7z'
         $mesaSha = '351fc8c8b695878ffb3eaa044b3ead08672a48b1a045e3c3e3975811df0f6695'
-        Invoke-WebRequest -Uri $mesaUrl -OutFile $archive
-        if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $mesaSha) { throw 'Software renderer checksum mismatch' }
+        . (Join-Path $PSScriptRoot 'ui-download.ps1')
+        Invoke-VerifiedUiRendererDownload -Uri $mesaUrl -Destination $archive -ExpectedSha256 $mesaSha
         $mesa = Join-Path $fixtureRoot 'mesa'
         & 7z x $archive "-o$mesa" -y | Out-Null
         if ($LASTEXITCODE) { throw 'Could not extract the verified software renderer' }
