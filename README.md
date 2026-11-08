@@ -22,6 +22,12 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It lear
 
 Installation is per user, by default in `%LOCALAPPDATA%\DesktopPilot`; no administrator access is required. Settings are available from the tray icon and the Start menu. This preview executable is unsigned; download only from this repository's Releases and verify the supplied SHA-256 checksum.
 
+## Improvements in 0.2.128
+
+**A temporarily missing shortcut no longer makes a shared app identity look like proof of one launch profile.** If two saved launch variants use the same packaged-app identifier, Desktop Pilot checks both variants even when one original becomes unavailable. Ambiguous foreground activity is left unattributed instead of boosting the wrong shortcut's automatic ranking. A genuinely unique, available launch remains eligible. Existing **Always** / **Never** decisions, profiles, files, history and icon positions are preserved. [Windows shortcut and SQLite regression](docs/research/2026-11-08-packaged-app-alias-attribution.md).
+
+Desktop organization is still under separate acceptance in [PR #211](https://github.com/TechWisard/desktop-pilot/pull/211), and is **not** part of this release.
+
 ## Improvements in 0.2.127
 
 **Saved web shortcuts are easier to find when a copied website address has an optional root slash.** For an existing launcher pointing to `https://example.invalid?view=Work`, pasting `https://example.invalid/?view=Work` now finds the same saved profile, and vice versa. Exact search still distinguishes HTTPS from HTTP, different hosts and case-sensitive query values; mentioning a URL in another shortcut's note is not enough to match. Existing **Always** / **Never** choices, source files, launch targets and usage history remain unchanged. [Real shortcut, SQLite and search regression](docs/research/2026-11-07-http-root-lookup.md).
