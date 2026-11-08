@@ -957,6 +957,76 @@ fn reopening_organizer_requires_fresh_consent_to_reset_remembered_choices() {
 }
 
 #[test]
+fn pending_organization_and_new_analysis_require_new_reset_consent() {
+    let mut f = Fixture::new();
+    let remembered = vec!["keep-my-arrangement".to_owned()];
+    f.app
+        .store
+        .set("organization.keep.v1", &remembered)
+        .unwrap();
+    f.app.config.language = "en".into();
+    i18n::set("en");
+    let ctx = egui::Context::default();
+    configure_style(&ctx);
+    let viewport = egui::vec2(960.0, 720.0);
+
+    // Confirm reset in the real modal, but do not perform it.
+    click_organization_button(&ctx, &mut f.app, viewport, "Previously excluded objects");
+    click_organization_button(
+        &ctx,
+        &mut f.app,
+        viewport,
+        "Confirm resetting all exclusions",
+    );
+    assert!(f.app.organization_reset_confirm);
+
+    // Another Settings instance interrupts organization while this modal is
+    // open. Recovery temporarily hides the reset controls.
+    f.app
+        .store
+        .set("organization.active.v1", &Some("1001".to_owned()))
+        .unwrap();
+    let pending = render(&ctx, &mut f.app, viewport, Vec::new());
+    assert!(!f.app.organization_reset_confirm);
+    assert!(!rendered_text(&pending)
+        .iter()
+        .any(|(label, _)| label == "Reset remembered choices"));
+
+    // Once recovery is resolved elsewhere, the old check must not return.
+    f.app
+        .store
+        .set("organization.active.v1", &Option::<String>::None)
+        .unwrap();
+    let _ = render(&ctx, &mut f.app, viewport, Vec::new());
+    assert!(!f.app.organization_reset_confirm);
+    assert_eq!(
+        f.app.store.get::<Vec<String>>("organization.keep.v1").unwrap(),
+        remembered
+    );
+    assert!(f.app.job.is_none());
+
+    // A new scan is another context change, even when no recovery occurred.
+    click_organization_button(
+        &ctx,
+        &mut f.app,
+        viewport,
+        "Confirm resetting all exclusions",
+    );
+    assert!(f.app.organization_reset_confirm);
+    click_organization_button(&ctx, &mut f.app, viewport, "Analyze the desktop");
+    assert!(!f.app.organization_reset_confirm);
+    f.finish_job();
+    assert_eq!(
+        f.app.store.get::<Vec<String>>("organization.keep.v1").unwrap(),
+        remembered
+    );
+    assert!(f.desktop.join("Alpha.url").is_file());
+    assert!(f.desktop.join("Beta.url").is_file());
+    assert!(!f.desktop.join("Sites").exists());
+    assert!(!organize::status(&f.app.store).unwrap().pending);
+}
+
+#[test]
 fn recovery_confirmation_cannot_authorize_a_different_pending_journal() {
     let mut f = Fixture::new();
     f.app.config.language = "en".into();
