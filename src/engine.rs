@@ -2106,14 +2106,12 @@ fn observe_app_id(apps: &[App], id: &str) -> Option<String> {
         .iter()
         .filter(|a| {
             [&a.target, &a.arguments].into_iter().any(|value| {
-                    let value = value.trim().trim_matches('"').to_lowercase();
-                    value
-                        .strip_prefix("shell:appsfolder\\")
-                        .or_else(|| {
-                            value.strip_prefix("::{4234d49b-0245-4df3-b780-3893943456e1}\\")
-                        })
-                        .is_some_and(|suffix| suffix.eq_ignore_ascii_case(id))
-                })
+                let value = value.trim().trim_matches('"').to_lowercase();
+                value
+                    .strip_prefix("shell:appsfolder\\")
+                    .or_else(|| value.strip_prefix("::{4234d49b-0245-4df3-b780-3893943456e1}\\"))
+                    .is_some_and(|suffix| suffix.eq_ignore_ascii_case(id))
+            })
         })
         .map(|a| a.id.clone())
         .collect();
