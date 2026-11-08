@@ -558,10 +558,32 @@ impl Settings {
                                     "A suitable quick-shortcut area is not confirmed yet. Refresh the layout after organizing; reduce the shortcut count if necessary.",
                                 ));
                             }
-                            ui.label(t(
-                                "Поиск по имени, папке или причине исключения",
-                                "Search by name, folder or exclusion reason",
-                            ));
+                            // Put recovery beside the search label rather than
+                            // pushing long exclusion lists below the viewport.
+                            // Search never changes a saved selection or policy.
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(t(
+                                    "Поиск по имени, папке или причине исключения",
+                                    "Search by name, folder or exclusion reason",
+                                ));
+                                if !self.organization_query.trim().is_empty()
+                                    && ui
+                                        .add_enabled(
+                                            available,
+                                            egui::Button::new(t("Очистить поиск", "Clear search")),
+                                        )
+                                        .clicked()
+                                {
+                                    self.organization_query.clear();
+                                    self.organization_page = 0;
+                                    ctx.data_mut(|data| {
+                                        data.insert_temp(
+                                            egui::Id::new("organize-skipped-page"),
+                                            0usize,
+                                        );
+                                    });
+                                }
+                            });
                             if ui
                                 .add(
                                     egui::TextEdit::singleline(&mut self.organization_query)
@@ -577,37 +599,11 @@ impl Settings {
                                     );
                                 });
                             }
-                            // A long filtered review must have a one-click escape
-                            // from a query with no visible candidates. Never reset
-                            // selected rows or remembered policies when clearing search.
-                            if !self.organization_query.trim().is_empty()
-                                && ui
-                                    .add_enabled(
-                                        available,
-                                        egui::Button::new(t("Очистить поиск", "Clear search")),
-                                    )
-                                    .clicked()
-                            {
-                                self.organization_query.clear();
-                                self.organization_page = 0;
-                                ctx.data_mut(|data| {
-                                    data.insert_temp(
-                                        egui::Id::new("organize-skipped-page"),
-                                        0usize,
-                                    );
-                                });
-                            }
                             ui.small(t(
                                 "Снимите галочку, чтобы оставить объект на столе. Можно запомнить исключения без перемещения других файлов.",
                                 "Uncheck an object to leave it on the desktop. You can remember exclusions without moving other files.",
                             ));
                             let query = self.organization_query.trim().to_lowercase();
-                            if !query.is_empty() {
-                                ui.small(t(
-                                    "Поиск скрывает только строки списка. При применении будут обработаны все отмеченные объекты, включая скрытые фильтром и находящиеся на других страницах.",
-                                    "Search only hides rows. Apply processes every checked item, including those hidden by this filter or on other pages.",
-                                ));
-                            }
                             let filtered: Vec<_> = plan
                                 .items
                                 .iter()
@@ -622,11 +618,20 @@ impl Settings {
                                 })
                                 .map(|(index, _)| index)
                                 .collect();
-                            if !query.is_empty() && filtered.is_empty() {
-                                ui.small(t(
-                                    "Среди предлагаемых объектов совпадений нет. Проверьте список оставленных на месте ниже или очистите поиск.",
-                                    "No proposed items match. Check the left-in-place list below or clear the search.",
-                                ));
+                            // Use one concise status line for search, not two:
+                            // an extra row hid the excluded-items section at 100% DPI.
+                            if !query.is_empty() {
+                                if filtered.is_empty() {
+                                    ui.small(t(
+                                        "Среди предлагаемых объектов совпадений нет. Проверьте список оставленных на месте ниже или очистите поиск.",
+                                        "No proposed items match. Check the left-in-place list below or clear the search.",
+                                    ));
+                                } else {
+                                    ui.small(t(
+                                        "Поиск скрывает только строки списка. При применении будут обработаны все отмеченные объекты, включая скрытые фильтром и находящиеся на других страницах.",
+                                        "Search only hides rows. Apply processes every checked item, including those hidden by this filter or on other pages.",
+                                    ));
+                                }
                             }
                             // Keep the original full-plan controls above, but let a person
                             // review one searched set across every page without silently

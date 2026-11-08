@@ -1349,9 +1349,11 @@ fn empty_organizer_search_is_explained_and_can_be_cleared_without_losing_choices
     f.app.organization_query = "not-a-real-shortcut".into();
     settle(&ctx, &mut f.app, viewport);
     let labels = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
-    assert!(labels.iter().any(|(label, _)| {
-        label.contains("No proposed items match")
-    }));
+    assert!(
+        labels
+            .iter()
+            .any(|(label, _)| { label.contains("No proposed items match") })
+    );
     assert!(labels.iter().any(|(label, _)| label == "Clear search"));
 
     // Click the production egui control. Clearing a filter is never consent
@@ -1361,12 +1363,21 @@ fn empty_organizer_search_is_explained_and_can_be_cleared_without_losing_choices
     assert_eq!(f.app.organization_page, 0);
     let plan = f.app.organization_plan.as_ref().unwrap();
     assert_eq!(
-        plan.items.iter().map(|item| item.selected).collect::<Vec<_>>(),
+        plan.items
+            .iter()
+            .map(|item| item.selected)
+            .collect::<Vec<_>>(),
         chosen
     );
     assert_eq!(plan.items.len(), 2);
     assert_eq!(plan.summary(), (0, 0, 0));
-    assert!(f.app.store.get::<Vec<String>>("organization.keep.v1").unwrap().is_empty());
+    assert!(
+        f.app
+            .store
+            .get::<Vec<String>>("organization.keep.v1")
+            .unwrap()
+            .is_empty()
+    );
     assert!(organize::status(&f.app.store).unwrap().undo.is_none());
     assert_eq!(fs::read(f.desktop.join("Alpha.url")).unwrap(), original[0]);
     assert_eq!(fs::read(f.desktop.join("Beta.url")).unwrap(), original[1]);
