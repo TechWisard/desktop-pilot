@@ -1209,11 +1209,14 @@ fn optional_camera_pairs_stay_together_while_independent_media_moves_and_undoes(
         "Live B.mov",
     ] {
         assert!(
-            plan.skipped.iter().any(|item| {
-                item.name == name && item.reason.contains("Associated file set")
-            }),
+            plan.skipped
+                .iter()
+                .any(|item| { item.name == name && item.reason.contains("Associated file set") }),
             "{name} must not be offered without its companion: {:?}",
-            plan.skipped.iter().map(|item| &item.name).collect::<Vec<_>>()
+            plan.skipped
+                .iter()
+                .map(|item| &item.name)
+                .collect::<Vec<_>>()
         );
         assert!(!plan.items.iter().any(|item| item.name == name));
     }
