@@ -634,7 +634,9 @@ impl Settings {
                             for (index, destination, moving) in rows {
                                 let item = &mut plan.items[index];
                                 let label = if moving {
-                                    format!("{}  →  {destination}", item.name)
+                                    // The default egui font on Windows 11 ARM did not paint the
+                                    // arrow glyph. Use a widely supported breadcrumb marker.
+                                    format!("{}  »  {destination}", item.name)
                                 } else {
                                     format!("{} — {}", item.name, t("Остаётся", "Stays in place"))
                                 };
