@@ -465,7 +465,8 @@ fn searching_exclusion_reasons_finds_saved_manual_rules_across_pages_and_locales
         i18n::set(language);
         f.app.config.language = language.into();
         f.app.organization_query = query.into();
-        let matching = f.app
+        let matching = f
+            .app
             .organization_plan
             .as_ref()
             .unwrap()
