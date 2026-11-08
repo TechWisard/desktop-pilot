@@ -335,7 +335,10 @@ impl Settings {
                 let (moves, _, _) = plan.summary();
                 let rejected = plan.items.iter().any(|item| !item.selected);
                 (moves, rejected)
-            });
+            })
+            // A plan with no move and no Keep decision has no action to take.
+            // Avoid displaying an inert confirmation for a checked singleton.
+            .filter(|(moves, rejected)| *moves > 0 || *rejected);
         let feedback = self.organization_feedback();
         let running = self.job.as_ref().map(|job| match job.label {
             "Analyzing the desktop…" => t("Анализируем рабочий стол…", "Analyzing the desktop…"),
