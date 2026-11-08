@@ -271,6 +271,84 @@ fn zero_move_review_explains_singletons_without_moving_or_forgetting_user_choice
 }
 
 #[test]
+fn kept_and_singleton_rows_keep_their_searchable_planned_folder_visible() {
+    let mut f = Fixture::new();
+    f.analyze();
+    let alpha = fs::read(f.desktop.join("Alpha.url")).unwrap();
+    let beta = fs::read(f.desktop.join("Beta.url")).unwrap();
+    let folder = {
+        let plan = f.app.organization_plan.as_ref().unwrap();
+        let item = plan.items.iter().find(|item| item.name == "Alpha.url").unwrap();
+        plan.destination(item)
+    };
+    let viewport = egui::vec2(1400.0, 1200.0);
+
+    for (lang, stays, folder_label) in [
+        ("en", "Stays in place", "Planned folder"),
+        ("ru", "Остаётся", "Папка в плане"),
+    ] {
+        i18n::set(lang);
+        f.app.config.language = lang.into();
+        let ctx = egui::Context::default();
+        configure_style(&ctx);
+        settle(&ctx, &mut f.app, viewport);
+        let before = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+        assert!(
+            before
+                .iter()
+                .any(|(text, _)| text.contains(&format!("Alpha.url  »  {folder}"))),
+            "The initially moving row must still show its actual destination: {before:?}"
+        );
+
+        // One unchecked item makes a new folder's other selected item
+        // a singleton. Both stay, but both still belong to the same visible
+        // and searchable planned category. No filesystem changes are allowed.
+        f.app
+            .organization_plan
+            .as_mut()
+            .unwrap()
+            .items
+            .iter_mut()
+            .find(|item| item.name == "Alpha.url")
+            .unwrap()
+            .selected = false;
+        assert_eq!(f.app.organization_plan.as_ref().unwrap().summary(), (0, 0, 0));
+        let after = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+        for name in ["Alpha.url", "Beta.url"] {
+            assert!(
+                after.iter().any(|(text, _)| {
+                    text.contains(name)
+                        && text.contains(stays)
+                        && text.contains(folder_label)
+                        && text.contains(&folder)
+                }),
+                "{lang}: candidate folder must remain understandable for {name}: {after:?}"
+            );
+        }
+        let plan = f.app.organization_plan.as_ref().unwrap();
+        assert!(organizer_matches_query(
+            &folder.to_lowercase(),
+            "Alpha.url",
+            &plan.destination(plan.items.iter().find(|item| item.name == "Alpha.url").unwrap()),
+        ));
+        f.app
+            .organization_plan
+            .as_mut()
+            .unwrap()
+            .items
+            .iter_mut()
+            .find(|item| item.name == "Alpha.url")
+            .unwrap()
+            .selected = true;
+    }
+
+    assert_eq!(fs::read(f.desktop.join("Alpha.url")).unwrap(), alpha);
+    assert_eq!(fs::read(f.desktop.join("Beta.url")).unwrap(), beta);
+    assert!(organize::status(&f.app.store).unwrap().undo.is_none());
+    assert!(f.app.job.is_none());
+}
+
+#[test]
 fn one_bulk_choice_changes_the_entire_real_plan_even_with_hidden_rows() {
     let mut f = Fixture::new();
     f.analyze();
