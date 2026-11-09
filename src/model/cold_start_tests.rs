@@ -818,7 +818,6 @@ fn a_recent_clock_rewind_must_not_evict_a_familiar_shortcut() {
     });
 }
 
-
 // Compare real rank/selector behavior through a long focus session, repeated
 // short context switches, an extended break and an existing manual anchor.
 // This is synthetic demand, not a claim about users' preferred applications.
@@ -843,7 +842,10 @@ fn sustained_work_competes_with_brief_revisits_without_overriding_manual_choices
         day("BriefChecks", time - 12 * 3_600, 6, 60),
     ];
     let before_rest = rank(&apps, &evidence, &cfg, time);
-    let focused = before_rest.iter().find(|r| r.id == "FocusedProject").unwrap();
+    let focused = before_rest
+        .iter()
+        .find(|r| r.id == "FocusedProject")
+        .unwrap();
     let brief = before_rest.iter().find(|r| r.id == "BriefChecks").unwrap();
     assert!(focused.eligible && brief.eligible);
     assert!(
@@ -870,8 +872,16 @@ fn sustained_work_competes_with_brief_revisits_without_overriding_manual_choices
     let later = time + 7 * 86_400;
     let after_rest = rank(&apps, &evidence, &cfg, later);
     assert!(
-        after_rest.iter().find(|r| r.id == "FocusedProject").unwrap().score
-            > after_rest.iter().find(|r| r.id == "BriefChecks").unwrap().score
+        after_rest
+            .iter()
+            .find(|r| r.id == "FocusedProject")
+            .unwrap()
+            .score
+            > after_rest
+                .iter()
+                .find(|r| r.id == "BriefChecks")
+                .unwrap()
+                .score
     );
     assert!(after_rest.iter().all(|r| r.seconds <= 3_600));
 
