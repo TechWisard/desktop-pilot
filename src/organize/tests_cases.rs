@@ -1532,3 +1532,99 @@ fn late_lyrics_invalidate_a_preview_before_any_moves() {
         }));
     }
 }
+
+#[test]
+fn sami_subtitle_keeps_video_in_place_while_unrelated_media_moves_and_undoes() {
+    let f = Fixture::new();
+    let video = "Эпизод%USERNAME%.mkv";
+    let subtitle = "Эпизод%USERNAME%.eng.forced.smi";
+    disk::write(f.desktop.join(video), b"original video").unwrap();
+    disk::write(f.desktop.join(subtitle), b"<SAMI>synthetic captions</SAMI>").unwrap();
+    for name in [
+        "Independent A.mp4",
+        "Independent B.avi",
+        "Notes A.txt",
+        "Notes B.txt",
+    ] {
+        disk::write(f.desktop.join(name), format!("fixture: {name}")).unwrap();
+    }
+    let important = f.url("Important.url", "https://example.invalid/essential");
+    f.store.policy(&important.id, Policy::Always).unwrap();
+    f.store.observe(&important.id, 321, true, false).unwrap();
+    let saved = f.store.app(&important.id).unwrap();
+    let days = serde_json::to_value(f.store.days().unwrap()).unwrap();
+    let plan = f.plan(true);
+    assert_eq!(plan.summary(), (4, 2, 2));
+    let skipped = plan.skipped.iter().find(|item| item.name == video).unwrap();
+    assert!(
+        skipped.reason.contains("Associated file set"),
+        "{}",
+        skipped.reason
+    );
+    assert_eq!(
+        disk::read(f.desktop.join(video)).unwrap(),
+        b"original video"
+    );
+    let media_folder = plan.destination(
+        plan.items
+            .iter()
+            .find(|item| item.name == "Independent A.mp4")
+            .unwrap(),
+    );
+    assert_eq!(f.apply(&plan).moved, 4);
+    assert_eq!(
+        disk::read(f.desktop.join(video)).unwrap(),
+        b"original video"
+    );
+    assert_eq!(
+        disk::read(f.desktop.join(subtitle)).unwrap(),
+        b"<SAMI>synthetic captions</SAMI>"
+    );
+    for name in ["Independent A.mp4", "Independent B.avi"] {
+        assert!(f.desktop.join(&media_folder).join(name).is_file());
+    }
+    undo(&f.store, &f.last()).unwrap();
+    for name in [
+        "Independent A.mp4",
+        "Independent B.avi",
+        "Notes A.txt",
+        "Notes B.txt",
+    ] {
+        assert!(f.desktop.join(name).is_file());
+    }
+    assert!(!f.desktop.join(media_folder).exists());
+    assert_eq!(f.store.app(&important.id).unwrap(), saved);
+    assert_eq!(serde_json::to_value(f.store.days().unwrap()).unwrap(), days);
+    assert!(status(&f.store).unwrap().undo.is_none());
+}
+
+#[test]
+fn late_sami_subtitle_blocks_stale_desktop_preview_before_any_move() {
+    let f = Fixture::new();
+    disk::write(f.desktop.join("Episode.mp4"), b"film").unwrap();
+    disk::write(f.desktop.join("Other.mp4"), b"other").unwrap();
+    let plan = f.plan(true);
+    assert_eq!(plan.summary(), (2, 1, 1));
+    let folder = plan.destination(&plan.items[0]);
+    disk::write(f.desktop.join("Episode.en.smi"), b"late subtitles").unwrap();
+    let error = apply(&f.store, &plan, &AtomicBool::new(false)).unwrap_err();
+    assert!(
+        format!("{error:#}").contains("Associated file set"),
+        "{error:#}"
+    );
+    assert_eq!(disk::read(f.desktop.join("Episode.mp4")).unwrap(), b"film");
+    assert_eq!(disk::read(f.desktop.join("Other.mp4")).unwrap(), b"other");
+    assert_eq!(
+        disk::read(f.desktop.join("Episode.en.smi")).unwrap(),
+        b"late subtitles"
+    );
+    assert!(!f.desktop.join(folder).exists());
+    assert!(status(&f.store).unwrap().undo.is_none());
+    assert!(!status(&f.store).unwrap().pending);
+    let refreshed = f.plan(true);
+    assert!(
+        refreshed.skipped.iter().any(|item| {
+            item.name == "Episode.mp4" && item.reason.contains("Associated file set")
+        })
+    );
+}
