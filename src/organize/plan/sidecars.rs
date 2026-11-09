@@ -52,6 +52,7 @@ pub(super) fn protected(paths: &[PathBuf]) -> HashSet<String> {
                 | "pp3"
                 | "dop"
                 | "srt"
+                | "smi"
                 | "sub"
                 | "ass"
                 | "ssa"
@@ -122,6 +123,8 @@ mod tests {
             "Photo_02.jpg.xmp",
             "Film.mp4",
             "Film.en.forced.srt",
+            "Episode.mkv",
+            "Episode.eng.smi",
             "Album.flac",
             "album.cue",
             "Unrelated.jpg",
@@ -134,7 +137,7 @@ mod tests {
         .into_iter()
         .map(PathBuf::from)
         .collect();
-        let expected: HashSet<_> = ["photo.jpg", "film.mp4", "album.flac"]
+        let expected: HashSet<_> = ["photo.jpg", "film.mp4", "episode.mkv", "album.flac"]
             .into_iter()
             .map(String::from)
             .collect();
