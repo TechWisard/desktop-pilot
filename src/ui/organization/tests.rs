@@ -1744,14 +1744,14 @@ fn reanalyzing_from_the_dialog_resets_the_old_excluded_results_page() {
 }
 
 #[test]
-fn filtered_review_discloses_checked_objects_outside_search_without_changing_choices() {
+fn filtered_review_discloses_pending_moves_and_keep_choices_outside_search() {
     let mut f = Fixture::new();
     f.analyze();
     let alpha = fs::read(f.desktop.join("Alpha.url")).unwrap();
     let beta = fs::read(f.desktop.join("Beta.url")).unwrap();
     for (language, text) in [
-        ("en", "Selected outside search: 1"),
-        ("ru", "Отмечено вне поиска: 1"),
+        ("en", "Changes outside search: 1"),
+        ("ru", "Изменений вне поиска: 1"),
     ] {
         for scale in [1.0, 2.0] {
             let ctx = egui::Context::default();
@@ -1762,20 +1762,22 @@ fn filtered_review_discloses_checked_objects_outside_search_without_changing_cho
             f.app.organization_query = "Alpha".into();
             let viewport = egui::vec2(1120.0 / scale, 820.0 / scale);
             settle(&ctx, &mut f.app, viewport);
-            let before = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
-            let (_, position) = before
+
+            // Two proposed moves: Beta is outside the search but will move.
+            let moving = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+            let (_, position) = moving
                 .iter()
                 .find(|(value, _)| value == text)
-                .unwrap_or_else(|| panic!("{language} at {scale}x: {before:?}"));
+                .unwrap_or_else(|| panic!("{language} at {scale}x: {moving:?}"));
             assert!(ctx.screen_rect().contains_rect(*position));
             assert_eq!(
                 f.app.organization_plan.as_ref().unwrap().summary(),
                 (2, 1, 1)
             );
 
-            // The filter does not revoke a hidden choice. When the person
-            // explicitly unchecks that second shortcut, the scope warning
-            // disappears and the remaining singleton cannot move.
+            // Unchecking hidden Beta turns the only remaining checked item
+            // into a singleton. It won't move, but Apply *will* remember the
+            // hidden Keep choice. The warning must not disappear.
             f.app
                 .organization_plan
                 .as_mut()
@@ -1790,7 +1792,32 @@ fn filtered_review_discloses_checked_objects_outside_search_without_changing_cho
                 (0, 0, 0)
             );
             let keeping = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
-            assert!(!keeping.iter().any(|(value, _)| value.contains(text)));
+            assert!(keeping.iter().any(|(value, _)| value == text));
+            assert!(keeping.iter().any(|(value, _)| {
+                value
+                    == if language == "ru" {
+                        "Запомнить исключения"
+                    } else {
+                        "Remember keep choices"
+                    }
+            }));
+
+            // Both unchecked: only Beta is hidden, and it still has a Keep
+            // decision even though neither file will move.
+            f.app
+                .organization_plan
+                .as_mut()
+                .unwrap()
+                .items
+                .iter_mut()
+                .find(|item| item.name == "Alpha.url")
+                .unwrap()
+                .selected = false;
+            let both_kept = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+            assert!(both_kept.iter().any(|(value, _)| value == text));
+
+            // Beta becomes a checked singleton, which cannot move. Alpha
+            // remains a visible Keep choice, so there is no hidden change.
             f.app
                 .organization_plan
                 .as_mut()
@@ -1800,8 +1827,32 @@ fn filtered_review_discloses_checked_objects_outside_search_without_changing_cho
                 .find(|item| item.name == "Beta.url")
                 .unwrap()
                 .selected = true;
-            let again = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
-            assert!(again.iter().any(|(value, _)| value == text));
+            let singleton = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+            assert!(!singleton.iter().any(|(value, _)| value.contains(text)));
+
+            // Switch the filter: the saved Keep choice for Alpha is now hidden
+            // and needs the same scope warning.
+            f.app.organization_query = "Beta".into();
+            let reversed = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+            assert!(reversed.iter().any(|(value, _)| value == text));
+
+            // A second selection restores two moves. The hidden Alpha now
+            // counts as one move, not as a remembered exclusion.
+            f.app
+                .organization_plan
+                .as_mut()
+                .unwrap()
+                .items
+                .iter_mut()
+                .find(|item| item.name == "Alpha.url")
+                .unwrap()
+                .selected = true;
+            let restored = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+            assert!(restored.iter().any(|(value, _)| value == text));
+            assert_eq!(
+                f.app.organization_plan.as_ref().unwrap().summary(),
+                (2, 1, 1)
+            );
 
             f.app.organization_query.clear();
             let unfiltered = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
