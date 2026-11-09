@@ -421,3 +421,83 @@ fn renamed_category_folder_rejects_undo_before_any_restore() {
         b"user-owned"
     );
 }
+
+#[test]
+fn office_owner_files_and_libreoffice_locks_keep_originals_during_opt_in_apply_undo() {
+    for (opened, marker) in [
+        ("Report.docx", "~$port.docx"),
+        ("Letter.odt", ".~lock.Letter.odt#"),
+    ] {
+        let f = Fixture::new();
+        for name in [opened, marker, "Notes.docx", "Draft.docx"] {
+            disk::write(f.desktop.join(name), format!("Original {name}")).unwrap();
+        }
+        f.url("Alpha");
+        f.url("Beta");
+        let plan = f.plan(true);
+        assert!(!plan.items.iter().any(|item| item.name == opened));
+        assert!(!plan.items.iter().any(|item| item.name == marker));
+        assert!(plan.skipped.iter().any(|item| item.name == opened));
+        assert!(plan.skipped.iter().any(|item| item.name == marker));
+        assert_eq!(plan.summary(), (4, 2, 2));
+        let original_opened = disk::read(f.desktop.join(opened)).unwrap();
+        let original_marker = disk::read(f.desktop.join(marker)).unwrap();
+        let outcome = apply(&f.store, &plan, &AtomicBool::new(false)).unwrap();
+        assert_eq!(outcome.moved, 4);
+        assert_eq!(disk::read(f.desktop.join(opened)).unwrap(), original_opened);
+        assert_eq!(disk::read(f.desktop.join(marker)).unwrap(), original_marker);
+        assert!(f.desktop.join("Documents/Notes.docx").is_file());
+        assert!(f.desktop.join("Documents/Draft.docx").is_file());
+        let undo_id = status(&f.store).unwrap().undo.unwrap();
+        undo(&f.store, &undo_id).unwrap();
+        for name in [opened, marker, "Notes.docx", "Draft.docx"] {
+            assert_eq!(
+                disk::read(f.desktop.join(name)).unwrap(),
+                format!("Original {name}").as_bytes()
+            );
+        }
+        assert!(f.desktop.join("Alpha.url").is_file());
+        assert!(f.desktop.join("Beta.url").is_file());
+        assert!(f.store.get::<bool>("background_disabled").unwrap());
+    }
+}
+
+#[test]
+fn owner_file_arriving_after_preview_rejects_entire_batch_before_moving() {
+    for (opened, late_marker) in [
+        ("Report.docx", "~$port.docx"),
+        ("Letter.odt", ".~lock.Letter.odt#"),
+    ] {
+        let f = Fixture::new();
+        for name in [opened, "Notes.docx", "Draft.docx"] {
+            disk::write(f.desktop.join(name), format!("Original {name}")).unwrap();
+        }
+        f.url("Alpha");
+        f.url("Beta");
+        let plan = f.plan(true);
+        assert!(plan.items.iter().any(|item| item.name == opened));
+        assert_eq!(plan.summary(), (5, 2, 3));
+        disk::write(f.desktop.join(late_marker), b"synthetic owner marker").unwrap();
+        let error = apply(&f.store, &plan, &AtomicBool::new(false)).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("Associated file set"),
+            "late owner marker must invalidate the checked plan: {error:#}"
+        );
+        for name in [opened, "Notes.docx", "Draft.docx"] {
+            assert_eq!(
+                disk::read(f.desktop.join(name)).unwrap(),
+                format!("Original {name}").as_bytes()
+            );
+        }
+        assert_eq!(
+            disk::read(f.desktop.join(late_marker)).unwrap(),
+            b"synthetic owner marker"
+        );
+        assert!(f.desktop.join("Alpha.url").is_file());
+        assert!(f.desktop.join("Beta.url").is_file());
+        assert!(!f.desktop.join("Documents").exists());
+        assert!(!f.desktop.join("Sites").exists());
+        assert!(status(&f.store).unwrap().undo.is_none());
+        assert!(f.store.get::<bool>("background_disabled").unwrap());
+    }
+}
