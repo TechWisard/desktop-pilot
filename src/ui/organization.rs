@@ -339,18 +339,22 @@ impl Settings {
             // A plan with no move and no Keep decision has no action to take.
             // Avoid displaying an inert confirmation for a checked singleton.
             .filter(|(moves, rejected)| *moves > 0 || *rejected);
-        // Searching hides rows, not their checked choices. Keep the number of
-        // checked, filtered-out rows beside the fixed Apply action, rather than
-        // relying on a message that scrolls out of view on long reviews.
-        // Don't run the extra search scan when the filter is empty.
-        let hidden_selected = match (self.organization_plan.as_ref(), preview_action) {
+        // Apply also remembers unchecked objects outside the search filter.
+        // Count actual moves OR Keep choices; a checked singleton does neither.
+        // Cache the move decision per group to avoid repeated full-plan scans
+        // while painting a review with thousands of rows.
+        let hidden_changes = match (self.organization_plan.as_ref(), preview_action) {
             (Some(plan), Some(_)) if !self.organization_query.trim().is_empty() => {
                 let query = self.organization_query.trim().to_lowercase();
+                let mut moving_groups = std::collections::BTreeMap::new();
                 plan.items
                     .iter()
                     .filter(|item| {
-                        item.selected
-                            && !organizer_matches_query(&query, &item.name, &plan.destination(item))
+                        !organizer_matches_query(&query, &item.name, &plan.destination(item))
+                            && (!item.selected
+                                || *moving_groups
+                                    .entry(item.group)
+                                    .or_insert_with(|| plan.will_move(item)))
                     })
                     .count()
             }
@@ -399,12 +403,12 @@ impl Settings {
                 {
                     apply = true;
                 }
-                if hidden_selected > 0 {
+                if hidden_changes > 0 {
                     ui.colored_label(
                         WARNING,
                         format!(
-                            "{}: {hidden_selected}",
-                            t("Отмечено вне поиска", "Selected outside search"),
+                            "{}: {hidden_changes}",
+                            t("Изменений вне поиска", "Changes outside search"),
                         ),
                     );
                 }
