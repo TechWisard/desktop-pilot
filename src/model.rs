@@ -1328,7 +1328,8 @@ mod tests {
         assert!(alpha.eligible);
         let beta = &ranking[2];
         let expected_beta = 100.0 * 2.0f64.powf(-1.0 / 14.0)
-            + 61.0f64.ln() * 0.4 + 11.0
+            + 61.0f64.ln() * 0.4
+            + 11.0
             + (2.0 + (10.0f64 / 60.0).ln_1p() * 0.4) * 2.0f64.powf(-(90.0 - 1.0 / 86400.0) / 14.0);
         assert!((beta.score - expected_beta).abs() < 1e-12);
         assert_eq!(
