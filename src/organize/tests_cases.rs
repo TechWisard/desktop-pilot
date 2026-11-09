@@ -1561,7 +1561,10 @@ fn sami_subtitle_keeps_video_in_place_while_unrelated_media_moves_and_undoes() {
         "{}",
         skipped.reason
     );
-    assert_eq!(disk::read(f.desktop.join(video)).unwrap(), b"original video");
+    assert_eq!(
+        disk::read(f.desktop.join(video)).unwrap(),
+        b"original video"
+    );
     let media_folder = plan.destination(
         plan.items
             .iter()
@@ -1569,7 +1572,10 @@ fn sami_subtitle_keeps_video_in_place_while_unrelated_media_moves_and_undoes() {
             .unwrap(),
     );
     assert_eq!(f.apply(&plan).moved, 4);
-    assert_eq!(disk::read(f.desktop.join(video)).unwrap(), b"original video");
+    assert_eq!(
+        disk::read(f.desktop.join(video)).unwrap(),
+        b"original video"
+    );
     assert_eq!(
         disk::read(f.desktop.join(subtitle)).unwrap(),
         b"<SAMI>synthetic captions</SAMI>"
@@ -1616,7 +1622,9 @@ fn late_sami_subtitle_blocks_stale_desktop_preview_before_any_move() {
     assert!(status(&f.store).unwrap().undo.is_none());
     assert!(!status(&f.store).unwrap().pending);
     let refreshed = f.plan(true);
-    assert!(refreshed.skipped.iter().any(|item| {
-        item.name == "Episode.mp4" && item.reason.contains("Associated file set")
-    }));
+    assert!(
+        refreshed.skipped.iter().any(|item| {
+            item.name == "Episode.mp4" && item.reason.contains("Associated file set")
+        })
+    );
 }
