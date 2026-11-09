@@ -359,8 +359,15 @@ pub(crate) fn rank_with_owned(
             // A retained future local-day bucket is historical evidence, not
             // evidence of extra time or an opportunity to boost its weight.
             let age = time.saturating_sub(d.date).max(0) as f64 / 86400.0;
+            // Frequent brief context switches should not drown out a full
+            // sustained work session. Count actual foreground seconds, not
+            // launches, and avoid rewarding incidental visits below five
+            // minutes. Bound the additional evidence to one hour per day.
+            // Manual choices and displacement hysteresis are unchanged.
+            let sustained = f64::from(d.seconds.min(3600).saturating_sub(300)) / 300.0;
             let value = 2.0 * f64::from(d.sessions.min(12))
-                + (f64::from(d.seconds.min(3600)) / 60.0).ln_1p() * 0.4;
+                + (f64::from(d.seconds.min(3600)) / 60.0).ln_1p() * 0.4
+                + sustained;
             score += value * 2f64.powf(-age / cfg.half_life_days);
             if d.sessions > 0 || d.seconds >= 10 {
                 active_days.insert(d.date);
@@ -1314,7 +1321,7 @@ mod tests {
         );
         let alpha = &ranking[3];
         let expected_alpha = (4.0 + 2.0f64.ln() * 0.4) * 2.0f64.powf(-1.0 / 14.0)
-            + (24.0 + 61.0f64.ln() * 0.4) * 2.0f64.powf(-2.0 / 14.0)
+            + (24.0 + 61.0f64.ln() * 0.4 + 11.0) * 2.0f64.powf(-2.0 / 14.0)
             + (2.0 + 1.5f64.ln() * 0.4) * 2.0f64.powf(-1.0 / 14.0);
         assert!((alpha.score - expected_alpha).abs() < 1e-12);
         assert_eq!((alpha.days, alpha.launches, alpha.seconds), (2, 6, 7290));
@@ -1322,6 +1329,7 @@ mod tests {
         let beta = &ranking[2];
         let expected_beta = 100.0 * 2.0f64.powf(-1.0 / 14.0)
             + 61.0f64.ln() * 0.4
+            + 11.0
             + (2.0 + (10.0f64 / 60.0).ln_1p() * 0.4) * 2.0f64.powf(-(90.0 - 1.0 / 86400.0) / 14.0);
         assert!((beta.score - expected_beta).abs() < 1e-12);
         assert_eq!(
