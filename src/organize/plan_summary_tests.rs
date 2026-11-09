@@ -163,6 +163,7 @@ fn created_folder_uses_first_known_source_position_and_never_promises_an_unknown
         ..Default::default()
     };
     assert_eq!(plan.summary(), (2, 1, 1));
+    assert!(!plan.has_unlocated_created_folder());
     let movements = plan.movements();
     assert!(movements[0].item.position.is_none());
     assert_eq!(
@@ -175,15 +176,18 @@ fn created_folder_uses_first_known_source_position_and_never_promises_an_unknown
     // eventual cell. The projection must no longer promise a free quick area.
     plan.items[1].position = None;
     assert_eq!(plan.summary(), (2, 1, 1));
+    assert!(plan.has_unlocated_created_folder());
     assert_eq!(known_folder_anchor(&plan.movements(), "Sites"), None);
     assert!(plan.projected_zone(&config).is_none());
 
     // Reusing an existing folder does not create an unknown icon, and a
     // checked singleton in a new folder does not move at all.
     plan.folders[0].created = false;
+    assert!(!plan.has_unlocated_created_folder());
     assert!(plan.projected_zone(&config).is_some());
     plan.folders[0].created = true;
     plan.items[1].selected = false;
     assert_eq!(plan.summary(), (0, 0, 0));
+    assert!(!plan.has_unlocated_created_folder());
     assert!(plan.projected_zone(&config).is_some());
 }

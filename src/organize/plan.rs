@@ -546,6 +546,28 @@ pub(super) fn known_folder_anchor(movements: &[Movement], folder: &str) -> Optio
 }
 
 impl Plan {
+    // A folder made from multiple selected objects may lack any trustworthy
+    // Explorer coordinate. Keep this distinct from an actually full grid;
+    // otherwise the UI suggests changing the shortcut count unnecessarily.
+    // Read only selections and coordinates; never probe the filesystem here.
+    pub(crate) fn has_unlocated_created_folder(&self) -> bool {
+        if self.layout.is_none() {
+            return false;
+        }
+        let mut selected = BTreeMap::<Group, (usize, bool)>::new();
+        for item in self.items.iter().filter(|item| item.selected) {
+            let entry = selected.entry(item.group).or_default();
+            entry.0 += 1;
+            entry.1 |= item.position.is_some();
+        }
+        self.folders.iter().any(|folder| {
+            folder.created
+                && selected
+                    .get(&folder.group)
+                    .is_some_and(|(count, located)| *count >= 2 && !located)
+        })
+    }
+
     pub(super) fn movements(&self) -> Vec<Movement> {
         let mut counts = BTreeMap::<Group, usize>::new();
         for item in self.items.iter().filter(|i| i.selected) {

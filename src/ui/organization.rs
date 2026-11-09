@@ -12,6 +12,7 @@ pub(super) struct OrganizationProjectionCache {
     config: Config,
     selected: Vec<bool>,
     available: bool,
+    unlocated_folder: bool,
 }
 
 fn cached_organization_projection(
@@ -28,10 +29,14 @@ fn cached_organization_projection(
         return previous.available;
     }
     let available = compute(plan, config);
+    // Cache the reason alongside the estimate, avoiding a second scan of
+    // thousands of selections on every egui repaint.
+    let unlocated_folder = !available && plan.has_unlocated_created_folder();
     *cache = Some(OrganizationProjectionCache {
         config: config.clone(),
         selected,
         available,
+        unlocated_folder,
     });
     available
 }
@@ -588,10 +593,21 @@ impl Settings {
                                     &mut self.organization_projection,
                                 )
                             {
-                                ui.colored_label(WARNING, t(
-                                    "Подходящая область для быстрых ярлыков пока не подтверждена. После уборки обновите схему; при необходимости выберите меньше ярлыков.",
-                                    "A suitable quick-shortcut area is not confirmed yet. Refresh the layout after organizing; reduce the shortcut count if necessary.",
-                                ));
+                                if self
+                                    .organization_projection
+                                    .as_ref()
+                                    .is_some_and(|cached| cached.unlocated_folder)
+                                {
+                                    ui.colored_label(WARNING, t(
+                                        "Положение новой папки неизвестно: Проводник не сообщил координаты её исходных значков. Оценка свободного места неполна. После переноса обновите расположение быстрых ярлыков.",
+                                        "A new folder's position is unknown: Explorer reported no positions for its source icons. The free-space estimate is unconfirmed. Refresh the quick-shortcut layout after organizing.",
+                                    ));
+                                } else {
+                                    ui.colored_label(WARNING, t(
+                                        "Подходящая область для быстрых ярлыков пока не подтверждена. После уборки обновите схему; при необходимости выберите меньше ярлыков.",
+                                        "A suitable quick-shortcut area is not confirmed yet. Refresh the layout after organizing; reduce the shortcut count if necessary.",
+                                    ));
+                                }
                             }
                             // Put recovery beside the search label rather than
                             // pushing long exclusion lists below the viewport.

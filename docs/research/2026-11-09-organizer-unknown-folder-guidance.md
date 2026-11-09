@@ -1,0 +1,13 @@
+# Explain missing Explorer coordinates separately from a full quick area — 2026-11-09
+
+## Verified product discrepancy
+The production organizer warns that quick-shortcut space is not confirmed when `Plan::projected_zone` returns `None`. After the first-known-folder-anchor fix in PR #255, `None` can also mean that none of the moved icons has a coordinate for the new folder's position. The existing generic warning then suggests reducing the number of quick shortcuts even though the immediate uncertainty is an unlocated folder, not insufficient capacity. This is directly grounded in the production projection and dialog source; it is not a confirmed end-user complaint.
+
+The Microsoft [IFolderView::GetItemPosition](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifolderview-getitemposition) contract permits a failing HRESULT rather than a coordinate. Existing research is in [the preceding anchor investigation](2026-11-09-organizer-known-folder-anchor.md). Independent desktop-layout complaints in [Fences' public forum](https://forums.stardock.com/540842/fences-6-unilaterally-rearrange-desktop) concern that other product and motivate conservative feedback only; they are not evidence of a Desktop Pilot failure.
+
+## Change and checks
+When at least two selected moving objects will form a new folder but none has a known Explorer coordinate, the dialog explains the **unknown future folder position**, rather than implying inadequate shortcut capacity. Otherwise the original space warning remains. A missing entire Explorer layout remains a generic unconfirmed projection. Reason detection is cached with the production estimate and only recalculated on plan selection, settings or new analysis; no extra filesystem I/O or per-frame scan is added.
+
+The existing production `Plan` regression now checks first-known, all-unknown, reused-folder and singleton transitions. A bilingual Windows/SQLite/egui regression uses real disposable .url entries plus a synthetic native layout, and verifies the painted explanation and unchanged file bytes, manual/catalog data and Undo. These correctness tests do not measure human time savings. Before integration, run the exact proposed head with locked Rust tests, formatting, strict Clippy, Windows native/Explorer/cloud fixtures and screenshot review. The UI's physical multi-monitor, real OneDrive account, keyboard and power-loss acceptance still needs independent completion.
+
+The fix does not change which files move, users' manual consent, saved policy, data, telemetry, placement algorithm, protection guards or the stable release.
