@@ -655,7 +655,10 @@ impl Plan {
                 })
         });
         for folder in self.folders.iter().filter(|f| f.created) {
-            if movements.iter().any(|movement| movement.folder == folder.name) {
+            if movements
+                .iter()
+                .any(|movement| movement.folder == folder.name)
+            {
                 // A folder whose moving sources have no known icon position
                 // may land anywhere. Do not present an optimistic free zone
                 // that ignores this newly created desktop obstacle.
