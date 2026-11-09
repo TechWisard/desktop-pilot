@@ -365,7 +365,15 @@ pub(crate) fn rank_with_owned(
             // minutes. Bound the additional evidence to one hour per day.
             // Manual choices and displacement hysteresis are unchanged.
             let sustained = f64::from(d.seconds.min(3600).saturating_sub(300)) / 300.0;
-            let value = 2.0 * f64::from(d.sessions.min(12))
+            // Short bursts should not overwhelm sustained work. Beyond the
+            // first six sessions, restore up to six more session credits as
+            // actual foreground time grows from five to ten minutes. This
+            // preserves multi-day project adaptation without rewarding a
+            // dozen ten-second context switches as full work sessions.
+            let extra_sessions = f64::from(d.sessions.saturating_sub(6).min(6))
+                * f64::from(d.seconds.saturating_sub(300).min(300))
+                / 300.0;
+            let value = 2.0 * (f64::from(d.sessions.min(6)) + extra_sessions)
                 + (f64::from(d.seconds.min(3600)) / 60.0).ln_1p() * 0.4
                 + sustained;
             score += value * 2f64.powf(-age / cfg.half_life_days);
