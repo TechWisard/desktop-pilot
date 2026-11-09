@@ -1,0 +1,17 @@
+# First useful shortcut: sustained work versus brief return bursts — 2026-11-09
+
+## User-facing failure and research basis
+The stable 0.2.128 rank used only session counts and a logarithmic duration term. Its actual source formula ranked six ten-second returns (60 seconds total) at 12.2773 points and a sustained one-hour session at 3.6443 points, before the same recency decay. With twelve short returns (120 seconds), the discrepancy was 24.4394 versus 3.6443. A vacant one-slot area could therefore prioritize short context switches over a focused project. These are deterministic synthetic cases, not recorded Desktop Pilot incidents.
+
+Gajos et al., CHI 2008, https://www.eecs.harvard.edu/~kgajos/papers/2008/gajos08predictability.shtml , studied predictability and accuracy in adaptive interfaces. Czerwinski, Horvitz and Wilhite's task-switching diary study, https://www.microsoft.com/en-us/research/publication/a-diary-study-of-task-switching-and-interruptions/ , motivates separating attention sustained at one task from frequent interruptions. Neither source defines optimal Desktop Pilot weightings.
+
+## Narrow stable correction
+Only the existing ranking formula changes, without schema migrations, telemetry, hooks, configuration defaults, or filesystem operations. Confirmed foreground time earns a bounded bonus after five minutes, saturating at one hour per observed day. For an app with more than six sessions in one day, additional session credit grows continuously from five to ten minutes of recorded work; full former twelve-session credit is restored by ten minutes. This prevents twelve 10-second checks from overwhelming a one-hour focus session while preserving established multi-day project adaptation. With one-hour focus and twelve brief returns, the new scores are 14.6443 and 12.4394. No user productivity percentage is claimed.
+
+## Production-code regressions
+Port the two actual ranking-and-selection tests previously exercised in the unreleased organizer integration, unchanged: `sustained_work_competes_with_brief_revisits_without_overriding_manual_choices` and `a_same_day_burst_of_twelve_short_checks_cannot_beat_one_hour_of_focus`. These cover a vacant slot, brief incidental use, twelve returns, full ten-minute return credit, separate active days, seven days away, and an owned manually positioned essential shortcut. Update the existing **exact numerical ranking** test for the added bounded duration term without weakening its 1e-12 tolerance.
+
+The first unconditional six-session cap failed the production four-day project-switching regression in the integration review. Keep the refined continuously weighted implementation, which passed all Windows 2022/2025/11 ARM checks in integration commit `968c5b9bd40bea9a48b55f3ebaa735f025973d8f`. This stable branch must independently pass formatting, locked Rust tests, Clippy with denied warnings, Windows native integration and its usual UI gates before a release. A staged integration pass is not a stable-main release test.
+
+## Stable release boundary
+Target only the current stable main history at 0.2.128; do not merge the unfinished 0.3.0 organizer. Keep the existing user's manual Always/Never, taskbar pin exclusions, saved usage and seed scores, adaptive replacement hysteresis and Undo. Only prepare v0.2.129 after independent stable branch and merge CI pass and full release metadata/asset checks. Physical organizer acceptance does not apply to this isolated stable ranking correction; it still blocks 0.3.0.
