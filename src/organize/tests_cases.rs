@@ -1291,7 +1291,6 @@ fn camera_companion_arriving_after_preview_rejects_all_moves_without_a_journal()
     }
 }
 
-
 #[test]
 fn mixed_document_and_camera_dependencies_survive_apply_undo_and_late_arrival() {
     let f = Fixture::new();
@@ -1370,7 +1369,12 @@ fn mixed_document_and_camera_dependencies_survive_apply_undo_and_late_arrival() 
     // arriving after it was reviewed must abort the *whole* mixed batch.
     disk::write(f.desktop.join("Late Camera.jpg"), b"fresh still").unwrap();
     let stale = f.plan(true);
-    assert!(stale.items.iter().any(|item| item.name == "Late Camera.jpg"));
+    assert!(
+        stale
+            .items
+            .iter()
+            .any(|item| item.name == "Late Camera.jpg")
+    );
     disk::write(f.desktop.join("Late Camera.NEF"), b"late original").unwrap();
     let error = apply(&f.store, &stale, &AtomicBool::new(false)).unwrap_err();
     assert!(
