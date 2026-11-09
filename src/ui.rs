@@ -2699,7 +2699,10 @@ impl Settings {
                     ));
                     if ui.button(t("Открыть настройки", "Open settings")).clicked()
                     {
+                        // The warning is about observation, not operating mode.
+                        // Go straight to the requirement that can unblock Apply.
                         self.tab = 2;
+                        self.settings_section = 2;
                     }
                 }
                 Health::Suggestions => {
@@ -2741,7 +2744,12 @@ impl Settings {
                 );
             });
             if self.state.owned.is_empty() {
-                ui.label(if !self.learning.ready(&self.saved_config) {
+                ui.label(if !self.learning.ready(&self.saved_config)
+                    && !self.saved_config.collect
+                {
+                    t("Наблюдение приостановлено: статистика не собирается. В настройках «Наблюдение» включите сбор или отключите требование перед размещением.",
+                      "Observation is paused: no usage is collected. In Settings → Observation, enable collection or turn off the requirement before placing shortcuts.")
+                } else if !self.learning.ready(&self.saved_config) {
                     t("Первые ярлыки появятся после наблюдения. Можно заранее выбрать приложения, которые всегда должны быть на столе.",
                       "Your first shortcuts will appear after observation. You can already choose apps that should always be on the desktop.")
                 } else {

@@ -236,3 +236,132 @@ fn next_review_respects_paused_collection_and_corrected_clock() {
         );
     });
 }
+
+#[test]
+fn paused_learning_home_links_to_observation_and_does_not_promise_automatic_progress() {
+    with_profile(|store| {
+        store.set("setup_complete", &true).unwrap();
+        store.set("learning", &Progress::default()).unwrap();
+        for (language, open, guidance, old_guidance) in [
+            (
+                "en",
+                "Open settings",
+                "Observation is paused: no usage is collected",
+                "Your first shortcuts will appear after observation",
+            ),
+            (
+                "ru",
+                "Открыть настройки",
+                "Наблюдение приостановлено: статистика не собирается",
+                "Первые ярлыки появятся после наблюдения",
+            ),
+        ] {
+            let config = Config {
+                language: language.into(),
+                automatic: false,
+                collect: false,
+                learning_enabled: true,
+                ..Config::default()
+            };
+            store.set("config", &config).unwrap();
+            let mut app = Settings::new(store.home.clone()).unwrap();
+            app.background_alive = true;
+            app.heartbeat = now();
+            app.layout_receiver = None;
+            app.find_after_layout = false;
+            assert_eq!(app.current_health(), Health::ObservationPaused);
+            assert_eq!(app.tab, 0);
+            assert_eq!(app.settings_section, 0);
+
+            // Paint the actual Home page, not a separate copy of its labels.
+            let ctx = egui::Context::default();
+            configure_style(&ctx);
+            for frame in 0..3 {
+                let _ = paint_paused_home(&ctx, &mut app, frame as f64 * 0.25, Vec::new());
+            }
+            let output = paint_paused_home(&ctx, &mut app, 1.0, Vec::new());
+            let texts = painted_home_labels(&output);
+            assert!(
+                texts.iter().any(|(label, _)| label.contains(guidance)),
+                "{language}: missing paused-collection explanation: {texts:?}"
+            );
+            assert!(
+                !texts.iter().any(|(label, _)| label.contains(old_guidance)),
+                "{language}: Home still promises progress with collection disabled"
+            );
+            let at = texts
+                .iter()
+                .find(|(label, _)| label == open)
+                .map(|(_, pos)| *pos + egui::vec2(6.0, 7.0))
+                .expect("Open settings must be visible in the paused Home card");
+            for (frame, pressed) in [true, false].into_iter().enumerate() {
+                let _ = paint_paused_home(
+                    &ctx,
+                    &mut app,
+                    1.25 + frame as f64 * 0.25,
+                    vec![
+                        egui::Event::PointerMoved(at),
+                        egui::Event::PointerButton {
+                            pos: at,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            assert_eq!(app.tab, 2, "{language}: Open settings did not navigate");
+            assert_eq!(
+                app.settings_section, 2,
+                "{language}: link must open Observation, not the unrelated Mode section"
+            );
+            assert_eq!(app.config, config);
+            assert_eq!(store.get::<Config>("config").unwrap(), config);
+            assert_eq!(store.get::<Progress>("learning").unwrap().sessions, 0);
+            assert!(app.job.is_none());
+        }
+    });
+}
+
+fn paint_paused_home(
+    ctx: &egui::Context,
+    app: &mut Settings,
+    time: f64,
+    events: Vec<egui::Event>,
+) -> egui::FullOutput {
+    ctx.run(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1440.0, 1200.0),
+            )),
+            time: Some(time),
+            events,
+            ..Default::default()
+        },
+        |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| app.overview(ui));
+        },
+    )
+}
+
+fn painted_home_labels(output: &egui::FullOutput) -> Vec<(String, egui::Pos2)> {
+    fn collect(shape: &egui::epaint::Shape, labels: &mut Vec<(String, egui::Pos2)>) {
+        match shape {
+            egui::epaint::Shape::Text(text) => {
+                labels.push((text.galley.job.text.clone(), text.pos));
+            }
+            egui::epaint::Shape::Vec(children) => {
+                for child in children {
+                    collect(child, labels);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut labels = Vec::new();
+    for shape in &output.shapes {
+        collect(&shape.shape, &mut labels);
+    }
+    labels
+}
