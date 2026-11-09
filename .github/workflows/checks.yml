@@ -62,7 +62,7 @@ jobs:
         shell: pwsh
         run: ./scripts/test-ui.ps1
       - name: Interface review evidence
-        if: matrix.os != 'windows-2022' && always()
+        if: matrix.os != 'windows-2022' && (github.event_name == 'pull_request' || failure())
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: interface-review-${{ matrix.os }}
