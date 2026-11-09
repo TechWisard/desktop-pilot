@@ -359,8 +359,15 @@ pub(crate) fn rank_with_owned(
             // A retained future local-day bucket is historical evidence, not
             // evidence of extra time or an opportunity to boost its weight.
             let age = time.saturating_sub(d.date).max(0) as f64 / 86400.0;
+            // Frequent brief context switches should not drown out a full
+            // sustained work session. Count actual foreground seconds, not
+            // launches, and avoid rewarding incidental visits below five
+            // minutes. Bound the additional evidence to one hour per day.
+            // Manual choices and displacement hysteresis are unchanged.
+            let sustained = f64::from(d.seconds.min(3600).saturating_sub(300)) / 300.0;
             let value = 2.0 * f64::from(d.sessions.min(12))
-                + (f64::from(d.seconds.min(3600)) / 60.0).ln_1p() * 0.4;
+                + (f64::from(d.seconds.min(3600)) / 60.0).ln_1p() * 0.4
+                + sustained;
             score += value * 2f64.powf(-age / cfg.half_life_days);
             if d.sessions > 0 || d.seconds >= 10 {
                 active_days.insert(d.date);
