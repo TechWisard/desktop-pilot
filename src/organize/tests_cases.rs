@@ -1290,3 +1290,111 @@ fn camera_companion_arriving_after_preview_rejects_all_moves_without_a_journal()
         assert!(!status(&f.store).unwrap().pending);
     }
 }
+
+
+#[test]
+fn mixed_document_and_camera_dependencies_survive_apply_undo_and_late_arrival() {
+    let f = Fixture::new();
+    f.store.set("background_disabled", &true).unwrap();
+    let (alpha, beta) = f.two_sites();
+    f.store.observe(&alpha.id, 180, true, false).unwrap();
+    let days = serde_json::to_value(f.store.days().unwrap()).unwrap();
+
+    // These are ordinary, non-hidden files in a disposable Windows Desktop.
+    // Each pair would be separated by the old optional-files organizer.
+    let files = [
+        ("Report.docx", "open Word document"),
+        ("~$port.docx", "Word owner marker"),
+        ("Letter.odt", "open LibreOffice document"),
+        (".~lock.Letter.odt#", "LibreOffice owner marker"),
+        ("DSC_3100.CR3", "camera RAW original"),
+        ("DSC_3100.JPG", "camera JPEG companion"),
+        ("Live Trip.HEIC", "Live Photo still"),
+        ("Live Trip.MOV", "Live Photo movie"),
+        ("Notes.docx", "independent document one"),
+        ("Draft.docx", "independent document two"),
+        ("Solo A.jpg", "independent still one"),
+        ("Solo B.jpeg", "independent still two"),
+    ];
+    for &(name, value) in &files {
+        disk::write(f.desktop.join(name), value).unwrap();
+    }
+    assert_eq!(f.plan(false).summary(), (2, 1, 1));
+    let plan = f.plan(true);
+    assert_eq!(plan.summary(), (6, 3, 3));
+    for name in [
+        "Report.docx",
+        "~$port.docx",
+        "Letter.odt",
+        ".~lock.Letter.odt#",
+        "DSC_3100.JPG",
+        "Live Trip.HEIC",
+        "Live Trip.MOV",
+    ] {
+        assert!(
+            !plan.items.iter().any(|item| item.name == name)
+                && plan.skipped.iter().any(|item| item.name == name),
+            "linked item was proposed for movement: {name}"
+        );
+    }
+
+    let result = f.apply(&plan);
+    assert_eq!(result.moved, 6);
+    assert_eq!(result.folders_created, 3);
+    for &(name, value) in &files[..8] {
+        assert_eq!(disk::read(f.desktop.join(name)).unwrap(), value.as_bytes());
+    }
+    for name in ["Notes.docx", "Draft.docx"] {
+        assert!(f.desktop.join("Documents").join(name).is_file());
+    }
+    for name in ["Solo A.jpg", "Solo B.jpeg"] {
+        assert!(f.desktop.join("Images").join(name).is_file());
+    }
+    assert!(f.desktop.join("Sites/Alpha.url").is_file());
+    assert!(f.desktop.join("Sites/Beta.url").is_file());
+
+    undo(&f.store, &f.last()).unwrap();
+    for &(name, value) in &files {
+        assert_eq!(disk::read(f.desktop.join(name)).unwrap(), value.as_bytes());
+    }
+    for name in ["Sites", "Documents", "Images"] {
+        assert!(!f.desktop.join(name).exists());
+    }
+    assert_eq!(f.store.app(&alpha.id).unwrap(), alpha);
+    assert_eq!(f.store.app(&beta.id).unwrap(), beta);
+    assert_eq!(serde_json::to_value(f.store.days().unwrap()).unwrap(), days);
+    assert!(f.store.get::<bool>("background_disabled").unwrap());
+    assert!(status(&f.store).unwrap().undo.is_none());
+
+    // A second review contains a genuine independent photo. An RAW original
+    // arriving after it was reviewed must abort the *whole* mixed batch.
+    disk::write(f.desktop.join("Late Camera.jpg"), b"fresh still").unwrap();
+    let stale = f.plan(true);
+    assert!(stale.items.iter().any(|item| item.name == "Late Camera.jpg"));
+    disk::write(f.desktop.join("Late Camera.NEF"), b"late original").unwrap();
+    let error = apply(&f.store, &stale, &AtomicBool::new(false)).unwrap_err();
+    assert!(
+        format!("{error:#}").contains("Associated file set"),
+        "late camera companion must invalidate every proposed move: {error:#}"
+    );
+    for &(name, value) in &files {
+        assert_eq!(disk::read(f.desktop.join(name)).unwrap(), value.as_bytes());
+    }
+    assert_eq!(
+        disk::read(f.desktop.join("Late Camera.jpg")).unwrap(),
+        b"fresh still"
+    );
+    assert_eq!(
+        disk::read(f.desktop.join("Late Camera.NEF")).unwrap(),
+        b"late original"
+    );
+    assert!(f.desktop.join("Alpha.url").is_file());
+    assert!(f.desktop.join("Beta.url").is_file());
+    for name in ["Sites", "Documents", "Images"] {
+        assert!(!f.desktop.join(name).exists());
+    }
+    assert!(status(&f.store).unwrap().undo.is_none());
+    assert!(!status(&f.store).unwrap().pending);
+    assert_eq!(serde_json::to_value(f.store.days().unwrap()).unwrap(), days);
+    assert!(f.store.get::<bool>("background_disabled").unwrap());
+}
