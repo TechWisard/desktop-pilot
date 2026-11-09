@@ -1864,3 +1864,86 @@ fn filtered_review_discloses_pending_moves_and_keep_choices_outside_search() {
     assert!(organize::status(&f.app.store).unwrap().undo.is_none());
     assert!(f.app.job.is_none());
 }
+
+#[test]
+fn missing_explorer_positions_explain_uncertain_folder_space_in_both_languages() {
+    let mut f = Fixture::new();
+    f.analyze();
+    let files = [
+        fs::read(f.desktop.join("Alpha.url")).unwrap(),
+        fs::read(f.desktop.join("Beta.url")).unwrap(),
+    ];
+    let saved_apps = f.app.store.apps().unwrap();
+    let original = f.app.organization_plan.as_ref().unwrap();
+    assert_eq!(original.summary(), (2, 1, 1));
+
+    // Isolated Desktop analysis uses no real Explorer window. Supply a fully
+    // synthetic native Layout through Plan serialization, then exercise the
+    // production projection cache and real egui dialog with those exact data.
+    let layout = native::Layout {
+        items: Vec::new(),
+        spacing: Point { x: 80, y: 100 },
+        origin: Point { x: 0, y: 0 },
+        work: [0, 0, 1920, 1080],
+        flags: 0,
+        topology: "isolated-unlocated-test".into(),
+        icon_size: 32,
+    };
+    let mut value = serde_json::to_value(original).unwrap();
+    value["layout"] = serde_json::to_value(layout).unwrap();
+    f.app.organization_plan = Some(serde_json::from_value(value).unwrap());
+    assert!(
+        f.app
+            .organization_plan
+            .as_ref()
+            .unwrap()
+            .has_unlocated_created_folder()
+    );
+
+    for (language, explanation, generic) in [
+        (
+            "ru",
+            "Положение новой папки неизвестно",
+            "Подходящая область для быстрых ярлыков",
+        ),
+        (
+            "en",
+            "A new folder's position is unknown",
+            "A suitable quick-shortcut area",
+        ),
+    ] {
+        i18n::set(language);
+        f.app.config.language = language.into();
+        f.app.organization_projection = None;
+        let ctx = egui::Context::default();
+        configure_style(&ctx);
+        let viewport = egui::vec2(1400.0, 1200.0);
+        settle(&ctx, &mut f.app, viewport);
+        let text = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+        assert!(
+            text.iter()
+                .any(|(painted, _)| painted.contains(explanation)),
+            "{language}: distinguish unknown Explorer positions from a full grid: {text:?}"
+        );
+        assert!(
+            !text.iter().any(|(painted, _)| painted.contains(generic)),
+            "{language}: do not recommend reducing shortcuts for unknown coordinates"
+        );
+        assert!(
+            f.app
+                .organization_projection
+                .as_ref()
+                .unwrap()
+                .unlocated_folder
+        );
+        assert_eq!(
+            f.app.organization_plan.as_ref().unwrap().summary(),
+            (2, 1, 1)
+        );
+    }
+    assert_eq!(fs::read(f.desktop.join("Alpha.url")).unwrap(), files[0]);
+    assert_eq!(fs::read(f.desktop.join("Beta.url")).unwrap(), files[1]);
+    assert_eq!(f.app.store.apps().unwrap(), saved_apps);
+    assert!(organize::status(&f.app.store).unwrap().undo.is_none());
+    assert!(f.app.job.is_none());
+}
