@@ -9,6 +9,7 @@ use std::{
 mod archives;
 mod document_locks;
 mod lyrics;
+pub(super) mod subtitle_dirs;
 
 pub(super) fn protected(paths: &[PathBuf]) -> HashSet<String> {
     let mut by_name = HashMap::new();

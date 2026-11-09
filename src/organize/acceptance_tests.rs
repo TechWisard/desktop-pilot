@@ -501,3 +501,115 @@ fn owner_file_arriving_after_preview_rejects_entire_batch_before_moving() {
         assert!(f.store.get::<bool>("background_disabled").unwrap());
     }
 }
+
+#[test]
+fn sibling_subtitle_directory_preserves_only_matching_videos_and_all_manual_choices() {
+    for folder_name in ["Subs", "Subtitles"] {
+        let f = Fixture::new();
+        let always = f.url("Important");
+        f.store.policy(&always.id, Policy::Always).unwrap();
+        f.store.observe(&always.id, 120, true, false).unwrap();
+        let history = serde_json::to_value(f.store.days().unwrap()).unwrap();
+        let folder = f.desktop.join(folder_name);
+        disk::create_dir(&folder).unwrap();
+        for name in ["Episode.mp4", "Unrelated A.mp4", "Unrelated B.mp4"] {
+            disk::write(f.desktop.join(name), format!("Original {name}")).unwrap();
+        }
+        disk::write(folder.join("Episode.eng.forced.smi"), b"subtitle file").unwrap();
+        disk::write(folder.join("Someone else.en.srt"), b"unrelated subtitle").unwrap();
+
+        let plan = f.plan(true);
+        assert_eq!(plan.summary(), (2, 1, 1));
+        assert!(plan.skipped.iter().any(|item| {
+            item.name == "Episode.mp4" && item.reason.contains("Associated file set")
+        }));
+        for name in ["Unrelated A.mp4", "Unrelated B.mp4"] {
+            assert!(plan.items.iter().any(|item| item.name == name));
+        }
+        assert!(plan.skipped.iter().any(|item| item.name == "Important.url"));
+        let result = apply(&f.store, &plan, &AtomicBool::new(false)).unwrap();
+        assert_eq!(result.moved, 2);
+        assert_eq!(
+            disk::read(f.desktop.join("Episode.mp4")).unwrap(),
+            b"Original Episode.mp4"
+        );
+        assert_eq!(
+            disk::read(folder.join("Episode.eng.forced.smi")).unwrap(),
+            b"subtitle file"
+        );
+        let operation = status(&f.store).unwrap().undo.unwrap();
+        undo(&f.store, &operation).unwrap();
+        for name in ["Episode.mp4", "Unrelated A.mp4", "Unrelated B.mp4"] {
+            assert_eq!(
+                disk::read(f.desktop.join(name)).unwrap(),
+                format!("Original {name}").as_bytes()
+            );
+        }
+        assert_eq!(
+            f.store.app(&always.id).unwrap().policy,
+            Policy::Always
+        );
+        assert_eq!(serde_json::to_value(f.store.days().unwrap()).unwrap(), history);
+        assert!(f.store.get::<bool>("background_disabled").unwrap());
+        assert!(!status(&f.store).unwrap().pending);
+    }
+}
+
+#[test]
+fn late_subtitle_folder_or_subtitle_file_rejects_the_entire_old_plan() {
+    for existing_folder in [false, true] {
+        let f = Fixture::new();
+        for name in ["Episode.mp4", "Unrelated A.mp4", "Unrelated B.mp4"] {
+            disk::write(f.desktop.join(name), format!("Original {name}")).unwrap();
+        }
+        let folder = f.desktop.join("Subtitles");
+        if existing_folder {
+            disk::create_dir(&folder).unwrap();
+        }
+        let plan = f.plan(true);
+        assert_eq!(plan.summary(), (3, 1, 2));
+        if !existing_folder {
+            disk::create_dir(&folder).unwrap();
+        }
+        disk::write(folder.join("Episode.en.srt"), b"later subtitle").unwrap();
+        let err = apply(&f.store, &plan, &AtomicBool::new(false)).unwrap_err();
+        assert!(format!("{err:#}").contains("Associated file set"), "{err:#}");
+        for name in ["Episode.mp4", "Unrelated A.mp4", "Unrelated B.mp4"] {
+            assert_eq!(
+                disk::read(f.desktop.join(name)).unwrap(),
+                format!("Original {name}").as_bytes()
+            );
+        }
+        assert_eq!(disk::read(folder.join("Episode.en.srt")).unwrap(), b"later subtitle");
+        assert!(!f.desktop.join("Media").exists());
+        assert!(status(&f.store).unwrap().undo.is_none());
+        assert!(!status(&f.store).unwrap().pending);
+    }
+}
+
+#[test]
+fn unrelated_subtitle_directory_and_plain_file_named_subs_do_not_block_videos() {
+    for folder_is_file in [false, true] {
+        let f = Fixture::new();
+        for name in ["Episode.mp4", "Other.mp4"] {
+            disk::write(f.desktop.join(name), b"media").unwrap();
+        }
+        if folder_is_file {
+            disk::write(f.desktop.join("Subs"), b"user file").unwrap();
+        } else {
+            disk::create_dir(f.desktop.join("Subs")).unwrap();
+            disk::write(f.desktop.join("Subs/Elsewhere.en.srt"), b"unrelated").unwrap();
+        }
+        let plan = f.plan(true);
+        assert_eq!(plan.summary(), (2, 1, 1));
+        assert!(plan.items.iter().any(|item| item.name == "Episode.mp4"));
+        assert!(plan.items.iter().any(|item| item.name == "Other.mp4"));
+        let outcome = apply(&f.store, &plan, &AtomicBool::new(false)).unwrap();
+        assert_eq!(outcome.moved, 2);
+        assert_eq!(disk::read(f.desktop.join("Media/Episode.mp4")).unwrap(), b"media");
+        assert_eq!(disk::read(f.desktop.join("Media/Other.mp4")).unwrap(), b"media");
+        let operation = status(&f.store).unwrap().undo.unwrap();
+        undo(&f.store, &operation).unwrap();
+        assert_eq!(disk::read(f.desktop.join("Episode.mp4")).unwrap(), b"media");
+    }
+}

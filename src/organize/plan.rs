@@ -316,6 +316,9 @@ pub(super) fn dependencies(
         sidecar_objects: {
             let mut protected = sidecars::protected(paths);
             protected.extend(camera_pairs::protected(paths));
+            if include_files {
+                protected.extend(sidecars::subtitle_dirs::protected(paths, cancel)?);
+            }
             protected
         },
         ..Default::default()
