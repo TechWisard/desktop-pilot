@@ -119,7 +119,10 @@ fn matching_video_keys(
     }
 }
 
-pub(in crate::organize::plan) fn protected(paths: &[PathBuf], cancel: &AtomicBool) -> Result<HashSet<String>> {
+pub(in crate::organize::plan) fn protected(
+    paths: &[PathBuf],
+    cancel: &AtomicBool,
+) -> Result<HashSet<String>> {
     let mut videos = HashMap::<String, Vec<String>>::new();
     let mut all_video_paths = Vec::new();
     for path in paths {
