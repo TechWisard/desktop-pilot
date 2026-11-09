@@ -817,3 +817,178 @@ fn a_recent_clock_rewind_must_not_evict_a_familiar_shortcut() {
         assert_eq!(store.get::<State>("state").unwrap().owned, before.owned);
     });
 }
+// Compare real rank/selector behavior through a long focus session, repeated
+// short context switches, an extended break and an existing manual anchor.
+// This is synthetic demand, not a claim about users' preferred applications.
+#[test]
+fn sustained_work_competes_with_brief_revisits_without_overriding_manual_choices() {
+    let time = 300 * 86_400 + 12 * 3_600;
+    let cfg = Config {
+        collect: true,
+        automatic: true,
+        slots: 1,
+        max_changes: 1,
+        ..Default::default()
+    };
+    let apps = [
+        app("FocusedProject", 0.0, time),
+        app("BriefChecks", 0.0, time),
+    ];
+    // One hour of confirmed work is not six minute-scale revisits whose
+    // total foreground time was one minute.
+    let evidence = [
+        day("FocusedProject", time - 12 * 3_600, 1, 3_600),
+        day("BriefChecks", time - 12 * 3_600, 6, 60),
+    ];
+    let before_rest = rank(&apps, &evidence, &cfg, time);
+    let focused = before_rest
+        .iter()
+        .find(|r| r.id == "FocusedProject")
+        .unwrap();
+    let brief = before_rest.iter().find(|r| r.id == "BriefChecks").unwrap();
+    assert!(focused.eligible && brief.eligible);
+    assert!(
+        focused.score > brief.score,
+        "actual focused work should compete with frequent short switches: {focused:?} vs {brief:?}"
+    );
+    assert_eq!(
+        select_at(&apps, &before_rest, &State::default(), &cfg, false, time),
+        ["FocusedProject"]
+    );
+
+    // A short incidental visit must remain below the first-placement gate.
+    let tiny = app("Incidental", 0.0, time);
+    let tiny_rank = rank(
+        std::slice::from_ref(&tiny),
+        &[day("Incidental", time - 12 * 3_600, 1, 120)],
+        &cfg,
+        time,
+    );
+    assert!(!tiny_rank[0].eligible);
+
+    // A weekend / week away decays both signals without reversing their
+    // evidence order or inventing additional sessions.
+    let later = time + 7 * 86_400;
+    let after_rest = rank(&apps, &evidence, &cfg, later);
+    assert!(
+        after_rest
+            .iter()
+            .find(|r| r.id == "FocusedProject")
+            .unwrap()
+            .score
+            > after_rest
+                .iter()
+                .find(|r| r.id == "BriefChecks")
+                .unwrap()
+                .score
+    );
+    assert!(after_rest.iter().all(|r| r.seconds <= 3_600));
+
+    // The owner manually positioned an infrequently used essential app.
+    // More foreground evidence must never replace that deliberate choice.
+    let rare = app("EssentialManual", 0.0, time);
+    let all = [apps[0].clone(), apps[1].clone(), rare];
+    let state = State {
+        owned: vec![Owned {
+            app: "EssentialManual".into(),
+            path: "manual".into(),
+            sha: String::new(),
+            position: Point::default(),
+            manual: true,
+            since: time,
+            file_id: None,
+        }],
+        initialized: true,
+        ..Default::default()
+    };
+    let ranked = rank(&all, &evidence, &cfg, later);
+    assert_eq!(
+        select_at(&all, &ranked, &state, &cfg, false, later),
+        ["EssentialManual"]
+    );
+}
+
+#[test]
+fn a_same_day_burst_of_twelve_short_checks_cannot_beat_one_hour_of_focus() {
+    let time = 410 * 86_400 + 12 * 3_600;
+    let cfg = Config {
+        automatic: true,
+        collect: true,
+        slots: 1,
+        max_changes: 1,
+        ..Default::default()
+    };
+    let apps = [app("FocusedWork", 0.0, time), app("BriefChecks", 0.0, time)];
+    let evidence = [
+        day("FocusedWork", time - 3_600, 1, 3_600),
+        day("BriefChecks", time - 3_600, 12, 120),
+    ];
+    let ranking = rank(&apps, &evidence, &cfg, time);
+    let focused = ranking.iter().find(|r| r.id == "FocusedWork").unwrap();
+    let brief = ranking.iter().find(|r| r.id == "BriefChecks").unwrap();
+    assert!(focused.eligible && brief.eligible);
+    assert!(
+        focused.score > brief.score,
+        "twelve ten-second checks in one day must not outweigh one hour: {focused:?} vs {brief:?}"
+    );
+    assert_eq!(brief.seconds, 120);
+    assert_eq!(focused.seconds, 3_600);
+    assert_eq!(
+        select_at(&apps, &ranking, &State::default(), &cfg, false, time),
+        ["FocusedWork"]
+    );
+
+    // An absence must not create new evidence or reverse the same-day order.
+    let later = time + 7 * 86_400;
+    let after_break = rank(&apps, &evidence, &cfg, later);
+    assert_eq!(
+        select_at(&apps, &after_break, &State::default(), &cfg, false, later),
+        ["FocusedWork"]
+    );
+
+    // A genuinely engaged day earns full repeat credit at ten minutes,
+    // unlike the twelve brief returns totaling just two minutes. Preserve
+    // the established multi-day project-switching behavior.
+    let engaged = [
+        day("FocusedWork", time - 3_600, 1, 3_600),
+        day("BriefChecks", time - 3_600, 12, 600),
+    ];
+    let engaged_rank = rank(&apps, &engaged, &cfg, time);
+    assert_eq!(
+        select_at(&apps, &engaged_rank, &State::default(), &cfg, false, time),
+        ["BriefChecks"]
+    );
+
+    // Several separate active days are not collapsed into a single burst.
+    // Recurring short but deliberate work remains strong evidence.
+    let mut recurring = evidence.to_vec();
+    recurring.push(day("BriefChecks", time - 86_400 - 3_600, 6, 60));
+    let across_days = rank(&apps, &recurring, &cfg, time);
+    assert_eq!(
+        select_at(&apps, &across_days, &State::default(), &cfg, false, time),
+        ["BriefChecks"]
+    );
+
+    // A manually placed rare app is never evicted by either ranking.
+    let mut essential = app("ManualEssential", 0.0, time);
+    essential.policy = Policy::Always;
+    let all_apps = [apps[0].clone(), apps[1].clone(), essential];
+    let owner = State {
+        owned: vec![Owned {
+            app: "ManualEssential".into(),
+            path: "manual".into(),
+            sha: String::new(),
+            position: Point::default(),
+            manual: true,
+            since: time,
+            file_id: None,
+        }],
+        initialized: true,
+        ..Default::default()
+    };
+    let ranked = rank(&all_apps, &recurring, &cfg, later);
+    assert_eq!(
+        select_at(&all_apps, &ranked, &owner, &cfg, false, later),
+        ["ManualEssential"]
+    );
+}
