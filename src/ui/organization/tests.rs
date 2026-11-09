@@ -1892,12 +1892,13 @@ fn missing_explorer_positions_explain_uncertain_folder_space_in_both_languages()
     let mut value = serde_json::to_value(original).unwrap();
     value["layout"] = serde_json::to_value(layout).unwrap();
     f.app.organization_plan = Some(serde_json::from_value(value).unwrap());
-    assert!(f
-        .app
-        .organization_plan
-        .as_ref()
-        .unwrap()
-        .has_unlocated_created_folder());
+    assert!(
+        f.app
+            .organization_plan
+            .as_ref()
+            .unwrap()
+            .has_unlocated_created_folder()
+    );
 
     for (language, explanation, generic) in [
         (
@@ -1920,19 +1921,21 @@ fn missing_explorer_positions_explain_uncertain_folder_space_in_both_languages()
         settle(&ctx, &mut f.app, viewport);
         let text = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
         assert!(
-            text.iter().any(|(painted, _)| painted.contains(explanation)),
+            text.iter()
+                .any(|(painted, _)| painted.contains(explanation)),
             "{language}: distinguish unknown Explorer positions from a full grid: {text:?}"
         );
         assert!(
             !text.iter().any(|(painted, _)| painted.contains(generic)),
             "{language}: do not recommend reducing shortcuts for unknown coordinates"
         );
-        assert!(f
-            .app
-            .organization_projection
-            .as_ref()
-            .unwrap()
-            .unlocated_folder);
+        assert!(
+            f.app
+                .organization_projection
+                .as_ref()
+                .unwrap()
+                .unlocated_folder
+        );
         assert_eq!(
             f.app.organization_plan.as_ref().unwrap().summary(),
             (2, 1, 1)
