@@ -1556,7 +1556,11 @@ fn sami_subtitle_keeps_video_in_place_while_unrelated_media_moves_and_undoes() {
     let plan = f.plan(true);
     assert_eq!(plan.summary(), (4, 2, 2));
     let skipped = plan.skipped.iter().find(|item| item.name == video).unwrap();
-    assert!(skipped.reason.contains("Associated file set"), "{skipped:?}");
+    assert!(
+        skipped.reason.contains("Associated file set"),
+        "{}",
+        skipped.reason
+    );
     assert_eq!(disk::read(f.desktop.join(video)).unwrap(), b"original video");
     let media_folder = plan.destination(
         plan.items
