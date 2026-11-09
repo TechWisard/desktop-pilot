@@ -54,13 +54,13 @@ fn names_from_handle(folder: &File, cancel: &AtomicBool) -> Result<Vec<String>> 
         loop {
             ensure!(
                 offset + std::mem::size_of::<FILE_ID_BOTH_DIR_INFO>() <= capacity
-                    && offset % 8 == 0,
+                    && offset.is_multiple_of(8),
                 "Invalid subtitle directory enumeration"
             );
             let entry = unsafe { &*bytes.as_ptr().add(offset).cast::<FILE_ID_BOTH_DIR_INFO>() };
             let length = entry.FileNameLength as usize;
             ensure!(
-                length > 0 && length % 2 == 0 && offset + header + length <= capacity,
+                length > 0 && length.is_multiple_of(2) && offset + header + length <= capacity,
                 "Invalid subtitle filename in directory enumeration"
             );
             let start = offset + header;
@@ -80,7 +80,7 @@ fn names_from_handle(folder: &File, cancel: &AtomicBool) -> Result<Vec<String>> 
                 break;
             }
             ensure!(
-                next % 8 == 0 && next >= header + length && offset + next < capacity,
+                next.is_multiple_of(8) && next >= header + length && offset + next < capacity,
                 "Invalid subtitle directory entry offset"
             );
             offset += next;
