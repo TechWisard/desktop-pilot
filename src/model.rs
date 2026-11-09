@@ -366,7 +366,7 @@ pub(crate) fn rank_with_owned(
             // Manual choices and displacement hysteresis are unchanged.
             let sustained = f64::from(d.seconds.min(3600).saturating_sub(300)) / 300.0;
             // One day of rapid brief returns is useful evidence, but do not
-            // grant an unlimited session advantage over an hour of confirmed
+            // grant twelve short returns a larger bonus than an hour of
             // focused work. Additional independent days remain additive.
             let value = 2.0 * f64::from(d.sessions.min(6))
                 + (f64::from(d.seconds.min(3600)) / 60.0).ln_1p() * 0.4
@@ -1324,7 +1324,7 @@ mod tests {
         );
         let alpha = &ranking[3];
         let expected_alpha = (4.0 + 2.0f64.ln() * 0.4) * 2.0f64.powf(-1.0 / 14.0)
-            + (24.0 + 61.0f64.ln() * 0.4 + 11.0) * 2.0f64.powf(-2.0 / 14.0)
+            + (12.0 + 61.0f64.ln() * 0.4 + 11.0) * 2.0f64.powf(-2.0 / 14.0)
             + (2.0 + 1.5f64.ln() * 0.4) * 2.0f64.powf(-1.0 / 14.0);
         assert!((alpha.score - expected_alpha).abs() < 1e-12);
         assert_eq!((alpha.days, alpha.launches, alpha.seconds), (2, 6, 7290));
