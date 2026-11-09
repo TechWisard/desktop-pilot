@@ -365,10 +365,15 @@ pub(crate) fn rank_with_owned(
             // minutes. Bound the additional evidence to one hour per day.
             // Manual choices and displacement hysteresis are unchanged.
             let sustained = f64::from(d.seconds.min(3600).saturating_sub(300)) / 300.0;
-            // One day of rapid brief returns is useful evidence, but do not
-            // grant twelve short returns a larger bonus than an hour of
-            // focused work. Additional independent days remain additive.
-            let value = 2.0 * f64::from(d.sessions.min(6))
+            // Short bursts should not overwhelm sustained work. Beyond the
+            // first six sessions, restore up to six more session credits as
+            // actual foreground time grows from five to ten minutes. This
+            // preserves multi-day project adaptation without rewarding a
+            // dozen ten-second context switches as full work sessions.
+            let extra_sessions = f64::from(d.sessions.saturating_sub(6).min(6))
+                * f64::from(d.seconds.saturating_sub(300).min(300))
+                / 300.0;
+            let value = 2.0 * (f64::from(d.sessions.min(6)) + extra_sessions)
                 + (f64::from(d.seconds.min(3600)) / 60.0).ln_1p() * 0.4
                 + sustained;
             score += value * 2f64.powf(-age / cfg.half_life_days);
@@ -1324,7 +1329,7 @@ mod tests {
         );
         let alpha = &ranking[3];
         let expected_alpha = (4.0 + 2.0f64.ln() * 0.4) * 2.0f64.powf(-1.0 / 14.0)
-            + (12.0 + 61.0f64.ln() * 0.4 + 11.0) * 2.0f64.powf(-2.0 / 14.0)
+            + (24.0 + 61.0f64.ln() * 0.4 + 11.0) * 2.0f64.powf(-2.0 / 14.0)
             + (2.0 + 1.5f64.ln() * 0.4) * 2.0f64.powf(-1.0 / 14.0);
         assert!((alpha.score - expected_alpha).abs() < 1e-12);
         assert_eq!((alpha.days, alpha.launches, alpha.seconds), (2, 6, 7290));

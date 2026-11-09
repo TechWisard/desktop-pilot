@@ -947,6 +947,19 @@ fn a_same_day_burst_of_twelve_short_checks_cannot_beat_one_hour_of_focus() {
         ["FocusedWork"]
     );
 
+    // A genuinely engaged day earns full repeat credit at ten minutes,
+    // unlike the twelve brief returns totaling just two minutes. Preserve
+    // the established multi-day project-switching behavior.
+    let engaged = [
+        day("FocusedWork", time - 3_600, 1, 3_600),
+        day("BriefChecks", time - 3_600, 12, 600),
+    ];
+    let engaged_rank = rank(&apps, &engaged, &cfg, time);
+    assert_eq!(
+        select_at(&apps, &engaged_rank, &State::default(), &cfg, false, time),
+        ["BriefChecks"]
+    );
+
     // Several separate active days are not collapsed into a single burst.
     // Recurring short but deliberate work remains strong evidence.
     let mut recurring = evidence.to_vec();

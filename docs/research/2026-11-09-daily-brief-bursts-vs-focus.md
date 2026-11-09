@@ -8,7 +8,13 @@ The [Gajos et al. CHI 2008 controlled study](https://www.eecs.harvard.edu/~kgajo
 
 ## Narrow correction
 
-Bound each calendar day's counted per-application sessions to six instead of twelve; keep real stored session, launch and foreground-second counters unchanged. Retain the existing one-hour bounded duration bonus, half-life decay, minimum new-placement evidence, independent-day counts, manual Always/Never rules, taskbar exclusions, replacement hysteresis and Undo. The twelve brief checks now score `12.4394` and the focused hour remains `14.6443` (same recency factor). Two days of six brief checks each still accumulate independently and can outrank a single focused day. This cap is a stated design trade-off, **not** an experimentally validated optimal weight: twelve deliberate short tasks may be valuable, and a user may explicitly pin their shortcut.
+Count the first six sessions in a day at full weight, then gradually restore up to six further session credits as **total verified foreground work increases from five minutes (300 seconds) to ten minutes (600 seconds)**. Below five minutes, six is the session cap; at ten minutes, the original twelve-session cap applies. The interpolation is continuous at both boundaries. Actual recorded sessions, launches and seconds remain unchanged. Retain the existing one-hour duration bonus, recency decay, minimum first-placement evidence, independent-day counts, manual Always/Never, taskbar exclusions, replacement hysteresis and Undo.
+
+The twelve 10-second checks still score `12.4394` vs `14.6443` for the focused hour (same recency factor). Two separate days of six short checks still accumulate independently. A day of twelve genuine work sessions with 600 seconds of confirmed foreground activity receives its prior score. This is a design choice, **not** an experimentally validated optimal weighting.
+
+## Regression discovered and corrected during CI
+
+The first simple six-session cap failed the **existing** production SQLite + engine review scenario `changing_projects_after_a_gap_keeps_the_rare_manual_shortcut_and_undo_is_respected` on Windows 2022/2025 (branch run [42593492473](https://github.com/TechWisard/desktop-pilot/actions/runs/42593492473) and PR run [42593500982](https://github.com/TechWisard/desktop-pilot/actions/runs/42593500982)): four days of twelve 600-second project sessions could no longer beat an older project with a saved score of 50. This is real regression coverage of project switching, and its assertion must not be weakened. The refined, foreground-time-weighted rule retains the previous twelve-session contribution for 600-second days while suppressing it for 120-second bursts. The existing indexed-history exact-score regression likewise retains the old expected score for a 7,200-second day. Full CI of the refined rule must pass independently before integration.
 
 ## Production-path regression and release gate
 
