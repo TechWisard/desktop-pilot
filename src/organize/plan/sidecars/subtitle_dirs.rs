@@ -46,9 +46,7 @@ fn names_from_handle(folder: &File, cancel: &AtomicBool) -> Result<Vec<String>> 
             Err(error) if error.code().0 as u32 == 0x8007_0012 => break,
             Err(error) => return Err(error.into()),
         }
-        let bytes = unsafe {
-            std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), capacity)
-        };
+        let bytes = unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), capacity) };
         let mut offset = 0usize;
         loop {
             ensure!(
@@ -56,22 +54,15 @@ fn names_from_handle(folder: &File, cancel: &AtomicBool) -> Result<Vec<String>> 
                     && offset % 8 == 0,
                 "Invalid subtitle directory enumeration"
             );
-            let entry = unsafe {
-                &*bytes.as_ptr().add(offset).cast::<FILE_ID_BOTH_DIR_INFO>()
-            };
+            let entry = unsafe { &*bytes.as_ptr().add(offset).cast::<FILE_ID_BOTH_DIR_INFO>() };
             let length = entry.FileNameLength as usize;
             ensure!(
-                length > 0
-                    && length % 2 == 0
-                    && offset + header + length <= capacity,
+                length > 0 && length % 2 == 0 && offset + header + length <= capacity,
                 "Invalid subtitle filename in directory enumeration"
             );
             let start = offset + header;
             let units = unsafe {
-                std::slice::from_raw_parts(
-                    bytes.as_ptr().add(start).cast::<u16>(),
-                    length / 2,
-                )
+                std::slice::from_raw_parts(bytes.as_ptr().add(start).cast::<u16>(), length / 2)
             };
             let name = String::from_utf16(units)?;
             if name != "." && name != ".." {
@@ -128,7 +119,7 @@ fn matching_video_keys(
     }
 }
 
-pub(super) fn protected(paths: &[PathBuf], cancel: &AtomicBool) -> Result<HashSet<String>> {
+pub(in crate::organize::plan) fn protected(paths: &[PathBuf], cancel: &AtomicBool) -> Result<HashSet<String>> {
     let mut videos = HashMap::<String, Vec<String>>::new();
     let mut all_video_paths = Vec::new();
     for path in paths {
@@ -148,7 +139,10 @@ pub(super) fn protected(paths: &[PathBuf], cancel: &AtomicBool) -> Result<HashSe
             continue;
         }
         let key = norm_literal_path(&path.to_string_lossy());
-        videos.entry(stem.to_lowercase()).or_default().push(key.clone());
+        videos
+            .entry(stem.to_lowercase())
+            .or_default()
+            .push(key.clone());
         all_video_paths.push(key);
     }
     let mut marked = HashSet::new();
@@ -158,8 +152,7 @@ pub(super) fn protected(paths: &[PathBuf], cancel: &AtomicBool) -> Result<HashSe
     for folder in paths.iter().filter(|path| {
         path.file_name().is_some_and(|name| {
             name.to_str().is_some_and(|name| {
-                name.eq_ignore_ascii_case("subs")
-                    || name.eq_ignore_ascii_case("subtitles")
+                name.eq_ignore_ascii_case("subs") || name.eq_ignore_ascii_case("subtitles")
             })
         })
     }) {

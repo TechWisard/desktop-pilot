@@ -545,11 +545,11 @@ fn sibling_subtitle_directory_preserves_only_matching_videos_and_all_manual_choi
                 format!("Original {name}").as_bytes()
             );
         }
+        assert_eq!(f.store.app(&always.id).unwrap().policy, Policy::Always);
         assert_eq!(
-            f.store.app(&always.id).unwrap().policy,
-            Policy::Always
+            serde_json::to_value(f.store.days().unwrap()).unwrap(),
+            history
         );
-        assert_eq!(serde_json::to_value(f.store.days().unwrap()).unwrap(), history);
         assert!(f.store.get::<bool>("background_disabled").unwrap());
         assert!(!status(&f.store).unwrap().pending);
     }
@@ -573,14 +573,20 @@ fn late_subtitle_folder_or_subtitle_file_rejects_the_entire_old_plan() {
         }
         disk::write(folder.join("Episode.en.srt"), b"later subtitle").unwrap();
         let err = apply(&f.store, &plan, &AtomicBool::new(false)).unwrap_err();
-        assert!(format!("{err:#}").contains("Associated file set"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("Associated file set"),
+            "{err:#}"
+        );
         for name in ["Episode.mp4", "Unrelated A.mp4", "Unrelated B.mp4"] {
             assert_eq!(
                 disk::read(f.desktop.join(name)).unwrap(),
                 format!("Original {name}").as_bytes()
             );
         }
-        assert_eq!(disk::read(folder.join("Episode.en.srt")).unwrap(), b"later subtitle");
+        assert_eq!(
+            disk::read(folder.join("Episode.en.srt")).unwrap(),
+            b"later subtitle"
+        );
         assert!(!f.desktop.join("Media").exists());
         assert!(status(&f.store).unwrap().undo.is_none());
         assert!(!status(&f.store).unwrap().pending);
@@ -606,8 +612,14 @@ fn unrelated_subtitle_directory_and_plain_file_named_subs_do_not_block_videos() 
         assert!(plan.items.iter().any(|item| item.name == "Other.mp4"));
         let outcome = apply(&f.store, &plan, &AtomicBool::new(false)).unwrap();
         assert_eq!(outcome.moved, 2);
-        assert_eq!(disk::read(f.desktop.join("Media/Episode.mp4")).unwrap(), b"media");
-        assert_eq!(disk::read(f.desktop.join("Media/Other.mp4")).unwrap(), b"media");
+        assert_eq!(
+            disk::read(f.desktop.join("Media/Episode.mp4")).unwrap(),
+            b"media"
+        );
+        assert_eq!(
+            disk::read(f.desktop.join("Media/Other.mp4")).unwrap(),
+            b"media"
+        );
         let operation = status(&f.store).unwrap().undo.unwrap();
         undo(&f.store, &operation).unwrap();
         assert_eq!(disk::read(f.desktop.join("Episode.mp4")).unwrap(), b"media");
