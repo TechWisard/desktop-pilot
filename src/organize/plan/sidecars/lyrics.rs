@@ -47,18 +47,41 @@ mod tests {
     #[test]
     fn matching_audio_lyrics_are_protected_without_claiming_unrelated_media() {
         let paths = [
-            "Песня%USERNAME%.MP3", "Песня%USERNAME%.LRC",
-            "Album.FLAC", "Album.txt", "Mix.M4A", "Mix.Lrc",
-            "Tape.OGG", "Tape.TXT", "Voice.WAV", "Voice.lrc",
-            "Movie.mp4", "Movie.txt", "Photo.jpg", "Photo.txt",
-            "Unrelated.mp3", "UnrelatedNotes.lrc", "Orphan.lrc",
+            "Песня%USERNAME%.MP3",
+            "Песня%USERNAME%.LRC",
+            "Album.FLAC",
+            "Album.txt",
+            "Mix.M4A",
+            "Mix.Lrc",
+            "Tape.OGG",
+            "Tape.TXT",
+            "Voice.WAV",
+            "Voice.lrc",
+            "Movie.mp4",
+            "Movie.txt",
+            "Photo.jpg",
+            "Photo.txt",
+            "Unrelated.mp3",
+            "UnrelatedNotes.lrc",
+            "Orphan.lrc",
             "Letter.txt",
-        ].map(PathBuf::from);
+        ]
+        .map(PathBuf::from);
         let expected: HashSet<_> = [
-            "песня%username%.mp3", "песня%username%.lrc",
-            "album.flac", "album.txt", "mix.m4a", "mix.lrc",
-            "tape.ogg", "tape.txt", "voice.wav", "voice.lrc",
-        ].into_iter().map(String::from).collect();
+            "песня%username%.mp3",
+            "песня%username%.lrc",
+            "album.flac",
+            "album.txt",
+            "mix.m4a",
+            "mix.lrc",
+            "tape.ogg",
+            "tape.txt",
+            "voice.wav",
+            "voice.lrc",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
         assert_eq!(protected(&paths), expected);
     }
 
