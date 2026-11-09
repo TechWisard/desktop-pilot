@@ -6,8 +6,11 @@ use crate::organize::fs;
 use anyhow::{Result, bail, ensure};
 use std::{
     collections::{HashMap, HashSet},
-    fs::File,
-    os::windows::{fs::MetadataExt, io::AsRawHandle},
+    fs::{File, OpenOptions},
+    os::windows::{
+        fs::{MetadataExt, OpenOptionsExt},
+        io::AsRawHandle,
+    },
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -169,7 +172,22 @@ pub(in crate::organize::plan) fn protected(
             if metadata.is_file() && metadata.file_attributes() & 0x400 == 0 {
                 return Ok(None);
             }
-            let handle = fs::directory(Path::new(folder))?;
+            // The generic organizer directory handle intentionally needs only
+            // FILE_READ_ATTRIBUTES (0x80), sufficient for identity checks but
+            // not for enumerating directory entries on Windows. Open a
+            // separate, non-reparse handle with FILE_LIST_DIRECTORY (0x1);
+            // validate its attributes on the same handle before reading.
+            let _cloud = fs::cloud_visibility::expose()?;
+            let handle = OpenOptions::new()
+                .access_mode(0x81)
+                .share_mode(3)
+                .custom_flags(0x0200_0000 | 0x0020_0000)
+                .open(folder)?;
+            let checked = handle.metadata()?;
+            ensure!(
+                checked.is_dir() && checked.file_attributes() & 0x400 == 0,
+                "A filesystem link cannot be used as an organization folder"
+            );
             Ok(Some(names_from_handle(&handle, cancel)?))
         })();
         match read {
@@ -195,6 +213,33 @@ pub(in crate::organize::plan) fn protected(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_actual_list_directory_handle_reads_existing_subtitle_names() {
+        let directory = std::env::temp_dir().join(format!(
+            "pilot-subtitle-handle-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(directory.join("Episode.en.srt"), b"example").unwrap();
+        // This tests the actual Windows information class and permissions,
+        // not only the pure filename matching function.
+        let _cloud = fs::cloud_visibility::expose().unwrap();
+        let handle = OpenOptions::new()
+            .access_mode(0x81)
+            .share_mode(3)
+            .custom_flags(0x0200_0000 | 0x0020_0000)
+            .open(&directory)
+            .unwrap();
+        let names = names_from_handle(&handle, &AtomicBool::new(false)).unwrap();
+        assert!(names.iter().any(|name| name == "Episode.en.srt"), "{names:?}");
+        drop(handle);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn dotted_language_and_forced_suffixes_match_only_exact_video_stems() {
