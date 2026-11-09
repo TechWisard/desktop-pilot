@@ -519,7 +519,15 @@ fn sibling_subtitle_directory_preserves_only_matching_videos_and_all_manual_choi
         disk::write(folder.join("Someone else.en.srt"), b"unrelated subtitle").unwrap();
 
         let plan = f.plan(true);
-        assert_eq!(plan.summary(), (2, 1, 1), "skipped: {:?}", plan.skipped.iter().map(|s| (&s.name, &s.reason)).collect::<Vec<_>>());
+        assert_eq!(
+            plan.summary(),
+            (2, 1, 1),
+            "skipped: {:?}",
+            plan.skipped
+                .iter()
+                .map(|s| (&s.name, &s.reason))
+                .collect::<Vec<_>>()
+        );
         assert!(plan.skipped.iter().any(|item| {
             item.name == "Episode.mp4" && item.reason.contains("Associated file set")
         }));
@@ -567,7 +575,15 @@ fn late_subtitle_folder_or_subtitle_file_rejects_the_entire_old_plan() {
             disk::create_dir(&folder).unwrap();
         }
         let plan = f.plan(true);
-        assert_eq!(plan.summary(), (3, 1, 2), "skipped: {:?}", plan.skipped.iter().map(|s| (&s.name, &s.reason)).collect::<Vec<_>>());
+        assert_eq!(
+            plan.summary(),
+            (3, 1, 2),
+            "skipped: {:?}",
+            plan.skipped
+                .iter()
+                .map(|s| (&s.name, &s.reason))
+                .collect::<Vec<_>>()
+        );
         if !existing_folder {
             disk::create_dir(&folder).unwrap();
         }
@@ -607,7 +623,15 @@ fn unrelated_subtitle_directory_and_plain_file_named_subs_do_not_block_videos() 
             disk::write(f.desktop.join("Subs/Elsewhere.en.srt"), b"unrelated").unwrap();
         }
         let plan = f.plan(true);
-        assert_eq!(plan.summary(), (2, 1, 1), "skipped: {:?}", plan.skipped.iter().map(|s| (&s.name, &s.reason)).collect::<Vec<_>>());
+        assert_eq!(
+            plan.summary(),
+            (2, 1, 1),
+            "skipped: {:?}",
+            plan.skipped
+                .iter()
+                .map(|s| (&s.name, &s.reason))
+                .collect::<Vec<_>>()
+        );
         assert!(plan.items.iter().any(|item| item.name == "Episode.mp4"));
         assert!(plan.items.iter().any(|item| item.name == "Other.mp4"));
         let outcome = apply(&f.store, &plan, &AtomicBool::new(false)).unwrap();
