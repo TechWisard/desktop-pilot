@@ -11,7 +11,7 @@ use std::{
         fs::{MetadataExt, OpenOptionsExt},
         io::AsRawHandle,
     },
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::atomic::{AtomicBool, Ordering},
 };
 use windows::Win32::{
