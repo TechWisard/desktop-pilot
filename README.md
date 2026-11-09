@@ -16,9 +16,13 @@ Desktop Pilot is a local Windows desktop organizer and shortcut manager. It has 
 
 To update an existing installation, open the executable from the new archive. Your local profile, rules and history are retained. The executable is unsigned; verify its source and checksum before opening it.
 
-**Development branch:** The desktop organization feature described below is not included in the currently published 0.2.128 download. It is undergoing final acceptance here.
+**Development branch:** The desktop organization feature described below is not included in the currently published 0.2.129 download. It is undergoing separate acceptance here.
 
-## Stable shortcut search fixes retained in this branch
+## Published stable improvements retained in this branch
+
+### Stable release 0.2.129: focused work counts alongside frequent brief visits
+
+A full hour in one application now competes fairly with short repeated window switches, without overriding manual choices or slowing established multi-day project adaptation. The actual ranking implementation matches the [published v0.2.129 release](docs/releases/0.2.129.md); the new optional desktop organizer is **not** part of that public download.
 
 ## Improvements in 0.2.128
 
