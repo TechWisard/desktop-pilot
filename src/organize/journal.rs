@@ -369,11 +369,9 @@ pub(crate) fn apply_stopped(store: &Store, plan: &Plan, cancel: &AtomicBool) -> 
         .folders
         .retain(|f| journal.movements.iter().any(|m| m.folder == f.name));
     for folder in journal.folders.iter_mut().filter(|f| f.created) {
-        folder.position = journal
-            .movements
-            .iter()
-            .find(|m| m.folder == folder.name)
-            .and_then(|m| m.item.position.clone());
+        // Mirror the actual preview anchor: the first source may lack a
+        // trustworthy Explorer position while a later moving source has one.
+        folder.position = plan::known_folder_anchor(&journal.movements, &folder.name);
     }
     let _root_handle = checked_root(&journal, store)?;
     if let Some(before) = &journal.layout {
