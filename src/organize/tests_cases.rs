@@ -1402,3 +1402,99 @@ fn mixed_document_and_camera_dependencies_survive_apply_undo_and_late_arrival() 
     assert_eq!(serde_json::to_value(f.store.days().unwrap()).unwrap(), days);
     assert!(f.store.get::<bool>("background_disabled").unwrap());
 }
+
+
+#[test]
+fn local_lyrics_and_audio_stay_together_through_apply_and_undo() {
+    let f = Fixture::new();
+    let paired: [(&str, &[u8]); 4] = [
+        ("Песня%USERNAME%.mp3", b"audio master"),
+        ("Песня%USERNAME%.lrc", b"[00:01.00]timed lyrics"),
+        ("Album.flac", b"lossless audio"),
+        ("Album.txt", b"plain lyrics"),
+    ];
+    for &(name, contents) in &paired {
+        disk::write(f.desktop.join(name), contents).unwrap();
+    }
+    for name in ["Independent 1.mp3", "Independent 2.flac", "Notes 1.txt", "Notes 2.txt"] {
+        disk::write(f.desktop.join(name), format!("test fixture: {name}")).unwrap();
+    }
+    let important = f.url("Important.url", "https://example.invalid/important");
+    f.store.policy(&important.id, Policy::Always).unwrap();
+    f.store.observe(&important.id, 321, true, false).unwrap();
+    let saved = f.store.app(&important.id).unwrap();
+    let days = serde_json::to_value(f.store.days().unwrap()).unwrap();
+    let before: i64 = f.store.db
+        .query_row("SELECT total_changes()", [], |row| row.get(0)).unwrap();
+
+    assert!(f.plan(false).items.is_empty());
+    let plan = f.plan(true);
+    assert_eq!(plan.summary(), (4, 2, 2));
+    for &(name, contents) in &paired {
+        let skipped = plan.skipped.iter().find(|item| item.name == name).unwrap();
+        assert!(skipped.reason.contains("Associated file set"), "{name}: {}", skipped.reason);
+        assert_eq!(disk::read(f.desktop.join(name)).unwrap(), contents);
+    }
+    let after: i64 = f.store.db
+        .query_row("SELECT total_changes()", [], |row| row.get(0)).unwrap();
+    assert_eq!(before, after, "analysis must not write history");
+
+    let media = plan.destination(
+        plan.items.iter().find(|item| item.name == "Independent 1.mp3").unwrap(),
+    );
+    let docs = plan.destination(
+        plan.items.iter().find(|item| item.name == "Notes 1.txt").unwrap(),
+    );
+    assert_eq!(f.apply(&plan).moved, 4);
+    for &(name, contents) in &paired {
+        assert_eq!(disk::read(f.desktop.join(name)).unwrap(), contents);
+    }
+    for name in ["Independent 1.mp3", "Independent 2.flac"] {
+        assert!(f.desktop.join(&media).join(name).is_file());
+    }
+    for name in ["Notes 1.txt", "Notes 2.txt"] {
+        assert!(f.desktop.join(&docs).join(name).is_file());
+    }
+    undo(&f.store, &f.last()).unwrap();
+    for name in ["Independent 1.mp3", "Independent 2.flac", "Notes 1.txt", "Notes 2.txt"] {
+        assert!(f.desktop.join(name).is_file());
+    }
+    for &(name, contents) in &paired {
+        assert_eq!(disk::read(f.desktop.join(name)).unwrap(), contents);
+    }
+    assert!(!f.desktop.join(media).exists());
+    assert!(!f.desktop.join(docs).exists());
+    assert_eq!(f.store.app(&important.id).unwrap(), saved);
+    assert_eq!(serde_json::to_value(f.store.days().unwrap()).unwrap(), days);
+    assert!(status(&f.store).unwrap().undo.is_none());
+    assert!(!status(&f.store).unwrap().pending);
+}
+
+#[test]
+fn late_lyrics_invalidate_a_preview_before_any_moves() {
+    for companion in ["Late.lrc", "Late.txt"] {
+        let f = Fixture::new();
+        disk::write(f.desktop.join("Late.mp3"), b"original audio").unwrap();
+        disk::write(f.desktop.join("Other.mp3"), b"other audio").unwrap();
+        let plan = f.plan(true);
+        assert_eq!(plan.summary(), (2, 1, 1));
+        let folder = plan.destination(&plan.items[0]);
+        disk::write(f.desktop.join(companion), b"new external lyrics").unwrap();
+
+        let error = apply(&f.store, &plan, &AtomicBool::new(false)).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("Associated file set"),
+            "a late {companion} must block the stale audio move: {error:#}"
+        );
+        assert_eq!(disk::read(f.desktop.join("Late.mp3")).unwrap(), b"original audio");
+        assert_eq!(disk::read(f.desktop.join("Other.mp3")).unwrap(), b"other audio");
+        assert_eq!(disk::read(f.desktop.join(companion)).unwrap(), b"new external lyrics");
+        assert!(!f.desktop.join(folder).exists());
+        assert!(status(&f.store).unwrap().undo.is_none());
+        assert!(!status(&f.store).unwrap().pending);
+        let fresh = f.plan(true);
+        assert!(fresh.skipped.iter().any(|item| {
+            item.name == "Late.mp3" && item.reason.contains("Associated file set")
+        }));
+    }
+}
