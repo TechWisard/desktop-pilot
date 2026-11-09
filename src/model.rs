@@ -365,7 +365,10 @@ pub(crate) fn rank_with_owned(
             // minutes. Bound the additional evidence to one hour per day.
             // Manual choices and displacement hysteresis are unchanged.
             let sustained = f64::from(d.seconds.min(3600).saturating_sub(300)) / 300.0;
-            let value = 2.0 * f64::from(d.sessions.min(12))
+            // One day of rapid brief returns is useful evidence, but do not
+            // grant an unlimited session advantage over an hour of confirmed
+            // focused work. Additional independent days remain additive.
+            let value = 2.0 * f64::from(d.sessions.min(6))
                 + (f64::from(d.seconds.min(3600)) / 60.0).ln_1p() * 0.4
                 + sustained;
             score += value * 2f64.powf(-age / cfg.half_life_days);

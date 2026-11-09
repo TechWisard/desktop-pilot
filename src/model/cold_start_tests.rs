@@ -908,3 +908,75 @@ fn sustained_work_competes_with_brief_revisits_without_overriding_manual_choices
         ["EssentialManual"]
     );
 }
+
+#[test]
+fn a_same_day_burst_of_twelve_short_checks_cannot_beat_one_hour_of_focus() {
+    let time = 410 * 86_400 + 12 * 3_600;
+    let cfg = Config {
+        automatic: true,
+        collect: true,
+        slots: 1,
+        max_changes: 1,
+        ..Default::default()
+    };
+    let apps = [app("FocusedWork", 0.0, time), app("BriefChecks", 0.0, time)];
+    let evidence = [
+        day("FocusedWork", time - 3_600, 1, 3_600),
+        day("BriefChecks", time - 3_600, 12, 120),
+    ];
+    let ranking = rank(&apps, &evidence, &cfg, time);
+    let focused = ranking.iter().find(|r| r.id == "FocusedWork").unwrap();
+    let brief = ranking.iter().find(|r| r.id == "BriefChecks").unwrap();
+    assert!(focused.eligible && brief.eligible);
+    assert!(
+        focused.score > brief.score,
+        "twelve ten-second checks in one day must not outweigh one hour: {focused:?} vs {brief:?}"
+    );
+    assert_eq!(brief.seconds, 120);
+    assert_eq!(focused.seconds, 3_600);
+    assert_eq!(
+        select_at(&apps, &ranking, &State::default(), &cfg, false, time),
+        ["FocusedWork"]
+    );
+
+    // An absence must not create new evidence or reverse the same-day order.
+    let later = time + 7 * 86_400;
+    let after_break = rank(&apps, &evidence, &cfg, later);
+    assert_eq!(
+        select_at(&apps, &after_break, &State::default(), &cfg, false, later),
+        ["FocusedWork"]
+    );
+
+    // Several separate active days are not collapsed into a single burst.
+    // Recurring short but deliberate work remains strong evidence.
+    let mut recurring = evidence.to_vec();
+    recurring.push(day("BriefChecks", time - 86_400 - 3_600, 6, 60));
+    let across_days = rank(&apps, &recurring, &cfg, time);
+    assert_eq!(
+        select_at(&apps, &across_days, &State::default(), &cfg, false, time),
+        ["BriefChecks"]
+    );
+
+    // A manually placed rare app is never evicted by either ranking.
+    let mut essential = app("ManualEssential", 0.0, time);
+    essential.policy = Policy::Always;
+    let all_apps = [apps[0].clone(), apps[1].clone(), essential];
+    let owner = State {
+        owned: vec![Owned {
+            app: "ManualEssential".into(),
+            path: "manual".into(),
+            sha: String::new(),
+            position: Point::default(),
+            manual: true,
+            since: time,
+            file_id: None,
+        }],
+        initialized: true,
+        ..Default::default()
+    };
+    let ranked = rank(&all_apps, &recurring, &cfg, later);
+    assert_eq!(
+        select_at(&all_apps, &ranked, &owner, &cfg, false, later),
+        ["ManualEssential"]
+    );
+}
