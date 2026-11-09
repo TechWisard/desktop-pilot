@@ -534,6 +534,17 @@ pub fn analyze(
     Ok(plan)
 }
 
+// A folder created from several moved icons should inherit the first known
+// source position, not the first item's possibly missing Explorer position.
+// Apply and preview must use the same anchor; returning None means that
+// Explorer has not supplied any position we can promise to preserve.
+pub(super) fn known_folder_anchor(movements: &[Movement], folder: &str) -> Option<Point> {
+    movements
+        .iter()
+        .filter(|movement| movement.folder == folder)
+        .find_map(|movement| movement.item.position.clone())
+}
+
 impl Plan {
     pub(super) fn movements(&self) -> Vec<Movement> {
         let mut counts = BTreeMap::<Group, usize>::new();
@@ -644,16 +655,18 @@ impl Plan {
                 })
         });
         for folder in self.folders.iter().filter(|f| f.created) {
-            if let Some(movement) = movements.iter().find(|m| m.folder == folder.name)
-                && let Some(position) = &movement.item.position
-            {
+            if movements.iter().any(|movement| movement.folder == folder.name) {
+                // A folder whose moving sources have no known icon position
+                // may land anywhere. Do not present an optimistic free zone
+                // that ignores this newly created desktop obstacle.
+                let position = known_folder_anchor(&movements, &folder.name)?;
                 projected.items.push(native::Item {
                     path: Path::new(&self.root)
                         .join(&folder.name)
                         .to_string_lossy()
                         .into_owned(),
                     name: folder.name.clone(),
-                    position: position.clone(),
+                    position,
                 });
             }
         }

@@ -103,3 +103,87 @@ fn large_changing_preview_summary_agrees_with_actual_movement_rules() {
         );
     }
 }
+
+#[test]
+fn created_folder_uses_first_known_source_position_and_never_promises_an_unknown_anchor() {
+    // Model the real Plan and projected_zone used by the dialog. Explorer can
+    // omit a position for one source without making its filesystem move unsafe.
+    let root = r"C:\Synthetic\Desktop";
+    let mut plan = Plan {
+        root: root.into(),
+        root_id: "synthetic-root".into(),
+        layout: Some(native::Layout {
+            items: vec![native::Item {
+                path: format!(r"{root}\Known.url"),
+                name: "Known.url".into(),
+                position: Point { x: 80, y: 100 },
+            }],
+            spacing: Point { x: 80, y: 100 },
+            origin: Point { x: 0, y: 0 },
+            work: [0, 0, 1920, 1080],
+            flags: 0,
+            topology: "synthetic".into(),
+            icon_size: 32,
+        }),
+        items: [
+            ("Missing.url", None),
+            ("Known.url", Some(Point { x: 80, y: 100 })),
+        ]
+        .into_iter()
+        .map(|(name, position)| Item {
+            name: name.into(),
+            group: Group::Sites,
+            selected: true,
+            position,
+            stamp: fs::Stamp {
+                id: format!("synthetic-{name}"),
+                size: 0,
+                modified: 0,
+                digest: None,
+            },
+            launch: None,
+        })
+        .collect(),
+        skipped: Vec::new(),
+        options: Options::default(),
+        folders: vec![Folder {
+            group: Group::Sites,
+            name: "Sites".into(),
+            id: None,
+            created: true,
+            position: None,
+        }],
+        russian: false,
+    };
+    let config = Config {
+        slots: 1,
+        zone_col: 4,
+        zone_row: 0,
+        zone_columns: 1,
+        ..Default::default()
+    };
+    assert_eq!(plan.summary(), (2, 1, 1));
+    let movements = plan.movements();
+    assert!(movements[0].item.position.is_none());
+    assert_eq!(
+        known_folder_anchor(&movements, "Sites"),
+        Some(Point { x: 80, y: 100 })
+    );
+    assert!(plan.projected_zone(&config).is_some());
+
+    // When no moved source has a known position, Explorer chooses the folder's
+    // eventual cell. The projection must no longer promise a free quick area.
+    plan.items[1].position = None;
+    assert_eq!(plan.summary(), (2, 1, 1));
+    assert_eq!(known_folder_anchor(&plan.movements(), "Sites"), None);
+    assert!(plan.projected_zone(&config).is_none());
+
+    // Reusing an existing folder does not create an unknown icon, and a
+    // checked singleton in a new folder does not move at all.
+    plan.folders[0].created = false;
+    assert!(plan.projected_zone(&config).is_some());
+    plan.folders[0].created = true;
+    plan.items[1].selected = false;
+    assert_eq!(plan.summary(), (0, 0, 0));
+    assert!(plan.projected_zone(&config).is_some());
+}
