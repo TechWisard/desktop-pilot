@@ -236,7 +236,10 @@ mod tests {
             .open(&directory)
             .unwrap();
         let names = names_from_handle(&handle, &AtomicBool::new(false)).unwrap();
-        assert!(names.iter().any(|name| name == "Episode.en.srt"), "{names:?}");
+        assert!(
+            names.iter().any(|name| name == "Episode.en.srt"),
+            "{names:?}"
+        );
         drop(handle);
         std::fs::remove_dir_all(directory).unwrap();
     }
