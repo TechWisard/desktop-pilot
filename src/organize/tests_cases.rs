@@ -1179,3 +1179,114 @@ fn organizing_literal_percent_named_shortcut_preserves_manual_sibling_and_undo()
     );
     assert!(!status(&f.store).unwrap().pending);
 }
+#[test]
+fn optional_camera_pairs_stay_together_while_independent_media_moves_and_undoes() {
+    let f = Fixture::new();
+    let entries = [
+        ("DSC_1001.CR3", "raw original"),
+        ("DSC_1001.JPG", "raw companion JPEG"),
+        ("Live A.HEIC", "live still"),
+        ("Live A.MOV", "live motion"),
+        ("Live B.jpeg", "compatible still"),
+        ("Live B.mov", "compatible motion"),
+        ("Solo A.jpg", "independent photo one"),
+        ("Solo B.jpeg", "independent photo two"),
+        ("Solo C.mp4", "independent video one"),
+        ("Solo D.mov", "independent video two"),
+    ];
+    for (name, bytes) in entries {
+        disk::write(f.desktop.join(name), bytes).unwrap();
+    }
+    // Ordinary files are opt-in; this test exercises the real Windows
+    // filesystem, analyzer, journal and Undo rather than a toy classifier.
+    assert!(f.plan(false).items.is_empty());
+    let plan = f.plan(true);
+    for name in [
+        "DSC_1001.JPG",
+        "Live A.HEIC",
+        "Live A.MOV",
+        "Live B.jpeg",
+        "Live B.mov",
+    ] {
+        assert!(
+            plan.skipped
+                .iter()
+                .any(|item| { item.name == name && item.reason.contains("Associated file set") }),
+            "{name} must not be offered without its companion: {:?}",
+            plan.skipped
+                .iter()
+                .map(|item| &item.name)
+                .collect::<Vec<_>>()
+        );
+        assert!(!plan.items.iter().any(|item| item.name == name));
+    }
+    assert_eq!(plan.summary(), (4, 2, 2));
+    assert_eq!(f.apply(&plan).moved, 4);
+    for (name, bytes) in entries {
+        let original = f.desktop.join(name);
+        if name.starts_with("Solo ") {
+            assert!(!original.exists());
+        } else {
+            assert_eq!(disk::read(original).unwrap(), bytes.as_bytes());
+        }
+    }
+    for name in ["Solo A.jpg", "Solo B.jpeg"] {
+        assert!(f.desktop.join("Images").join(name).is_file());
+    }
+    for name in ["Solo C.mp4", "Solo D.mov"] {
+        assert!(f.desktop.join("Media").join(name).is_file());
+    }
+    undo(&f.store, &f.last()).unwrap();
+    for (name, bytes) in entries {
+        assert_eq!(disk::read(f.desktop.join(name)).unwrap(), bytes.as_bytes());
+    }
+    assert!(!f.desktop.join("Images").exists());
+    assert!(!f.desktop.join("Media").exists());
+    assert!(!status(&f.store).unwrap().pending);
+}
+
+#[test]
+fn camera_companion_arriving_after_preview_rejects_all_moves_without_a_journal() {
+    for (candidate, companion) in [
+        ("DSC_2001.jpg", "DSC_2001.NEF"),
+        ("IMG_2002.heic", "IMG_2002.mov"),
+        ("IMG_2003.jpeg", "IMG_2003.MOV"),
+    ] {
+        let f = Fixture::new();
+        let (alpha, beta) = f.two_sites();
+        disk::write(f.desktop.join(candidate), b"still image").unwrap();
+        disk::write(f.desktop.join("Independent.jpg"), b"unrelated image").unwrap();
+        let plan = f.plan(true);
+        assert_eq!(plan.summary(), (4, 2, 2));
+        assert!(plan.items.iter().any(|item| item.name == candidate));
+        disk::write(f.desktop.join(companion), b"late-arriving companion").unwrap();
+
+        let error = apply(&f.store, &plan, &AtomicBool::new(false)).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("Associated file set"),
+            "a late {companion} must invalidate the entire preview: {error:#}"
+        );
+        assert_eq!(
+            disk::read(f.desktop.join(candidate)).unwrap(),
+            b"still image"
+        );
+        assert_eq!(
+            disk::read(f.desktop.join(companion)).unwrap(),
+            b"late-arriving companion"
+        );
+        assert_eq!(
+            disk::read(f.desktop.join("Independent.jpg")).unwrap(),
+            b"unrelated image"
+        );
+        for name in ["Alpha.url", "Beta.url"] {
+            assert!(f.desktop.join(name).is_file());
+        }
+        assert_eq!(f.store.app(&alpha.id).unwrap(), alpha);
+        assert_eq!(f.store.app(&beta.id).unwrap(), beta);
+        assert!(!f.desktop.join("Sites").exists());
+        assert!(!f.desktop.join("Images").exists());
+        assert!(!f.desktop.join("Media").exists());
+        assert!(status(&f.store).unwrap().undo.is_none());
+        assert!(!status(&f.store).unwrap().pending);
+    }
+}

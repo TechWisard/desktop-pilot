@@ -3,6 +3,7 @@ use crate::model::App;
 use anyhow::bail;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+mod camera_pairs;
 mod sidecars;
 
 fn plain_group(extension: &str) -> Option<Group> {
@@ -312,7 +313,11 @@ pub(super) fn dependencies(
     let mut dependencies = Dependencies {
         // Build once from the same bounded directory snapshot used for analysis
         // and rebuild before Apply. Do not scan the directory for every file.
-        sidecar_objects: sidecars::protected(paths),
+        sidecar_objects: {
+            let mut protected = sidecars::protected(paths);
+            protected.extend(camera_pairs::protected(paths));
+            protected
+        },
         ..Default::default()
     };
     for app in apps {
