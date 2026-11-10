@@ -1628,3 +1628,121 @@ fn late_sami_subtitle_blocks_stale_desktop_preview_before_any_move() {
         })
     );
 }
+
+#[test]
+fn local_nfo_and_artwork_preserve_video_without_blocking_independent_media_or_manual_rules() {
+    let f = Fixture::new();
+    let important = f.url("Important.url", "https://example.invalid/important");
+    f.store.policy(&important.id, Policy::Always).unwrap();
+    f.store.observe(&important.id, 321, true, false).unwrap();
+    let saved = f.store.app(&important.id).unwrap();
+    let days = serde_json::to_value(f.store.days().unwrap()).unwrap();
+    let entries = [
+        ("Feature.mkv", "the video"),
+        ("Feature.nfo", "local library metadata"),
+        ("Feature-poster.jpg", "local cover"),
+        ("Feature-fanart.png", "local backdrop"),
+        ("Independent A.mp4", "independent video A"),
+        ("Independent B.mp4", "independent video B"),
+    ];
+    for (name, data) in entries {
+        disk::write(f.desktop.join(name), data).unwrap();
+    }
+    assert!(f.plan(false).items.is_empty());
+    let plan = f.plan(true);
+    for name in ["Feature.mkv", "Feature-poster.jpg", "Feature-fanart.png"] {
+        assert!(
+            plan.skipped
+                .iter()
+                .any(|item| { item.name == name && item.reason.contains("Associated file set") }),
+            "{name} must remain with its local metadata/artwork"
+        );
+    }
+    assert_eq!(plan.summary(), (2, 1, 1));
+    assert_eq!(f.apply(&plan).moved, 2);
+    for (name, data) in entries {
+        if name.starts_with("Independent") {
+            assert_eq!(
+                disk::read(f.desktop.join("Media").join(name)).unwrap(),
+                data.as_bytes()
+            );
+        } else {
+            assert_eq!(disk::read(f.desktop.join(name)).unwrap(), data.as_bytes());
+        }
+    }
+    undo(&f.store, &f.last()).unwrap();
+    for (name, data) in entries {
+        assert_eq!(disk::read(f.desktop.join(name)).unwrap(), data.as_bytes());
+    }
+    assert!(!f.desktop.join("Media").exists());
+    assert_eq!(f.store.app(&important.id).unwrap(), saved);
+    assert_eq!(serde_json::to_value(f.store.days().unwrap()).unwrap(), days);
+    assert!(!status(&f.store).unwrap().pending);
+}
+
+#[test]
+fn late_video_nfo_or_artwork_rejects_an_old_plan_before_any_move() {
+    for sidecar in ["Feature.nfo", "Feature-poster.jpg"] {
+        let f = Fixture::new();
+        for name in ["Feature.mp4", "Independent.mp4"] {
+            disk::write(f.desktop.join(name), name).unwrap();
+        }
+        let plan = f.plan(true);
+        assert_eq!(plan.summary(), (2, 1, 1));
+        disk::write(f.desktop.join(sidecar), b"new companion").unwrap();
+        assert!(apply(&f.store, &plan, &AtomicBool::new(false)).is_err());
+        for name in ["Feature.mp4", "Independent.mp4"] {
+            assert_eq!(disk::read(f.desktop.join(name)).unwrap(), name.as_bytes());
+        }
+        assert_eq!(
+            disk::read(f.desktop.join(sidecar)).unwrap(),
+            b"new companion"
+        );
+        assert!(!f.desktop.join("Media").exists());
+        assert!(!status(&f.store).unwrap().pending);
+        assert!(status(&f.store).unwrap().undo.is_none());
+    }
+}
+
+#[test]
+fn unrelated_nfo_and_similar_poster_names_do_not_block_desktop_video_organization() {
+    let f = Fixture::new();
+    for name in [
+        "Film A.mp4",
+        "Film B.mp4",
+        "Other.nfo",
+        "Film A-poster-old.jpg",
+        "Photo.jpg",
+        "Photo.nfo",
+    ] {
+        disk::write(f.desktop.join(name), b"original").unwrap();
+    }
+    let plan = f.plan(true);
+    assert_eq!(plan.summary(), (4, 2, 2));
+    assert!(
+        plan.items
+            .iter()
+            .any(|item| { item.name == "Film A.mp4" && plan.will_move(item) })
+    );
+    assert!(plan.items.iter().any(|item| item.name == "Photo.jpg"));
+    assert_eq!(f.apply(&plan).moved, 4);
+    assert_eq!(
+        disk::read(f.desktop.join("Images/Photo.jpg")).unwrap(),
+        b"original"
+    );
+    assert_eq!(
+        disk::read(f.desktop.join("Images/Film A-poster-old.jpg")).unwrap(),
+        b"original"
+    );
+    undo(&f.store, &f.last()).unwrap();
+    for name in [
+        "Film A.mp4",
+        "Film B.mp4",
+        "Photo.jpg",
+        "Film A-poster-old.jpg",
+    ] {
+        assert_eq!(disk::read(f.desktop.join(name)).unwrap(), b"original");
+    }
+    assert!(!f.desktop.join("Images").exists());
+    assert!(!f.desktop.join("Media").exists());
+}
