@@ -86,9 +86,9 @@ try {
     }
     foreach ($language in @('ru', 'en')) {
         foreach ($scale in @(1, 2)) {
-            foreach ($view in @('organization', 'organization-filtered', 'organization-files', 'organization-warning', 'organization-kept')) {
+            foreach ($view in @('organization', 'organization-filtered', 'organization-files', 'organization-warning', 'organization-kept', 'organization-empty', 'organization-protected')) {
                 foreach ($bottom in @($false, $true)) {
-                    if ($bottom -and $scale -ne 2) { continue }
+                    if ($bottom -and ($scale -ne 2 -or $view -in @('organization-empty', 'organization-protected'))) { continue }
                     $suffix = if ($bottom) { '-bottom' } else { '' }
                     $name = "$language-$($scale * 100)-$view$suffix"
                     $captureView = if ($view -eq 'organization-kept') { 'organization' } else { $view }
@@ -104,11 +104,17 @@ language, scale, view = sys.argv[2], float(sys.argv[3]), sys.argv[4]
 bottom = sys.argv[5].lower() == 'true'
 desktop = home / 'Desktop'
 desktop.mkdir()
-for name, address in [('Project Alpha', 'alpha'), ('Project Beta', 'beta'), ('Reference notes', 'reference')]:
-    (desktop / (name + '.url')).write_text('[InternetShortcut]\r\nURL=https://example.invalid/' + address + '\r\n', encoding='utf-8')
-for name in ['Notes one.txt', 'Notes two.txt']:
-    (desktop / name).write_text('Synthetic review document; never a user file.', encoding='utf-8')
-(desktop / 'Existing project').mkdir()
+if view == 'organization-empty':
+    pass
+elif view == 'organization-protected':
+    for name in ['Protected notes.txt', 'Protected report.txt']:
+        (desktop / name).write_text('Protected review document; never a user file.', encoding='utf-8')
+else:
+    for name, address in [('Project Alpha', 'alpha'), ('Project Beta', 'beta'), ('Reference notes', 'reference')]:
+        (desktop / (name + '.url')).write_text('[InternetShortcut]\r\nURL=https://example.invalid/' + address + '\r\n', encoding='utf-8')
+    for name in ['Notes one.txt', 'Notes two.txt']:
+        (desktop / name).write_text('Synthetic review document; never a user file.', encoding='utf-8')
+    (desktop / 'Existing project').mkdir()
 databases = [p for p in home.iterdir() if p.is_file() and p.read_bytes()[:16] == b'SQLite format 3\x00']
 assert len(databases) == 1, databases
 with sqlite3.connect(str(databases[0])) as db:
@@ -132,10 +138,18 @@ with sqlite3.connect(str(databases[0])) as db:
                     $scrollMessages = Invoke-Fixture -Label $name -ScrollBottom:$bottom -Arguments @('--ui-smoke', $destination, '--home', $profileHome)
                     $image = Join-Path $destination "dialog-$captureView.png"
                     if (-not (Test-Path -LiteralPath $image) -or (Get-Item -LiteralPath $image).Length -lt 4096) { throw "Native screenshot is missing or empty: $name" }
-                    foreach ($leaf in @('Project Alpha.url', 'Project Beta.url', 'Reference notes.url', 'Notes one.txt', 'Notes two.txt', 'Existing project')) {
+                    $expectedLeaves = if ($view -eq 'organization-empty') {
+                        @()
+                    } elseif ($view -eq 'organization-protected') {
+                        @('Protected notes.txt', 'Protected report.txt')
+                    } else {
+                        @('Project Alpha.url', 'Project Beta.url', 'Reference notes.url', 'Notes one.txt', 'Notes two.txt', 'Existing project')
+                    }
+                    $expectedCount = if ($view -eq 'organization-empty') { 0 } elseif ($view -eq 'organization-protected') { 2 } else { 6 }
+                    foreach ($leaf in $expectedLeaves) {
                         if (-not (Test-Path -LiteralPath (Join-Path (Join-Path $profileHome 'Desktop') $leaf))) { throw "UI capture changed a fixture: $leaf" }
                     }
-                    if (@(Get-ChildItem -LiteralPath (Join-Path $profileHome 'Desktop')).Count -ne 6) { throw 'UI capture created an unexpected desktop object' }
+                    if (@(Get-ChildItem -LiteralPath (Join-Path $profileHome 'Desktop')).Count -ne $expectedCount) { throw 'UI capture created an unexpected desktop object' }
                     foreach ($leaf in $beforeFiles.Keys) {
                         $afterHash = (Get-FileHash -LiteralPath (Join-Path (Join-Path $profileHome 'Desktop') $leaf) -Algorithm SHA256).Hash
                         if ($afterHash -ne $beforeFiles[$leaf]) { throw "UI capture modified fixture bytes: $leaf" }

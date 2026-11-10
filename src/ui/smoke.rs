@@ -31,6 +31,15 @@ pub(super) fn organization(app: &mut Settings, view: &str) -> Result<()> {
         &app.config,
         &AtomicBool::new(false),
     )?;
+    if matches!(view, "organization-empty" | "organization-protected") {
+        // Refuse an unrelated fixture. Screenshots must reflect actual
+        // production analysis, not an artificially cleared proposal list.
+        ensure!(
+            plan.items.is_empty()
+                && ((view == "organization-empty") == plan.skipped.is_empty()),
+            "Empty-state capture needs a matching isolated desktop fixture"
+        );
+    }
     if app.store.get::<bool>("test_singleton_review")? {
         // A capture-only scenario, after the explicit isolated-profile guards.
         // Use the production plan; never save an exclusion or move a file to
@@ -80,6 +89,69 @@ mod kept_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn empty_and_protected_captures_require_real_read_only_analysis() {
+        let home = std::env::temp_dir().join(format!(
+            "test-organizer-empty-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let desktop = home.join("Desktop");
+        std::fs::create_dir_all(&desktop).unwrap();
+        let store = Store::open(&home).unwrap();
+        store.set("test_desktop", &desktop.to_string_lossy()).unwrap();
+        store.set("setup_complete", &true).unwrap();
+        store.set("background_disabled", &true).unwrap();
+        drop(store);
+        let mut app = Settings::new(home.clone()).unwrap();
+        app.capture = Some(home.join("images"));
+        app.layout_receiver = None;
+        let before: i64 = app.store.db.query_row(
+            "SELECT total_changes()",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+
+        for language in ["ru", "en"] {
+            i18n::set(language);
+            app.config.language = language.into();
+            organization(&mut app, "organization-empty").unwrap();
+            let plan = app.organization_plan.as_ref().unwrap();
+            assert!(plan.items.is_empty() && plan.skipped.is_empty());
+            assert_eq!(plan.summary(), (0, 0, 0));
+            assert!(organization(&mut app, "organization-protected").is_err());
+        }
+
+        let note = desktop.join("Protected notes.txt");
+        std::fs::write(&note, b"Unchanged synthetic notes").unwrap();
+        for language in ["ru", "en"] {
+            i18n::set(language);
+            app.config.language = language.into();
+            organization(&mut app, "organization-protected").unwrap();
+            let plan = app.organization_plan.as_ref().unwrap();
+            assert!(plan.items.is_empty());
+            assert_eq!(plan.skipped.len(), 1);
+            assert_eq!(plan.skipped[0].name, "Protected notes.txt");
+            assert_eq!(plan.summary(), (0, 0, 0));
+            assert!(organization(&mut app, "organization-empty").is_err());
+        }
+        assert_eq!(std::fs::read(note).unwrap(), b"Unchanged synthetic notes");
+        assert_eq!(app.store.db.query_row(
+            "SELECT total_changes()",
+            [],
+            |row| row.get::<_, i64>(0),
+        ).unwrap(), before);
+        assert!(app.job.is_none());
+        assert!(app.store.get::<bool>("background_disabled").unwrap());
+        let status = organize::status(&app.store).unwrap();
+        assert!(!status.pending && status.undo.is_none());
+        drop(app);
+        let _ = std::fs::remove_dir_all(home);
+    }
+
     #[test]
     fn organizer_capture_refuses_the_real_desktop_or_an_external_fixture() {
         let home = std::env::temp_dir().join(format!(

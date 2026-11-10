@@ -4601,7 +4601,9 @@ pub fn run(home: PathBuf, capture: Option<PathBuf>) -> Result<()> {
             "organization"
             | "organization-filtered"
             | "organization-files"
-            | "organization-warning" => {
+            | "organization-warning"
+            | "organization-empty"
+            | "organization-protected" => {
                 smoke::organization(&mut app, &view)?;
             }
             "import" => {
