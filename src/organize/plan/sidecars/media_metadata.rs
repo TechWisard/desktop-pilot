@@ -41,6 +41,12 @@ pub(super) fn protected(paths: &[PathBuf]) -> HashSet<String> {
         let original = if extension == "nfo" {
             // Kodi and Jellyfin use VideoFilename.nfo for local metadata.
             Some(stem)
+        } else if matches!(extension.as_str(), "mp4" | "mkv" | "avi" | "mov" | "webm") {
+            // Emby recognizes an inline Movie-trailer.mp4 beside Movie.mkv.
+            // Keep both files if the exact base movie exists; a stray trailer
+            // or similarly named independent movie remains movable.
+            stem.rsplit_once('-')
+                .and_then(|(base, kind)| kind.eq_ignore_ascii_case("trailer").then_some(base))
         } else if matches!(extension.as_str(), "jpg" | "jpeg" | "png" | "webp") {
             // Emby recognizes VideoFilename-poster/cover/thumb/fanart.
             // Match complete stems only: Movie-poster-old is unrelated.
@@ -120,5 +126,31 @@ mod tests {
         assert!(kept.contains("clip 0.mp4"));
         assert!(kept.contains("clip 999-poster.jpg"));
         assert!(!kept.contains("other 999-poster.jpg"));
+    }
+
+    #[test]
+    fn exact_inline_movie_trailers_keep_both_videos_not_unrelated_clips() {
+        let paths = [
+            "Film.mkv",
+            "Film-trailer.MP4",
+            "Other.mp4",
+            "Other-trailer-cut.mp4",
+            "Stray-trailer.mp4",
+            "Фильм.mov",
+            "Фильм-TRAILER.mkv",
+        ]
+        .map(PathBuf::from);
+        assert_eq!(
+            protected(&paths),
+            [
+                "film.mkv",
+                "film-trailer.mp4",
+                "фильм.mov",
+                "фильм-trailer.mkv"
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect()
+        );
     }
 }
