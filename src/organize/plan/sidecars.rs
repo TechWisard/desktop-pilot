@@ -9,6 +9,7 @@ use std::{
 mod archives;
 mod document_locks;
 mod lyrics;
+mod media_metadata;
 pub(super) mod subtitle_dirs;
 
 pub(super) fn protected(paths: &[PathBuf]) -> HashSet<String> {
@@ -36,6 +37,7 @@ pub(super) fn protected(paths: &[PathBuf]) -> HashSet<String> {
     let mut protected = archives::protected(paths);
     protected.extend(document_locks::protected(paths));
     protected.extend(lyrics::protected(paths));
+    protected.extend(media_metadata::protected(paths));
     for path in paths {
         let extension = path
             .extension()
