@@ -12,6 +12,7 @@ mod launch_validity_tests;
 mod learning;
 mod model;
 mod native;
+mod organize;
 mod profile;
 mod report;
 mod setup;
@@ -958,6 +959,7 @@ fn self_test(home: &Path, args: &[String], error_profile: &mut Option<PathBuf>) 
         "Protocol identity changed"
     );
     engine::rollback(&protocol)?;
+    organize::runtime_checks::run(home)?;
     emit(
         args,
         &serde_json::json!({
@@ -993,6 +995,8 @@ fn self_test(home: &Path, args: &[String], error_profile: &mut Option<PathBuf>) 
                 "refused self-tests leave nonempty folders untouched",
                 "error logs preserve hard-linked user files",
                 "failed executable replacement restores the previous worker and profile",
+                "organizer stops and resumes the actual worker around Apply and Undo",
+                "organizer restart preserves newer manual settings and Turn off",
             ],
             "originals_unchanged": true,
         }),

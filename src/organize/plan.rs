@@ -1,0 +1,802 @@
+use super::*;
+use crate::model::App;
+use anyhow::bail;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+
+mod camera_pairs;
+mod sidecars;
+
+fn plain_group(extension: &str) -> Option<Group> {
+    match extension {
+        "txt" | "pdf" | "rtf" | "doc" | "docx" | "odt" | "ppt" | "pptx" => Some(Group::Documents),
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tif" | "tiff" | "heic" => {
+            Some(Group::Images)
+        }
+        "mp3" | "wav" | "flac" | "ogg" | "m4a" | "mp4" | "mkv" | "avi" | "mov" | "webm" => {
+            Some(Group::Media)
+        }
+        "zip" | "7z" | "rar" | "tar" | "gz" => Some(Group::Archives),
+        _ => None,
+    }
+}
+
+pub(super) fn classify(path: &Path, options: &Options) -> Result<(Group, Option<String>)> {
+    let extension = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if matches!(extension.as_str(), "lnk" | "url") {
+        let app = metadata::read(path)?;
+        let target = app.target.trim();
+        let lower = target.to_ascii_lowercase();
+        let absolute = |value: &str| {
+            value.is_empty() || Path::new(&crate::model::expand_env(value)).is_absolute()
+        };
+        ensure!(
+            absolute(&app.cwd) && absolute(&app.icon),
+            "Relative working directory or icon: left in place"
+        );
+        let group = if lower.starts_with("https://") || lower.starts_with("http://") {
+            Group::Sites
+        } else if (lower.starts_with("steam://rungameid/")
+            && target.len() > 18
+            && target[18..].bytes().all(|byte| byte.is_ascii_digit()))
+            || lower.starts_with("com.epicgames.launcher://apps/")
+        {
+            Group::Games
+        } else if Path::new(&crate::model::expand_env(target)).is_absolute()
+            || lower.starts_with("shell:")
+            || lower.starts_with("::{")
+        {
+            ensure!(
+                extension != "lnk" || !app.cwd.is_empty(),
+                "Shortcut without an explicit working directory: left in place"
+            );
+            Group::Programs
+        } else {
+            bail!("Relative or unrecognized shortcut target: left in place");
+        };
+        Ok((group, Some(app.identity())))
+    } else {
+        ensure!(
+            options.include_files,
+            "Files are not selected for organization"
+        );
+        let group = plain_group(&extension)
+            .context("Executable, linked data or unknown file type: left in place")?;
+        let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+        for companion in [
+            format!("{stem}_files"),
+            format!("{stem}.files"),
+            format!("{stem}_файлы"),
+        ] {
+            ensure!(
+                fs::absent(&path.with_file_name(companion))?,
+                "Associated file set: left in place"
+            );
+        }
+        Ok((group, None))
+    }
+}
+
+#[derive(Default)]
+pub(super) struct Dependencies {
+    paths: HashSet<String>,
+    // Only an opt-in file pass probes known local launch/icon paths. Exact
+    // string equality misses 8.3, dot-segment and extended-path aliases.
+    protected_local_ids: HashSet<String>,
+    // A saved catalog source may use an 8.3, dot-segment or extended Desktop
+    // spelling. Moving its original would leave that catalog source dangling.
+    catalog_source_alias_ids: HashSet<String>,
+    checked_catalog_source_aliases: HashSet<String>,
+    checked_local_paths: HashSet<String>,
+    arguments: HashSet<String>,
+    sidecar_objects: HashSet<String>,
+    // Avoid repeatedly opening the same local working-directory alias.
+    checked_working_directories: HashSet<String>,
+    desktop_working_directory: bool,
+    incomplete: bool,
+}
+impl Dependencies {
+    fn record(&mut self, app: &App, root: &Path, root_id: &str, check_working_directory: bool) {
+        // The catalog updates sources by their recorded spelling after Apply.
+        // Never move a Desktop entry referenced through a different spelling:
+        // after the rename that alias can no longer be verified or rewritten.
+        // Inspect only distinct non-canonical sources on local disks; a hard
+        // link in another parent directory does not name the Desktop entry.
+        // Catalog sources are existing filesystem paths, not launch templates.
+        // A directory literally named %USERNAME% must keep its own identity.
+        let source = crate::profile::ordinary_path(PathBuf::from(&app.source));
+        if let Some(name) = source.file_name()
+            && norm_literal_path(&app.source)
+                != norm_literal_path(&root.join(name).to_string_lossy())
+            && self
+                .checked_catalog_source_aliases
+                .insert(norm_literal_path(&app.source))
+            && source.is_absolute()
+            && reject_network_root(&source).is_ok()
+            && source
+                .parent()
+                .and_then(|parent| fs::directory(parent).ok())
+                .and_then(|parent| fs::identity(&parent).ok())
+                .is_some_and(|id| id == root_id)
+            && let Ok(stamp) = fs::inspect(&source, false)
+        {
+            self.catalog_source_alias_ids.insert(stamp.id);
+        }
+        // Link targets, working directories and custom icons may name files
+        // whose actual filename contains %NAME%. Preserve both the literal
+        // spelling and an intentional environment-template interpretation.
+        for value in [&app.target, &app.cwd, &app.icon] {
+            for spelling in [value.to_string(), crate::model::expand_env(value)] {
+                if Path::new(&spelling).is_absolute() {
+                    self.paths.insert(norm_literal_path(&spelling));
+                }
+            }
+        }
+        if check_working_directory {
+            for value in [&app.target, &app.icon] {
+                // Explorer may report an 8.3 or canonical Desktop spelling
+                // different from the path recorded by the Shell link. The
+                // literal form must also be inspected by file identity:
+                // expanding %NAME% first can point to a nonexistent file.
+                for spelling in [value.to_string(), crate::model::expand_env(value)] {
+                    if !self
+                        .checked_local_paths
+                        .insert(norm_literal_path(&spelling))
+                    {
+                        continue;
+                    }
+                    let path = crate::profile::ordinary_path(PathBuf::from(&spelling));
+                    if !path.is_absolute() || reject_network_root(&path).is_err() {
+                        continue;
+                    }
+                    // Never identify a desktop dependency by file ID alone:
+                    // another directory can contain a hard link to the same file.
+                    // Only the actual personal Desktop parent can be disrupted
+                    // by moving a Desktop directory entry.
+                    let same_parent = path
+                        .parent()
+                        .and_then(|parent| fs::directory(parent).ok())
+                        .and_then(|parent| fs::identity(&parent).ok())
+                        .is_some_and(|id| id == root_id);
+                    if same_parent && let Ok(stamp) = fs::inspect(&path, false) {
+                        self.protected_local_ids.insert(stamp.id);
+                    }
+                }
+            }
+        }
+        if !app.arguments.trim().is_empty() {
+            // Arguments belong to the target application's grammar. Do not
+            // execute or reinterpret them as a shell command. A literal path
+            // or filename is enough evidence to preserve a possible dependency;
+            // false positives are preferable to breaking a saved launch.
+            // Shortcut arguments may refer to an existing file whose name
+            // literally contains %NAME%, or to an intentional environment
+            // template. A protected Desktop dependency must survive either
+            // interpretation. Do not execute or parse the argument grammar.
+            for argument in [norm_literal_path(&app.arguments), norm(&app.arguments)] {
+                self.arguments.insert(argument.replace('"', ""));
+            }
+        }
+        if check_working_directory && !self.desktop_working_directory && !app.cwd.is_empty() {
+            // A saved working directory may contain literal %NAME% in a real
+            // Desktop folder name, not just an environment template. Either
+            // interpretation pointing to this Desktop must protect its files.
+            for spelling in [app.cwd.clone(), crate::model::expand_env(&app.cwd)] {
+                let normalized = norm_literal_path(&spelling);
+                if normalized == norm_literal_path(&root.to_string_lossy()) {
+                    self.desktop_working_directory = true;
+                    break;
+                }
+                if !self.checked_working_directories.insert(normalized) {
+                    continue;
+                }
+                // Keep extended local drive paths, but convert extended UNC
+                // to ordinary UNC before the network-drive rejection.
+                let working = crate::profile::ordinary_path(PathBuf::from(&spelling));
+                // Short (8.3), extended and aliased local paths can designate
+                // the same Desktop. Never probe a remote working directory.
+                if working.is_absolute()
+                    && reject_network_root(&working).is_ok()
+                    && fs::directory(&working)
+                        .and_then(|directory| fs::identity(&directory))
+                        .is_ok_and(|id| id == root_id)
+                {
+                    self.desktop_working_directory = true;
+                    break;
+                }
+            }
+        }
+    }
+    pub(super) fn check(&self, path: &Path, shortcut: bool, file_id: &str) -> Result<()> {
+        ensure!(
+            !self.catalog_source_alias_ids.contains(file_id),
+            "A saved catalog source aliases this desktop object; update its path before organizing"
+        );
+        let normalized = norm_literal_path(&path.to_string_lossy());
+        ensure!(
+            !self.sidecar_objects.contains(&normalized),
+            "Associated file set: left in place"
+        );
+        ensure!(
+            !self.paths.contains(&normalized) && !self.protected_local_ids.contains(file_id),
+            "Another known shortcut depends on this object: left in place"
+        );
+        let name = path
+            .file_name()
+            .context("Desktop entry has no filename")?
+            .to_string_lossy()
+            .to_lowercase();
+        ensure!(
+            !self
+                .arguments
+                .iter()
+                .any(|args| args.contains(&normalized) || args.contains(&name)),
+            "Shortcut launch arguments may refer to this object: left in place"
+        );
+        ensure!(
+            shortcut || !self.desktop_working_directory,
+            "The desktop is used as an application's working directory: files left in place"
+        );
+        ensure!(
+            shortcut || !self.incomplete,
+            "Some shortcut dependencies could not be inspected: files left in place"
+        );
+        Ok(())
+    }
+}
+
+/// Protect an existing quick shortcut recorded by a pre-file-ID profile even
+/// when its Desktop path uses a short-name or dot-segment spelling. Comparing
+/// names alone can otherwise offer a managed copy as a new organization move.
+/// Only an actual entry in this Personal Desktop is protected: hard links in
+/// another directory do not identify the same Desktop icon.
+pub(super) fn legacy_managed_alias_ids(
+    root: &Path,
+    root_id: &str,
+    state: &State,
+) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    let mut checked = HashSet::new();
+    for owned in state.owned.iter().filter(|owned| owned.file_id.is_none()) {
+        let path = crate::profile::ordinary_path(PathBuf::from(&owned.path));
+        let Some(name) = path.file_name() else {
+            continue;
+        };
+        let spelling = norm_literal_path(&path.to_string_lossy());
+        if !path.is_absolute()
+            || spelling == norm_literal_path(&root.join(name).to_string_lossy())
+            || reject_network_root(&path).is_err()
+            || !checked.insert(spelling)
+        {
+            continue;
+        }
+        let same_desktop = path
+            .parent()
+            .and_then(|parent| fs::directory(parent).ok())
+            .and_then(|parent| fs::identity(&parent).ok())
+            .is_some_and(|id| id == root_id);
+        if same_desktop && let Ok(stamp) = fs::inspect(&path, false) {
+            ids.insert(stamp.id);
+        }
+    }
+    ids
+}
+
+pub(super) fn paths(root: &Path, cancel: &AtomicBool) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    for entry in std::fs::read_dir(root)? {
+        ensure!(
+            !cancel.load(Ordering::Relaxed),
+            "Organization analysis cancelled"
+        );
+        paths.push(entry?.path());
+        ensure!(
+            paths.len() <= LIMIT,
+            "The desktop contains more than 6000 objects. No incomplete plan was created."
+        );
+    }
+    paths.sort_by_key(|path| norm_literal_path(&path.to_string_lossy()));
+    Ok(paths)
+}
+
+pub(super) fn dependencies(
+    root: &Path,
+    paths: &[PathBuf],
+    apps: &[App],
+    cancel: &AtomicBool,
+    include_files: bool,
+    root_id: &str,
+) -> Result<Dependencies> {
+    let mut dependencies = Dependencies {
+        // Build once from the same bounded directory snapshot used for analysis
+        // and rebuild before Apply. Do not scan the directory for every file.
+        sidecar_objects: {
+            let mut protected = sidecars::protected(paths);
+            protected.extend(camera_pairs::protected(paths));
+            if include_files {
+                protected.extend(sidecars::subtitle_dirs::protected(paths, cancel)?);
+            }
+            protected
+        },
+        ..Default::default()
+    };
+    for app in apps {
+        dependencies.record(app, root, root_id, include_files);
+    }
+    for path in paths.iter().filter(|p| is_shortcut(p)) {
+        ensure!(
+            !cancel.load(Ordering::Relaxed),
+            "Organization analysis cancelled"
+        );
+        match fs::inspect(path, true).and_then(|_| metadata::read(path)) {
+            Ok(app) => dependencies.record(&app, root, root_id, include_files),
+            // Unknown is not independent. Shortcut grouping can still proceed,
+            // but the optional ordinary-file pass needs a complete local view.
+            Err(_) => dependencies.incomplete = true,
+        }
+    }
+    Ok(dependencies)
+}
+
+pub(super) fn is_shortcut(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|s| s.eq_ignore_ascii_case("lnk") || s.eq_ignore_ascii_case("url"))
+}
+
+/// Resolve the position of a personal Desktop source in Explorer's merged view.
+/// A Public Desktop hard link has the same file ID, but is a different icon:
+/// accept an alias only when its containing directory is the same Desktop.
+/// Multiple matching view entries are ambiguous and must not pick a position.
+pub(super) fn source_position(
+    positions: &HashMap<String, Point>,
+    aliases: &HashMap<String, Vec<(PathBuf, Point)>>,
+    path: &Path,
+    root_id: &str,
+    stamp_id: &str,
+) -> Option<Point> {
+    if let Some(position) = positions.get(&norm_literal_path(&path.to_string_lossy())) {
+        return Some(position.clone());
+    }
+    let name = path.file_name()?.to_string_lossy().to_lowercase();
+    let mut matching = aliases.get(&name)?.iter().filter(|(candidate, _)| {
+        fs::matches_id(candidate, stamp_id).unwrap_or(false)
+            && candidate
+                .parent()
+                .and_then(|parent| fs::directory(parent).ok())
+                .and_then(|parent| fs::identity(&parent).ok())
+                .is_some_and(|id| id == root_id)
+    });
+    let (_, position) = matching.next()?;
+    matching.next().is_none().then(|| position.clone())
+}
+
+pub fn analyze(
+    store: &Store,
+    options: Options,
+    config: &Config,
+    cancel: &AtomicBool,
+) -> Result<Plan> {
+    let _changes = native::exclusive("changes", &store.home)?;
+    ensure_ready(store)?;
+    no_placement_in_progress(store)?;
+    config.validate()?;
+    let root = root(store)?;
+    let root_handle = fs::directory(&root)?;
+    let root_id = fs::identity(&root_handle)?;
+    let layout = layout(store)?;
+    let state: State = store.get("state")?;
+    let apps = store.apps()?;
+    let keep: HashSet<String> = store.get::<Vec<String>>(KEEP)?.into_iter().collect();
+    let legacy_managed_ids = legacy_managed_alias_ids(&root, &root_id, &state);
+    let managed_paths: HashSet<_> = state
+        .owned
+        .iter()
+        .map(|o| norm_literal_path(&o.path))
+        .collect();
+    let managed_ids: HashSet<_> = state
+        .owned
+        .iter()
+        .filter_map(|o| o.file_id.as_deref())
+        .collect();
+    let manual_paths: HashSet<_> = apps
+        .iter()
+        .filter(|a| a.policy != Policy::Auto)
+        .map(|a| norm_literal_path(&a.source))
+        .collect();
+    let mut plan = Plan {
+        root: root.to_string_lossy().into_owned(),
+        root_id,
+        layout,
+        items: Vec::new(),
+        skipped: Vec::new(),
+        options,
+        folders: Vec::new(),
+        russian: config.language == "ru",
+    };
+    let paths = paths(&root, cancel)?;
+    let dependencies = dependencies(
+        &root,
+        &paths,
+        &apps,
+        cancel,
+        plan.options.include_files,
+        &plan.root_id,
+    )?;
+    // Explorer may present an 8.3 alias (RUNNER~1) for the very same file
+    // whose canonical desktop path uses the long directory name. Index the
+    // current desktop positions once; compare file identity only when the
+    // cheap normalized path lookup misses.
+    let mut positions = HashMap::<String, Point>::new();
+    let mut aliases = HashMap::<String, Vec<(PathBuf, Point)>>::new();
+    if let Some(layout) = &plan.layout {
+        for item in &layout.items {
+            positions.insert(norm_literal_path(&item.path), item.position.clone());
+            if let Some(name) = Path::new(&item.path).file_name() {
+                aliases
+                    .entry(name.to_string_lossy().to_lowercase())
+                    .or_default()
+                    .push((PathBuf::from(&item.path), item.position.clone()));
+            }
+        }
+    }
+    let mut occupied: HashSet<String> = paths
+        .iter()
+        .filter_map(|p| p.file_name())
+        .map(|s| s.to_string_lossy().to_lowercase())
+        .collect();
+    for path in paths {
+        ensure!(
+            !cancel.load(Ordering::Relaxed),
+            "Organization analysis cancelled"
+        );
+        let display_name = path
+            .file_name()
+            .context("Desktop entry has no name")?
+            .to_string_lossy()
+            .into_owned();
+        let candidate = (|| -> Result<Item> {
+            let name = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .context("The filename cannot be represented losslessly")?;
+            fs::leaf(name)?;
+            let shortcut = is_shortcut(&path);
+            let stamp = fs::inspect(&path, shortcut)?;
+            ensure!(
+                !keep.contains(&stamp.id),
+                "You chose to keep this object on the desktop"
+            );
+            let normalized = norm_literal_path(&path.to_string_lossy());
+            ensure!(
+                !managed_paths.contains(&normalized)
+                    && !managed_ids.contains(stamp.id.as_str())
+                    && !legacy_managed_ids.contains(&stamp.id),
+                "Managed quick shortcut: left in place"
+            );
+            ensure!(
+                !manual_paths.contains(&normalized),
+                "Manual shortcut rule: left in place"
+            );
+            dependencies.check(&path, shortcut, &stamp.id)?;
+            let (group, launch) = classify(&path, &plan.options)?;
+            let position = source_position(&positions, &aliases, &path, &plan.root_id, &stamp.id);
+            Ok(Item {
+                name: name.to_owned(),
+                group,
+                selected: true,
+                position,
+                stamp,
+                launch,
+            })
+        })();
+        match candidate {
+            Ok(item) => plan.items.push(item),
+            Err(error) => plan.skipped.push(Skipped {
+                name: display_name,
+                reason: format!("{error:#}"),
+            }),
+        }
+    }
+    let known: Vec<Folder> = store.get(FOLDERS)?;
+    let groups: BTreeSet<_> = plan.items.iter().map(|i| i.group).collect();
+    for group in groups {
+        let existing = known.iter().find(|folder| {
+            folder.group == group
+                && fs::leaf(&folder.name).is_ok()
+                && fs::directory(&root.join(&folder.name))
+                    .and_then(|f| fs::identity(&f))
+                    .is_ok_and(|id| folder.id.as_ref() == Some(&id))
+        });
+        if let Some(folder) = existing {
+            let mut folder = folder.clone();
+            folder.created = false;
+            plan.folders.push(folder);
+            continue;
+        }
+        let label = group.label(plan.russian);
+        let name = (0..1000)
+            .map(|n| match n {
+                0 => label.to_owned(),
+                1 => format!("{label} (Desktop Pilot)"),
+                _ => format!("{label} (Desktop Pilot {n})"),
+            })
+            .find(|name| !occupied.contains(&name.to_lowercase()))
+            .context("No safe category folder name is available")?;
+        occupied.insert(name.to_lowercase());
+        plan.folders.push(Folder {
+            group,
+            name,
+            id: None,
+            created: true,
+            position: None,
+        });
+    }
+    Ok(plan)
+}
+
+// A folder created from several moved icons should inherit the first known
+// source position, not the first item's possibly missing Explorer position.
+// Apply and preview must use the same anchor; returning None means that
+// Explorer has not supplied any position we can promise to preserve.
+pub(super) fn known_folder_anchor(movements: &[Movement], folder: &str) -> Option<Point> {
+    movements
+        .iter()
+        .filter(|movement| movement.folder == folder)
+        .find_map(|movement| movement.item.position.clone())
+}
+
+impl Plan {
+    // A folder made from multiple selected objects may lack any trustworthy
+    // Explorer coordinate. Keep this distinct from an actually full grid;
+    // otherwise the UI suggests changing the shortcut count unnecessarily.
+    // Read only selections and coordinates; never probe the filesystem here.
+    pub(crate) fn has_unlocated_created_folder(&self) -> bool {
+        if self.layout.is_none() {
+            return false;
+        }
+        let mut selected = BTreeMap::<Group, (usize, bool)>::new();
+        for item in self.items.iter().filter(|item| item.selected) {
+            let entry = selected.entry(item.group).or_default();
+            entry.0 += 1;
+            entry.1 |= item.position.is_some();
+        }
+        self.folders.iter().any(|folder| {
+            folder.created
+                && selected
+                    .get(&folder.group)
+                    .is_some_and(|(count, located)| *count >= 2 && !located)
+        })
+    }
+
+    pub(super) fn movements(&self) -> Vec<Movement> {
+        let mut counts = BTreeMap::<Group, usize>::new();
+        for item in self.items.iter().filter(|i| i.selected) {
+            *counts.entry(item.group).or_default() += 1;
+        }
+        self.items
+            .iter()
+            .filter(|item| item.selected)
+            .filter_map(|item| {
+                let folder = self.folders.iter().find(|f| f.group == item.group)?;
+                // A new singleton folder would free no icon position.
+                (!folder.created || counts[&item.group] >= 2).then(|| Movement {
+                    item: item.clone(),
+                    folder: folder.name.clone(),
+                })
+            })
+            .collect()
+    }
+
+    pub fn summary(&self) -> (usize, usize, usize) {
+        // The preview is painted on every frame, including large 6000-item
+        // reviews. Count the same eligible groups as movements() without
+        // cloning every source name, identity stamp and launch profile.
+        let mut counts = BTreeMap::<Group, usize>::new();
+        for item in self.items.iter().filter(|item| item.selected) {
+            *counts.entry(item.group).or_default() += 1;
+        }
+        let mut moved = 0usize;
+        let mut created = 0usize;
+        for (group, count) in counts {
+            if let Some(folder) = self.folders.iter().find(|folder| folder.group == group)
+                && (!folder.created || count >= 2)
+            {
+                moved += count;
+                if folder.created {
+                    created += 1;
+                }
+            }
+        }
+        (moved, created, moved.saturating_sub(created))
+    }
+
+    pub fn destination(&self, item: &Item) -> String {
+        self.folders
+            .iter()
+            .find(|f| f.group == item.group)
+            .map(|f| f.name.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn will_move(&self, item: &Item) -> bool {
+        item.selected
+            && self.folders.iter().any(|folder| {
+                folder.group == item.group
+                    && (!folder.created
+                        || self
+                            .items
+                            .iter()
+                            .filter(|i| i.selected && i.group == item.group)
+                            .take(2)
+                            .count()
+                            == 2)
+            })
+    }
+
+    /// Projection accounts for the space used by new folders. It is not a
+    /// screenshot or a promise: the actual layout is rechecked before applying.
+    pub fn projected_zone(&self, config: &Config) -> Option<Config> {
+        let mut projected = self.layout.clone()?;
+        let movements = self.movements();
+        let moved: HashSet<_> = movements
+            .iter()
+            .map(|m| norm_literal_path(&Path::new(&self.root).join(&m.item.name).to_string_lossy()))
+            .collect();
+        let alias_ids: HashMap<_, _> = movements
+            .iter()
+            .map(|movement| {
+                (
+                    movement.item.name.to_lowercase(),
+                    movement.item.stamp.id.as_str(),
+                )
+            })
+            .collect();
+        projected.items.retain(|item| {
+            if moved.contains(&norm_literal_path(&item.path)) {
+                return false;
+            }
+            // A normalized text mismatch must not leave an already moved
+            // icon in the projected occupancy grid. Never hide an unrelated
+            // public-desktop item with the same name: verify its file ID.
+            let Some(name) = Path::new(&item.path).file_name() else {
+                return true;
+            };
+            alias_ids
+                .get(&name.to_string_lossy().to_lowercase())
+                .is_none_or(|id| {
+                    let candidate = Path::new(&item.path);
+                    // NTFS hard links can share a file ID across Personal and
+                    // Public Desktop. Only a view entry in this desktop root
+                    // can disappear when we move the original.
+                    let same_parent = candidate
+                        .parent()
+                        .and_then(|parent| fs::directory(parent).ok())
+                        .and_then(|parent| fs::identity(&parent).ok())
+                        .is_some_and(|identity| identity == self.root_id);
+                    !(same_parent && fs::matches_id(candidate, id).unwrap_or(false))
+                })
+        });
+        for folder in self.folders.iter().filter(|f| f.created) {
+            if movements
+                .iter()
+                .any(|movement| movement.folder == folder.name)
+            {
+                // A folder whose moving sources have no known icon position
+                // may land anywhere. Do not present an optimistic free zone
+                // that ignores this newly created desktop obstacle.
+                let position = known_folder_anchor(&movements, &folder.name)?;
+                projected.items.push(native::Item {
+                    path: Path::new(&self.root)
+                        .join(&folder.name)
+                        .to_string_lossy()
+                        .into_owned(),
+                    name: folder.name.clone(),
+                    position,
+                });
+            }
+        }
+        find_free_zone(&projected, config)
+    }
+}
+
+pub fn find_free_zone(layout: &native::Layout, config: &Config) -> Option<Config> {
+    if layout.flags & 1 != 0 || config.validate().is_err() {
+        return None;
+    }
+    let anchor_config = Config {
+        slots: 1,
+        zone_col: 0,
+        zone_row: 0,
+        zone_columns: 1,
+        ..config.clone()
+    };
+    let anchor = crate::engine::zone_candidates(layout, &anchor_config)
+        .ok()?
+        .into_iter()
+        .next()?;
+    let sx = i64::from(layout.spacing.x);
+    let sy = i64::from(layout.spacing.y);
+    let bx = i64::from(anchor.x).rem_euclid(sx);
+    let by = i64::from(anchor.y).rem_euclid(sy);
+    // At most 40 starting columns/rows plus the seven remaining slots. Build
+    // occupancy once instead of probing thousands of paths for every candidate.
+    const SIDE: usize = 48;
+    let point = |col: usize, row: usize| {
+        (
+            i64::from(anchor.x) + col as i64 * sx,
+            i64::from(anchor.y) + row as i64 * sy,
+        )
+    };
+    let mut free = [[false; SIDE]; SIDE];
+    for (row, cells) in free.iter_mut().enumerate() {
+        for (col, cell) in cells.iter_mut().enumerate() {
+            let (x, y) = point(col, row);
+            *cell = x - bx >= i64::from(layout.work[0])
+                && y - by >= i64::from(layout.work[1])
+                && x - bx + sx <= i64::from(layout.work[2])
+                && y - by + sy <= i64::from(layout.work[3])
+                && i32::try_from(x).is_ok()
+                && i32::try_from(y).is_ok();
+        }
+    }
+    for item in &layout.items {
+        let col = (i64::from(item.position.x) - i64::from(anchor.x)).div_euclid(sx);
+        let row = (i64::from(item.position.y) - i64::from(anchor.y)).div_euclid(sy);
+        for r in (row - 1).max(0)..=(row + 1).min(SIDE as i64 - 1) {
+            for c in (col - 1).max(0)..=(col + 1).min(SIDE as i64 - 1) {
+                let (x, y) = point(c as usize, r as usize);
+                if (i64::from(item.position.x) - x).abs() < sx - 2
+                    && (i64::from(item.position.y) - y).abs() < sy - 2
+                {
+                    free[r as usize][c as usize] = false;
+                }
+            }
+        }
+    }
+    let fits = |cfg: &Config| {
+        (0..cfg.slots).all(|index| {
+            let col = cfg.zone_col as usize + index % cfg.zone_columns as usize;
+            let row = cfg.zone_row as usize + index / cfg.zone_columns as usize;
+            free[row][col]
+        })
+    };
+    let verify = |candidate: Config| {
+        crate::engine::reserve_positions(
+            layout,
+            &candidate,
+            &State::default(),
+            &[],
+            candidate.slots,
+        )
+        .ok()
+        .map(|_| candidate)
+    };
+    if fits(config) {
+        return verify(config.clone());
+    }
+    let mut shapes = vec![config.zone_columns, 1, 2, config.slots as i32];
+    shapes.dedup();
+    for columns in shapes {
+        for col in 0..=40 {
+            for row in 0..=40 {
+                let candidate = Config {
+                    zone_col: col,
+                    zone_row: row,
+                    zone_columns: columns,
+                    ..config.clone()
+                };
+                if fits(&candidate) {
+                    return verify(candidate);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+#[path = "plan_summary_tests.rs"]
+mod summary_tests;

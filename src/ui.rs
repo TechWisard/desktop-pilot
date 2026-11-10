@@ -1,3 +1,6 @@
+mod organization;
+mod smoke;
+
 use crate::{
     engine,
     i18n::{self, text as t},
@@ -256,6 +259,10 @@ enum JobResult {
     Prepared,
     Added(ImportResult),
     Disabled(Config),
+    OrganizationPlan(crate::organize::Plan),
+    OrganizationChanged(crate::organize::Outcome, Option<String>),
+    OrganizationAccepted(Option<String>),
+    OrganizationReset,
 }
 struct Job {
     label: &'static str,
@@ -324,6 +331,14 @@ pub struct Settings {
     confirm_setup_close: bool,
     confirm_disable: bool,
     import_open: bool,
+    organization_open: bool,
+    organization_plan: Option<crate::organize::Plan>,
+    organization_projection: Option<organization::OrganizationProjectionCache>,
+    organization_files: bool,
+    organization_query: String,
+    organization_page: usize,
+    organization_accept_for: Option<String>,
+    organization_reset_confirm: bool,
     import_paths: String,
     import_error: String,
     focus_import: bool,
@@ -1008,6 +1023,14 @@ impl Settings {
             confirm_setup_close: false,
             confirm_disable: false,
             import_open: false,
+            organization_open: false,
+            organization_plan: None,
+            organization_projection: None,
+            organization_files: false,
+            organization_query: String::new(),
+            organization_page: 0,
+            organization_accept_for: None,
+            organization_reset_confirm: false,
             import_paths: String::new(),
             import_error: String::new(),
             focus_import: false,
@@ -1059,6 +1082,7 @@ impl Settings {
             || self.confirm_setup_close
             || self.confirm_disable
             || self.import_open
+            || self.organization_open
             || self.notice_details
             || self.details_app.is_some()
     }
@@ -1638,6 +1662,77 @@ impl Settings {
                                 }
                             }
                         }
+                        Ok(JobResult::OrganizationPlan(plan)) => {
+                            self.organization_projection = None;
+                            self.organization_page = 0;
+                            self.organization_plan = Some(plan);
+                            self.inform(
+                                t(
+                                    "План готов. Проверьте объекты перед применением.",
+                                    "Plan ready. Review the objects before applying.",
+                                ),
+                                NoticeKind::Info,
+                            );
+                        }
+                        Ok(JobResult::OrganizationChanged(outcome, warning)) => {
+                            self.organization_plan = None;
+                            self.organization_projection = None;
+                            self.organization_accept_for = None;
+                            self.refresh_layout(self.onboarding);
+                            let mut message = if outcome.kept > 0
+                                && outcome.moved == 0
+                                && outcome.restored == 0
+                            {
+                                format!(
+                                    "{}: {}",
+                                    t("Исключения сохранены", "Keep choices saved"),
+                                    outcome.kept
+                                )
+                            } else {
+                                format!(
+                                    "{}: {} · {}: {}",
+                                    t("Перемещено", "Moved"),
+                                    outcome.moved,
+                                    t("Восстановлено", "Restored"),
+                                    outcome.restored
+                                )
+                            };
+                            for warning in outcome.warnings {
+                                message.push_str(&format!("\n{warning}"));
+                            }
+                            if let Some(warning) = warning {
+                                message.push_str(&format!("\n{warning}"));
+                            }
+                            self.inform(message, NoticeKind::Success);
+                        }
+                        Ok(JobResult::OrganizationReset) => {
+                            self.organization_plan = None;
+                            self.organization_projection = None;
+                            self.organization_reset_confirm = false;
+                            self.inform(
+                                t(
+                                    "Исключения сброшены. Следующий анализ будет новым.",
+                                    "Exclusions reset. The next analysis will start fresh.",
+                                ),
+                                NoticeKind::Info,
+                            );
+                        }
+                        Ok(JobResult::OrganizationAccepted(warning)) => {
+                            self.organization_plan = None;
+                            self.organization_projection = None;
+                            self.organization_accept_for = None;
+                            self.refresh_layout(self.onboarding);
+                            self.inform(
+                                warning.unwrap_or_else(|| {
+                                    t(
+                                        "Текущее расположение принято; журнал сохранён.",
+                                        "Current locations accepted; journal retained.",
+                                    )
+                                    .to_owned()
+                                }),
+                                NoticeKind::Info,
+                            );
+                        }
                         Err(e) => {
                             self.close_after_save = false;
                             self.pending_policy = None;
@@ -2037,6 +2132,18 @@ impl Settings {
         ));
     }
     fn zone(&mut self, ui: &mut egui::Ui) {
+        if primary(
+            ui,
+            !self.busy(),
+            t(
+                "Навести порядок и освободить место",
+                "Organize desktop and free space",
+            ),
+        )
+        .clicked()
+        {
+            self.organization_open = true;
+        }
         ui.label(t(
             "Выберите место прямо на схеме или поручите подбор программе.",
             "Choose a place on the layout, or let the app find one.",
@@ -2456,6 +2563,15 @@ impl Settings {
     }
     fn overview(&mut self, ui: &mut egui::Ui) {
         ui.heading(RichText::new(t("Ваш рабочий стол", "Your desktop")).size(28.0));
+        if primary(
+            ui,
+            !self.busy(),
+            t("Навести порядок на рабочем столе", "Organize desktop"),
+        )
+        .clicked()
+        {
+            self.organization_open = true;
+        }
         if ui.available_width() >= 700.0 {
             ui.label(t(
                 "Нужные приложения рядом. Привычный порядок сохранён.",
@@ -2583,7 +2699,10 @@ impl Settings {
                     ));
                     if ui.button(t("Открыть настройки", "Open settings")).clicked()
                     {
+                        // The warning is about observation, not operating mode.
+                        // Go straight to the requirement that can unblock Apply.
                         self.tab = 2;
+                        self.settings_section = 2;
                     }
                 }
                 Health::Suggestions => {
@@ -2625,7 +2744,12 @@ impl Settings {
                 );
             });
             if self.state.owned.is_empty() {
-                ui.label(if !self.learning.ready(&self.saved_config) {
+                ui.label(if !self.learning.ready(&self.saved_config)
+                    && !self.saved_config.collect
+                {
+                    t("Наблюдение приостановлено: статистика не собирается. В настройках «Наблюдение» включите сбор или отключите требование перед размещением.",
+                      "Observation is paused: no usage is collected. In Settings → Observation, enable collection or turn off the requirement before placing shortcuts.")
+                } else if !self.learning.ready(&self.saved_config) {
                     t("Первые ярлыки появятся после наблюдения. Можно заранее выбрать приложения, которые всегда должны быть на столе.",
                       "Your first shortcuts will appear after observation. You can already choose apps that should always be on the desktop.")
                 } else {
@@ -4172,6 +4296,9 @@ impl Settings {
         if self.import_open {
             self.import_dialog(ctx);
         }
+        if self.organization_open {
+            self.organization_dialog(ctx);
+        }
     }
     fn screenshots(&mut self, ctx: &egui::Context) {
         if let Some(directory) = &self.capture {
@@ -4470,6 +4597,14 @@ pub fn run(home: PathBuf, capture: Option<PathBuf>) -> Result<()> {
                     app.pending_policy = Some((id, Policy::Always));
                     app.active_commands = 1;
                 }
+            }
+            "organization"
+            | "organization-filtered"
+            | "organization-files"
+            | "organization-warning"
+            | "organization-empty"
+            | "organization-protected" => {
+                smoke::organization(&mut app, &view)?;
             }
             "import" => {
                 app.tab = 1;

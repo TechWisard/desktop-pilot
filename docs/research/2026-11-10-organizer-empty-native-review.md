@@ -1,0 +1,9 @@
+# Native empty-review acceptance — 2026-11-10
+
+The completed organizer previously exposed inert 0/0 controls when no moves were proposed. The UI correction in #268 differentiates genuinely empty Desktops from Desktops containing only protected objects. Previous native screenshot runs captured populated proposals only, so their passing status did not directly demonstrate either changed empty state.
+
+This follow-up executes the actual native Settings executable and the production organizer analyzer. Two isolated synthetic scene types are added: a truly empty Desktop and a Desktop containing only two ordinary text files while file organization is disabled. Neither has proposed moves; the second displays protected-object reasons. Every scene is captured in Russian and English at 100% and 200% scale (eight new screenshot captures per Windows UI runner). A capture-only guard refuses inconsistent test fixtures rather than fabricating empty results. The real Windows/SQLite regression checks unchanged files, zero database writes, disabled background collection and no Undo journal.
+
+The existing native UI capture script verifies expected Desktop entry membership, SHA-256 of all fixture files before and after, process exit, screenshot existence and screenshot SHA-256. No new release action, cache, telemetry, background task, production control, account privilege or settings change is introduced.
+
+The exact-state scenes cover completed empty and all-excluded reviews, not all individual exclusion reasons. Hosted app-local software rendering cannot substitute for physical Windows 11 multi-monitor/DPI, real OneDrive-account synchronization, keyboard accessibility or power-interruption acceptance. Full exact-head Windows 2022/2025/11 ARM CI, locked Rust tests, rustfmt, strict Clippy, build, native integration, Explorer, Cloud Files and visual screenshot review are required before integration. Synthetic correctness is not measured user time saved.

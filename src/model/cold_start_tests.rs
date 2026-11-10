@@ -435,7 +435,7 @@ fn changing_projects_after_a_gap_keeps_the_rare_manual_shortcut_and_undo_is_resp
         store.set("state", &due).unwrap();
         assert!(!engine::automatic_review(store, false).unwrap());
         assert_eq!(store.get::<State>("state").unwrap().owned, due.owned);
-        assert!(engine::automatic_review(store, true).unwrap());
+        assert!(engine::automatic_review_with_boundary(store, true, || {}).unwrap());
         let changed: State = store.get("state").unwrap();
         assert_eq!(changed.owned.len(), 2);
         let held = changed.owned.iter().find(|o| o.app == rare.id).unwrap();
@@ -468,7 +468,7 @@ fn changing_projects_after_a_gap_keeps_the_rare_manual_shortcut_and_undo_is_resp
             .path
             .clone();
         for _ in 0..4 {
-            assert!(!engine::automatic_review(store, true).unwrap());
+            assert!(!engine::automatic_review_with_boundary(store, true, || {}).unwrap());
             assert!(!std::path::Path::new(&added_path).exists());
         }
 
@@ -641,7 +641,7 @@ fn extending_review_interval_while_a_review_is_queued_prevents_early_replacement
         // eligible again, and Undo still recovers the original shortcut.
         config.interval_days = 7;
         store.set("config", &config).unwrap();
-        assert!(engine::automatic_review(store, true).unwrap());
+        assert!(engine::automatic_review_with_boundary(store, true, || {}).unwrap());
         let changed: State = store.get("state").unwrap();
         assert_eq!(changed.owned.len(), 1);
         assert_eq!(changed.owned[0].app, candidate.id);
@@ -702,7 +702,7 @@ fn paused_collection_must_not_apply_stale_adaptive_recommendations() {
         config.collect = false;
         store.set("config", &config).unwrap();
         assert!(
-            !engine::automatic_review(store, true).unwrap(),
+            !engine::automatic_review_with_boundary(store, true, || {}).unwrap(),
             "a paused tracker must not make unattended desktop changes"
         );
         let paused: State = store.get("state").unwrap();
@@ -716,7 +716,7 @@ fn paused_collection_must_not_apply_stale_adaptive_recommendations() {
         // Resuming explicitly restores scheduled changes and the usual Undo.
         config.collect = true;
         store.set("config", &config).unwrap();
-        assert!(engine::automatic_review(store, true).unwrap());
+        assert!(engine::automatic_review_with_boundary(store, true, || {}).unwrap());
         let changed: State = store.get("state").unwrap();
         assert_eq!(changed.owned.len(), 1);
         assert_eq!(changed.owned[0].app, candidate.id);
@@ -817,6 +817,7 @@ fn a_recent_clock_rewind_must_not_evict_a_familiar_shortcut() {
         assert_eq!(store.get::<State>("state").unwrap().owned, before.owned);
     });
 }
+
 // Compare real rank/selector behavior through a long focus session, repeated
 // short context switches, an extended break and an existing manual anchor.
 // This is synthetic demand, not a claim about users' preferred applications.
