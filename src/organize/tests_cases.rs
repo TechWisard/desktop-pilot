@@ -1746,3 +1746,65 @@ fn unrelated_nfo_and_similar_poster_names_do_not_block_desktop_video_organizatio
     assert!(!f.desktop.join("Images").exists());
     assert!(!f.desktop.join("Media").exists());
 }
+
+#[test]
+fn inline_movie_trailer_stays_with_feature_while_independent_video_moves_and_undoes() {
+    let f = Fixture::new();
+    let entries = [
+        ("Feature.mkv", "main movie"),
+        ("Feature-trailer.mp4", "local trailer"),
+        ("Independent A.mp4", "unrelated video A"),
+        ("Independent B.mp4", "unrelated video B"),
+    ];
+    for (name, contents) in entries {
+        disk::write(f.desktop.join(name), contents).unwrap();
+    }
+    assert!(f.plan(false).items.is_empty());
+    let plan = f.plan(true);
+    for name in ["Feature.mkv", "Feature-trailer.mp4"] {
+        assert!(
+            plan.skipped.iter().any(|item| {
+                item.name == name && item.reason.contains("Associated file set")
+            }),
+            "{name} must remain beside the original movie"
+        );
+    }
+    assert_eq!(plan.summary(), (2, 1, 1));
+    assert_eq!(f.apply(&plan).moved, 2);
+    for (name, contents) in entries {
+        let path = if name.starts_with("Independent") {
+            f.desktop.join("Media").join(name)
+        } else {
+            f.desktop.join(name)
+        };
+        assert_eq!(disk::read(path).unwrap(), contents.as_bytes());
+    }
+    undo(&f.store, &f.last()).unwrap();
+    for (name, contents) in entries {
+        assert_eq!(disk::read(f.desktop.join(name)).unwrap(), contents.as_bytes());
+    }
+    assert!(!f.desktop.join("Media").exists());
+    assert!(!status(&f.store).unwrap().pending);
+}
+
+#[test]
+fn late_inline_trailer_invalidates_preview_before_any_movie_is_moved() {
+    let f = Fixture::new();
+    for name in ["Feature.mkv", "Independent.mp4"] {
+        disk::write(f.desktop.join(name), name).unwrap();
+    }
+    let plan = f.plan(true);
+    assert_eq!(plan.summary(), (2, 1, 1));
+    disk::write(f.desktop.join("Feature-trailer.mp4"), b"late trailer").unwrap();
+    assert!(apply(&f.store, &plan, &AtomicBool::new(false)).is_err());
+    for name in ["Feature.mkv", "Independent.mp4"] {
+        assert_eq!(disk::read(f.desktop.join(name)).unwrap(), name.as_bytes());
+    }
+    assert_eq!(
+        disk::read(f.desktop.join("Feature-trailer.mp4")).unwrap(),
+        b"late trailer"
+    );
+    assert!(!f.desktop.join("Media").exists());
+    assert!(status(&f.store).unwrap().undo.is_none());
+    assert!(!status(&f.store).unwrap().pending);
+}
