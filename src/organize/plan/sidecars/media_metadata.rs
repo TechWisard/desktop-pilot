@@ -2,7 +2,10 @@
 //! Both are kept beside a video in opt-in desktop cleanup; names are only
 //! possible-dependency evidence. Never read media/metadata contents.
 use super::norm_literal_path;
-use std::{collections::{HashMap, HashSet}, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
 pub(super) fn protected(paths: &[PathBuf]) -> HashSet<String> {
     let mut videos = HashMap::<String, Vec<String>>::new();
