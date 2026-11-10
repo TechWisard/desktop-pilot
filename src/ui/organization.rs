@@ -548,41 +548,62 @@ impl Settings {
                                     "Nothing will move yet: a new folder needs at least two checked items in the same group. To move them, check another item in that group.",
                                 ));
                             }
-                            ui.horizontal_wrapped(|ui| {
-                                ui.label(format!(
-                                    "{}: {selected_count} / {}",
-                                    t("Отмечено", "Selected"),
-                                    plan.items.len()
-                                ));
-                                if ui
-                                    .add_enabled(
-                                        available && selected_count < plan.items.len(),
-                                        egui::Button::new(t("Отметить все", "Select all"))
-                                            .min_size(egui::vec2(130.0, 40.0)),
-                                    )
-                                    .clicked()
-                                {
-                                    for item in &mut plan.items {
-                                        item.selected = true;
-                                    }
+                            // An empty completed analysis is not a failed or busy review.
+                            // Distinguish an empty Desktop from a Desktop whose objects
+                            // were deliberately excluded or could not be moved safely.
+                            if plan.items.is_empty() && self.organization_query.trim().is_empty() {
+                                if plan.skipped.is_empty() {
+                                    ui.small(t(
+                                        "На рабочем столе не найдено объектов для распределения. Добавьте ярлыки или файлы и повторите анализ.",
+                                        "No desktop objects were found. Add shortcuts or files, then analyze again.",
+                                    ));
+                                } else {
+                                    ui.small(t(
+                                        "Предложений для переноса нет. Все найденные объекты остаются на рабочем столе; причины показаны ниже.",
+                                        "No moves are proposed. Every found object stays on the desktop; see the reasons below.",
+                                    ));
                                 }
-                                if ui
-                                    .add_enabled(
-                                        available && selected_count > 0,
-                                        egui::Button::new(t("Снять все отметки", "Deselect all"))
+                            }
+                            if !plan.items.is_empty() {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(format!(
+                                        "{}: {selected_count} / {}",
+                                        t("Отмечено", "Selected"),
+                                        plan.items.len()
+                                    ));
+                                    if ui
+                                        .add_enabled(
+                                            available && selected_count < plan.items.len(),
+                                            egui::Button::new(t("Отметить все", "Select all"))
+                                                .min_size(egui::vec2(130.0, 40.0)),
+                                        )
+                                        .clicked()
+                                    {
+                                        for item in &mut plan.items {
+                                            item.selected = true;
+                                        }
+                                    }
+                                    if ui
+                                        .add_enabled(
+                                            available && selected_count > 0,
+                                            egui::Button::new(t(
+                                                "Снять все отметки",
+                                                "Deselect all",
+                                            ))
                                             .min_size(egui::vec2(160.0, 40.0)),
-                                    )
-                                    .clicked()
-                                {
-                                    for item in &mut plan.items {
-                                        item.selected = false;
+                                        )
+                                        .clicked()
+                                    {
+                                        for item in &mut plan.items {
+                                            item.selected = false;
+                                        }
                                     }
-                                }
-                            });
-                            ui.small(t(
-                                "Команды действуют на весь план, включая скрытые поиском строки и другие страницы.",
-                                "These controls affect the entire plan, including filtered-out rows and other pages.",
-                            ));
+                                });
+                                ui.small(t(
+                                    "Команды действуют на весь план, включая скрытые поиском строки и другие страницы.",
+                                    "These controls affect the entire plan, including filtered-out rows and other pages.",
+                                ));
+                            }
                             // When every candidate stays in place, no layout will change.
                             // A quick-shortcut-space warning would imply a failed move
                             // and suggest unnecessary work during a Keep-only review.
@@ -650,10 +671,12 @@ impl Settings {
                                     );
                                 });
                             }
-                            ui.small(t(
-                                "Снимите галочку, чтобы оставить объект на столе. Можно запомнить исключения без перемещения других файлов.",
-                                "Uncheck an object to leave it on the desktop. You can remember exclusions without moving other files.",
-                            ));
+                            if !plan.items.is_empty() {
+                                ui.small(t(
+                                    "Снимите галочку, чтобы оставить объект на столе. Можно запомнить исключения без перемещения других файлов.",
+                                    "Uncheck an object to leave it on the desktop. You can remember exclusions without moving other files.",
+                                ));
+                            }
                             let query = self.organization_query.trim().to_lowercase();
                             let filtered: Vec<_> = plan
                                 .items
@@ -701,7 +724,7 @@ impl Settings {
                             // Keep the original full-plan controls above, but let a person
                             // review one searched set across every page without silently
                             // changing other selected desktop objects.
-                            if !query.is_empty() {
+                            if !query.is_empty() && !filtered.is_empty() {
                                 let selected_matches = filtered
                                     .iter()
                                     .filter(|&&index| plan.items[index].selected)
@@ -783,13 +806,15 @@ impl Settings {
                                     egui::Checkbox::new(&mut item.selected, label),
                                 );
                             }
-                            ui.small(format!(
-                                "{}: {}–{} / {}",
-                                t("Объекты в плане", "Plan items"),
-                                if filtered.is_empty() { 0 } else { start + 1 },
-                                end,
-                                filtered.len(),
-                            ));
+                            if !filtered.is_empty() {
+                                ui.small(format!(
+                                    "{}: {}–{} / {}",
+                                    t("Объекты в плане", "Plan items"),
+                                    start + 1,
+                                    end,
+                                    filtered.len(),
+                                ));
+                            }
                             if !skipped.is_empty() {
                                 collapsing_header(
                                     ui,
@@ -802,12 +827,14 @@ impl Settings {
                                 // Keep filtered and unfiltered disclosure state separate.
                                 // Even a search matching every excluded item should open
                                 // the results once; later manual collapse remains respected.
-                                .id_salt(if query.is_empty() {
-                                    "organize-skipped-unfiltered"
-                                } else {
+                                .id_salt(if !query.is_empty() {
                                     "organize-skipped-filtered"
+                                } else if plan.items.is_empty() {
+                                    "organize-skipped-empty"
+                                } else {
+                                    "organize-skipped-unfiltered"
                                 })
-                                .default_open(!query.is_empty())
+                                .default_open(!query.is_empty() || plan.items.is_empty())
                                 .show(ui, |ui| {
                                     let id = egui::Id::new("organize-skipped-page");
                                     let mut page = ctx
