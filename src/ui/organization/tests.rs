@@ -461,6 +461,127 @@ fn kept_and_singleton_rows_keep_their_searchable_planned_folder_visible() {
 }
 
 #[test]
+fn empty_organizer_explains_saved_exclusions_and_a_truly_empty_desktop() {
+    let mut f = Fixture::new();
+    let original_catalog = f.app.store.apps().unwrap();
+    let alpha = fs::read(f.desktop.join("Alpha.url")).unwrap();
+    let beta = fs::read(f.desktop.join("Beta.url")).unwrap();
+    f.analyze();
+
+    // The real Keep-only operation remembers an explicit choice, not a move.
+    for item in &mut f.app.organization_plan.as_mut().unwrap().items {
+        item.selected = false;
+    }
+    f.app.organization_apply();
+    f.finish_job();
+    f.app.organization_analyze();
+    f.finish_job();
+    let plan = f.app.organization_plan.as_ref().unwrap();
+    assert!(plan.items.is_empty());
+    assert_eq!(plan.skipped.len(), 2);
+    assert_eq!(plan.summary(), (0, 0, 0));
+    assert!(organize::status(&f.app.store).unwrap().undo.is_none());
+
+    for (language, no_moves, exclusion) in [
+        (
+            "en",
+            "No moves are proposed. Every found object stays on the desktop",
+            "You chose to keep this object on the desktop",
+        ),
+        (
+            "ru",
+            "Предложений для переноса нет. Все найденные объекты остаются",
+            "Вы выбрали оставить этот объект на столе",
+        ),
+    ] {
+        for scale in [1.0, 2.0] {
+            i18n::set(language);
+            f.app.config.language = language.into();
+            let ctx = egui::Context::default();
+            configure_style(&ctx);
+            ctx.set_zoom_factor(scale);
+            let viewport = egui::vec2(1400.0, 1400.0);
+            settle(&ctx, &mut f.app, viewport);
+            let output = render(&ctx, &mut f.app, viewport, Vec::new());
+            let painted = rendered_text(&output);
+            assert!(
+                painted.iter().any(|(text, _)| text.contains(no_moves)),
+                "{language}/{scale}: explain the completed but excluded-only analysis: {painted:?}"
+            );
+            for name in ["Alpha.url", "Beta.url"] {
+                assert!(
+                    painted
+                        .iter()
+                        .any(|(text, _)| text.contains(name) && text.contains(exclusion)),
+                    "{language}/{scale}: show saved exclusion reasons without an extra click: {painted:?}"
+                );
+            }
+            assert!(
+                !painted.iter().any(|(text, _)| {
+                    matches!(
+                        text.as_str(),
+                        "Select all" | "Deselect all" | "Отметить все" | "Снять все отметки"
+                            | "Remember keep choices" | "Запомнить исключения"
+                            | "Apply selected moves" | "Применить выбранное"
+                    )
+                }),
+                "{language}/{scale}: no bulk or Apply action for an empty proposal"
+            );
+        }
+    }
+
+    assert_eq!(fs::read(f.desktop.join("Alpha.url")).unwrap(), alpha);
+    assert_eq!(fs::read(f.desktop.join("Beta.url")).unwrap(), beta);
+
+    // Distinguish a genuinely empty directory from a protected or rejected one.
+    fs::remove_file(f.desktop.join("Alpha.url")).unwrap();
+    fs::remove_file(f.desktop.join("Beta.url")).unwrap();
+    f.app.organization_analyze();
+    f.finish_job();
+    let plan = f.app.organization_plan.as_ref().unwrap();
+    assert!(plan.items.is_empty());
+    assert!(plan.skipped.is_empty());
+    assert_eq!(plan.summary(), (0, 0, 0));
+
+    for (language, message) in [
+        ("en", "No desktop objects were found. Add shortcuts or files"),
+        ("ru", "На рабочем столе не найдено объектов для распределения"),
+    ] {
+        i18n::set(language);
+        f.app.config.language = language.into();
+        let ctx = egui::Context::default();
+        configure_style(&ctx);
+        let viewport = egui::vec2(1400.0, 1100.0);
+        settle(&ctx, &mut f.app, viewport);
+        let painted = rendered_text(&render(&ctx, &mut f.app, viewport, Vec::new()));
+        assert!(
+            painted.iter().any(|(text, _)| text.contains(message)),
+            "{language}: explain the truly empty Desktop: {painted:?}"
+        );
+        assert!(
+            !painted.iter().any(|(text, _)| {
+                text.contains("Left in place")
+                    || text.contains("Оставлены без перемещения")
+                    || text.contains("Selected: 0 / 0")
+                    || text.contains("Отмечено: 0 / 0")
+            }),
+            "{language}: hide irrelevant selection and exclusions controls"
+        );
+    }
+    assert_eq!(f.app.store.apps().unwrap(), original_catalog);
+    assert_eq!(
+        f.app.store
+            .get::<Vec<String>>("organization.keep.v1")
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(f.app.store.get::<bool>("background_disabled").unwrap());
+    assert!(organize::status(&f.app.store).unwrap().undo.is_none());
+    assert!(f.app.job.is_none());
+}
+
+#[test]
 fn one_bulk_choice_changes_the_entire_real_plan_even_with_hidden_rows() {
     let mut f = Fixture::new();
     f.analyze();
