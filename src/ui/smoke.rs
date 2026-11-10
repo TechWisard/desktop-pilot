@@ -35,8 +35,7 @@ pub(super) fn organization(app: &mut Settings, view: &str) -> Result<()> {
         // Refuse an unrelated fixture. Screenshots must reflect actual
         // production analysis, not an artificially cleared proposal list.
         ensure!(
-            plan.items.is_empty()
-                && ((view == "organization-empty") == plan.skipped.is_empty()),
+            plan.items.is_empty() && ((view == "organization-empty") == plan.skipped.is_empty()),
             "Empty-state capture needs a matching isolated desktop fixture"
         );
     }
@@ -102,18 +101,20 @@ mod tests {
         let desktop = home.join("Desktop");
         std::fs::create_dir_all(&desktop).unwrap();
         let store = Store::open(&home).unwrap();
-        store.set("test_desktop", &desktop.to_string_lossy()).unwrap();
+        store
+            .set("test_desktop", &desktop.to_string_lossy())
+            .unwrap();
         store.set("setup_complete", &true).unwrap();
         store.set("background_disabled", &true).unwrap();
         drop(store);
         let mut app = Settings::new(home.clone()).unwrap();
         app.capture = Some(home.join("images"));
         app.layout_receiver = None;
-        let before: i64 = app.store.db.query_row(
-            "SELECT total_changes()",
-            [],
-            |row| row.get(0),
-        ).unwrap();
+        let before: i64 = app
+            .store
+            .db
+            .query_row("SELECT total_changes()", [], |row| row.get(0))
+            .unwrap();
 
         for language in ["ru", "en"] {
             i18n::set(language);
@@ -139,11 +140,13 @@ mod tests {
             assert!(organization(&mut app, "organization-empty").is_err());
         }
         assert_eq!(std::fs::read(note).unwrap(), b"Unchanged synthetic notes");
-        assert_eq!(app.store.db.query_row(
-            "SELECT total_changes()",
-            [],
-            |row| row.get::<_, i64>(0),
-        ).unwrap(), before);
+        assert_eq!(
+            app.store
+                .db
+                .query_row("SELECT total_changes()", [], |row| row.get::<_, i64>(0),)
+                .unwrap(),
+            before
+        );
         assert!(app.job.is_none());
         assert!(app.store.get::<bool>("background_disabled").unwrap());
         let status = organize::status(&app.store).unwrap();
