@@ -520,9 +520,14 @@ fn empty_organizer_explains_saved_exclusions_and_a_truly_empty_desktop() {
                 !painted.iter().any(|(text, _)| {
                     matches!(
                         text.as_str(),
-                        "Select all" | "Deselect all" | "Отметить все" | "Снять все отметки"
-                            | "Remember keep choices" | "Запомнить исключения"
-                            | "Apply selected moves" | "Применить выбранное"
+                        "Select all"
+                            | "Deselect all"
+                            | "Отметить все"
+                            | "Снять все отметки"
+                            | "Remember keep choices"
+                            | "Запомнить исключения"
+                            | "Apply selected moves"
+                            | "Применить выбранное"
                     )
                 }),
                 "{language}/{scale}: no bulk or Apply action for an empty proposal"
@@ -544,8 +549,14 @@ fn empty_organizer_explains_saved_exclusions_and_a_truly_empty_desktop() {
     assert_eq!(plan.summary(), (0, 0, 0));
 
     for (language, message) in [
-        ("en", "No desktop objects were found. Add shortcuts or files"),
-        ("ru", "На рабочем столе не найдено объектов для распределения"),
+        (
+            "en",
+            "No desktop objects were found. Add shortcuts or files",
+        ),
+        (
+            "ru",
+            "На рабочем столе не найдено объектов для распределения",
+        ),
     ] {
         i18n::set(language);
         f.app.config.language = language.into();
@@ -570,7 +581,8 @@ fn empty_organizer_explains_saved_exclusions_and_a_truly_empty_desktop() {
     }
     assert_eq!(f.app.store.apps().unwrap(), original_catalog);
     assert_eq!(
-        f.app.store
+        f.app
+            .store
             .get::<Vec<String>>("organization.keep.v1")
             .unwrap()
             .len(),
