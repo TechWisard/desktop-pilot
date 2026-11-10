@@ -1763,9 +1763,9 @@ fn inline_movie_trailer_stays_with_feature_while_independent_video_moves_and_und
     let plan = f.plan(true);
     for name in ["Feature.mkv", "Feature-trailer.mp4"] {
         assert!(
-            plan.skipped.iter().any(|item| {
-                item.name == name && item.reason.contains("Associated file set")
-            }),
+            plan.skipped
+                .iter()
+                .any(|item| { item.name == name && item.reason.contains("Associated file set") }),
             "{name} must remain beside the original movie"
         );
     }
@@ -1781,7 +1781,10 @@ fn inline_movie_trailer_stays_with_feature_while_independent_video_moves_and_und
     }
     undo(&f.store, &f.last()).unwrap();
     for (name, contents) in entries {
-        assert_eq!(disk::read(f.desktop.join(name)).unwrap(), contents.as_bytes());
+        assert_eq!(
+            disk::read(f.desktop.join(name)).unwrap(),
+            contents.as_bytes()
+        );
     }
     assert!(!f.desktop.join("Media").exists());
     assert!(!status(&f.store).unwrap().pending);

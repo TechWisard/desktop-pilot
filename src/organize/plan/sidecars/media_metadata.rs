@@ -45,9 +45,8 @@ pub(super) fn protected(paths: &[PathBuf]) -> HashSet<String> {
             // Emby recognizes an inline Movie-trailer.mp4 beside Movie.mkv.
             // Keep both files if the exact base movie exists; a stray trailer
             // or similarly named independent movie remains movable.
-            stem.rsplit_once('-').and_then(|(base, kind)| {
-                kind.eq_ignore_ascii_case("trailer").then_some(base)
-            })
+            stem.rsplit_once('-')
+                .and_then(|(base, kind)| kind.eq_ignore_ascii_case("trailer").then_some(base))
         } else if matches!(extension.as_str(), "jpg" | "jpeg" | "png" | "webp") {
             // Emby recognizes VideoFilename-poster/cover/thumb/fanart.
             // Match complete stems only: Movie-poster-old is unrelated.
@@ -143,10 +142,15 @@ mod tests {
         .map(PathBuf::from);
         assert_eq!(
             protected(&paths),
-            ["film.mkv", "film-trailer.mp4", "фильм.mov", "фильм-trailer.mkv"]
-                .into_iter()
-                .map(String::from)
-                .collect()
+            [
+                "film.mkv",
+                "film-trailer.mp4",
+                "фильм.mov",
+                "фильм-trailer.mkv"
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect()
         );
     }
 }
